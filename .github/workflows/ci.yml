@@ -1,0 +1,37 @@
+name: PactPal CI & Secret Scan
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  secret-scan:
+    name: Secret & Credential Leak Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure no .env files or private keys are tracked
+        run: |
+          echo "Checking git tracked files for dangerous extensions..."
+          ! git ls-files | grep -E '(\.env$|\.pem$|\.key$|id_rsa)' || (echo "ERROR: Sensitive files tracked in git!" && exit 1)
+          echo "Secret check passed: no tracked secrets found."
+
+  lint-and-validate:
+    name: Project Sanity Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Verify Environment Example Exists
+        run: |
+          test -f .env.example || (echo "Missing .env.example!" && exit 1)
+          test -f BRANCH_RULES.md || (echo "Missing BRANCH_RULES.md!" && exit 1)
+          echo "Baseline files validated successfully."
+
