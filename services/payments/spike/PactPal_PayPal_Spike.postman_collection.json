@@ -1,0 +1,283 @@
+{
+  "info": {
+    "_postman_id": "c1f76239-e932-4f9e-a89c-d08ef6167812",
+    "name": "PactPal - PayPal Sandbox Escrow Spike",
+    "description": "Collection for testing PactPal PayPal escrow rails: OAuth, Order with AUTHORIZE intent, Capture, Payouts, and Void.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://api-m.sandbox.paypal.com",
+      "type": "string"
+    },
+    {
+      "key": "client_id",
+      "value": "YOUR_PAYPAL_SANDBOX_CLIENT_ID",
+      "type": "string"
+    },
+    {
+      "key": "client_secret",
+      "value": "YOUR_PAYPAL_SANDBOX_CLIENT_SECRET",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "order_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "authorization_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "seller_sandbox_email",
+      "value": "sb-1pu8h53656646@business.example.com",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. OAuth2 - Generate Bearer Token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if (jsonData.access_token) {",
+              "    pm.collectionVariables.set('access_token', jsonData.access_token);",
+              "    console.log('Access token stored in collection variable');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{client_id}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{client_secret}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "client_credentials",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/oauth2/token",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "oauth2", "token"]
+        }
+      }
+    },
+    {
+      "name": "2. Orders - Create Order (intent: AUTHORIZE)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if (jsonData.id) {",
+              "    pm.collectionVariables.set('order_id', jsonData.id);",
+              "    console.log('Order ID stored: ' + jsonData.id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"intent\": \"AUTHORIZE\",\n  \"purchase_units\": [\n    {\n      \"reference_id\": \"contract_spike_001\",\n      \"description\": \"PactPal Escrow Milestone Hold\",\n      \"amount\": {\n        \"currency_code\": \"USD\",\n        \"value\": \"100.00\"\n      }\n    }\n  ],\n  \"application_context\": {\n    \"return_url\": \"http://localhost:3000/contracts/1/funded\",\n    \"cancel_url\": \"http://localhost:3000/contracts/1\",\n    \"user_action\": \"CONTINUE\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v2/checkout/orders",
+          "host": ["{{base_url}}"],
+          "path": ["v2", "checkout", "orders"]
+        }
+      }
+    },
+    {
+      "name": "3. Orders - Authorize Order (After Buyer Approval)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "var auths = jsonData.purchase_units[0].payments.authorizations;",
+              "if (auths && auths.length > 0) {",
+              "    pm.collectionVariables.set('authorization_id', auths[0].id);",
+              "    console.log('Authorization ID stored: ' + auths[0].id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v2/checkout/orders/{{order_id}}/authorize",
+          "host": ["{{base_url}}"],
+          "path": ["v2", "checkout", "orders", "{{order_id}}", "authorize"]
+        }
+      }
+    },
+    {
+      "name": "4. Payments - Capture Authorized Hold (Passed Features)",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": {\n    \"value\": \"80.00\",\n    \"currency_code\": \"USD\"\n  },\n  \"is_final_capture\": true,\n  \"note_to_payer\": \"PactPal release for passed milestone features\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v2/payments/authorizations/{{authorization_id}}/capture",
+          "host": ["{{base_url}}"],
+          "path": ["v2", "payments", "authorizations", "{{authorization_id}}", "capture"]
+        }
+      }
+    },
+    {
+      "name": "5. Payouts - Release Funds to Seller Sandbox",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sender_batch_header\": {\n    \"sender_batch_id\": \"spike_payout_{{$timestamp}}\",\n    \"email_subject\": \"PactPal Milestone Payout Released\"\n  },\n  \"items\": [\n    {\n      \"recipient_type\": \"EMAIL\",\n      \"amount\": {\n        \"value\": \"80.00\",\n        \"currency\": \"USD\"\n      },\n      \"receiver\": \"{{seller_sandbox_email}}\",\n      \"note\": \"Feature tests passed (80% release)\",\n      \"sender_item_id\": \"item_spike_01\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/payments/payouts",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "payments", "payouts"]
+        }
+      }
+    },
+    {
+      "name": "6. Payments - Void Authorization (Refund Remainder)",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v2/payments/authorizations/{{authorization_id}}/void",
+          "host": ["{{base_url}}"],
+          "path": ["v2", "payments", "authorizations", "{{authorization_id}}", "void"]
+        }
+      }
+    }
+  ]
+}
+
