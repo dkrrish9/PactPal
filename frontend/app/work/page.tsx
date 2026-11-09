@@ -1,0 +1,307 @@
+"use client";
+import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
+import { ArrowRight, Code, Star, TrendingUp } from "lucide-react";
+import Link from "next/link";
+
+const perks = [
+  { icon: "🔒", title: "Get paid before you start", desc: "Money is locked in escrow the moment you accept a contract. No more chasing invoices." },
+  { icon: "📋", title: "Crystal-clear requirements", desc: "Every contract has weighted acceptance tests. You know exactly what 'done' looks like." },
+  { icon: "⚖", title: "Fair partial payouts", desc: "Built 3 of 4 features? Get paid for 3 of 4. No all-or-nothing drama." },
+  { icon: "🧾", title: "Proof-of-work receipt", desc: "Every job ends with a signed SHA-256 receipt you can share with any future client." },
+];
+
+const jobs = [
+  { title: "Full-stack e-commerce build", budget: "$2,400", skills: ["Next.js", "Stripe", "PostgreSQL"], days: 30, bids: 4 },
+  { title: "iOS fitness tracking app", budget: "$1,800", skills: ["Swift", "HealthKit", "Firebase"], days: 21, bids: 7 },
+  { title: "AI chatbot integration", budget: "$900", skills: ["Python", "OpenAI", "FastAPI"], days: 10, bids: 2 },
+  { title: "Brand identity design", budget: "$600", skills: ["Figma", "Illustrator"], days: 7, bids: 9 },
+  { title: "Data scraping pipeline", budget: "$450", skills: ["Python", "Scrapy", "MongoDB"], days: 5, bids: 3 },
+  { title: "Shopify store customization", budget: "$350", skills: ["Liquid", "JavaScript"], days: 4, bids: 6 },
+];
+
+export default function WorkPage() {
+  return (
+    <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
+      <Navbar />
+
+      {/* Hero */}
+      <section
+        style={{
+          padding: "160px 24px 100px",
+          maxWidth: 1280,
+          margin: "0 auto",
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: "30%",
+            right: "10%",
+            width: 500,
+            height: 500,
+            borderRadius: "50%",
+            background: "radial-gradient(circle, rgba(255,152,0,0.12) 0%, transparent 70%)",
+            filter: "blur(80px)",
+            pointerEvents: "none",
+          }}
+          aria-hidden
+        />
+
+        <div style={{ maxWidth: 740 }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              background: "rgba(255,152,0,0.1)",
+              border: "1px solid rgba(255,152,0,0.3)",
+              borderRadius: 50,
+              padding: "6px 16px",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#FF9800",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase" as const,
+              marginBottom: 32,
+            }}
+          >
+            <Code size={12} aria-hidden /> For Freelancers
+          </div>
+
+          <h1
+            style={{
+              fontSize: "clamp(44px, 7vw, 88px)",
+              fontWeight: 900,
+              letterSpacing: "-0.03em",
+              lineHeight: 1.05,
+              color: "white",
+              marginBottom: 24,
+            }}
+          >
+            Money locked.{" "}
+            <span className="gradient-text-orange">Work verified.</span>{" "}
+            You paid.
+          </h1>
+
+          <p
+            style={{
+              fontSize: 20,
+              color: "var(--color-text-secondary)",
+              lineHeight: 1.65,
+              marginBottom: 48,
+              maxWidth: 560,
+            }}
+          >
+            No more ghosting. No more scope creep without pay. PactPal holds the
+            client's money before you write a single line. Build it, submit it,
+            collect exactly what you earned.
+          </p>
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <Link
+              href="#jobs"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                background: "linear-gradient(135deg, #FF9800, #FF6B00)",
+                color: "white",
+                borderRadius: 50,
+                padding: "16px 32px",
+                fontSize: 16,
+                fontWeight: 700,
+                textDecoration: "none",
+                boxShadow: "0 0 30px rgba(255,152,0,0.4)",
+              }}
+              aria-label="Browse open jobs"
+            >
+              Browse Jobs <ArrowRight size={18} aria-hidden />
+            </Link>
+            <Link
+              href="/signup?role=freelancer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                color: "white",
+                borderRadius: 50,
+                padding: "16px 32px",
+                fontSize: 16,
+                fontWeight: 600,
+                textDecoration: "none",
+              }}
+            >
+              Create freelancer profile
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Perks */}
+      <section style={{ padding: "0 24px 100px", maxWidth: 1280, margin: "0 auto" }} aria-labelledby="perks-heading">
+        <h2
+          id="perks-heading"
+          style={{
+            fontSize: "clamp(28px, 3.5vw, 44px)",
+            fontWeight: 900,
+            letterSpacing: "-0.02em",
+            color: "white",
+            marginBottom: 40,
+            textAlign: "center",
+          }}
+        >
+          Built for freelancers who are{" "}
+          <span className="gradient-text-orange">done being burned.</span>
+        </h2>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: 20,
+          }}
+          role="list"
+        >
+          {perks.map((p, i) => (
+            <div
+              key={i}
+              role="listitem"
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.07)",
+                borderRadius: 24,
+                padding: "32px 28px",
+              }}
+            >
+              <div style={{ fontSize: 36, marginBottom: 20, lineHeight: 1 }} aria-hidden>{p.icon}</div>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: "white", marginBottom: 10 }}>{p.title}</h3>
+              <p style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.65 }}>{p.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Job feed */}
+      <section
+        id="jobs"
+        style={{ padding: "0 24px 120px", maxWidth: 1280, margin: "0 auto" }}
+        aria-labelledby="jobs-heading"
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32, flexWrap: "wrap", gap: 12 }}>
+          <h2
+            id="jobs-heading"
+            style={{
+              fontSize: "clamp(24px, 3vw, 36px)",
+              fontWeight: 900,
+              letterSpacing: "-0.02em",
+              color: "white",
+            }}
+          >
+            Open projects
+          </h2>
+          <div style={{ display: "flex", gap: 8 }}>
+            {["All", "Design", "Dev", "AI", "Data"].map((f) => (
+              <button
+                key={f}
+                style={{
+                  background: f === "All" ? "rgba(255,152,0,0.15)" : "rgba(255,255,255,0.05)",
+                  border: `1px solid ${f === "All" ? "rgba(255,152,0,0.4)" : "rgba(255,255,255,0.08)"}`,
+                  borderRadius: 50,
+                  color: f === "All" ? "#FF9800" : "var(--color-text-secondary)",
+                  padding: "6px 16px",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                }}
+                aria-label={`Filter: ${f}`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }} role="list" aria-label="Job listings">
+          {jobs.map((job, i) => (
+            <Link
+              key={i}
+              href={`/work/job/${i}`}
+              role="listitem"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.07)",
+                borderRadius: 16,
+                padding: "20px 24px",
+                textDecoration: "none",
+                transition: "all 0.25s ease",
+                flexWrap: "wrap",
+                gap: 16,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "rgba(255,152,0,0.3)";
+                e.currentTarget.style.background = "rgba(255,152,0,0.04)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)";
+                e.currentTarget.style.background = "rgba(255,255,255,0.03)";
+              }}
+              aria-label={`${job.title}, budget ${job.budget}`}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 16, color: "white", marginBottom: 8 }}>
+                  {job.title}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {job.skills.map((s) => (
+                    <span
+                      key={s}
+                      style={{
+                        background: "rgba(255,255,255,0.06)",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        borderRadius: 50,
+                        padding: "2px 12px",
+                        fontSize: 12,
+                        color: "var(--color-text-muted)",
+                      }}
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 24, alignItems: "center", flexShrink: 0 }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#FF9800", fontFamily: "JetBrains Mono, monospace" }}>
+                    {job.budget}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{job.days}d · {job.bids} bids</div>
+                </div>
+                <div
+                  style={{
+                    background: "linear-gradient(135deg, #FF9800, #FF6B00)",
+                    color: "white",
+                    borderRadius: 10,
+                    padding: "8px 16px",
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  Bid
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <Footer />
+    </main>
+  );
+}
+
