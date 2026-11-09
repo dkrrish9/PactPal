@@ -1,0 +1,8 @@
+{
+  "name": "pactpal-broken-repo",
+  "version": "1.0.0",
+  "description": "Benchmark broken deliverable designed to validate Stage B build failure handling",
+  "scripts": {
+    "build": "node build.js"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VerificationReport",
+  "description": "Structured multi-modal verification report produced by the verification pipeline",
+  "type": "object",
+  "required": [
+    "id",
+    "submission_id",
+    "contract_id",
+    "build_succeeded",
+    "build_logs",
+    "test_suite_results",
+    "per_feature_results",
+    "overall_score",
+    "completed_at",
+    "next_state"
+  ],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "submission_id": { "type": "string", "format": "uuid" },
+    "contract_id": { "type": "string", "format": "uuid" },
+    "render_job_id": { "type": ["string", "null"] },
+    "build_succeeded": { "type": "boolean" },
+    "build_logs": { "type": "string" },
+    "test_suite_results": { "type": "object" },
+    "cheat_scan_findings": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "visual_diff_summary": { "type": "object" },
+    "per_feature_results": { "type": "object" },
+    "overall_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "failure_reason": { "type": ["string", "null"] },
+    "ai_diagnostic": { "type": ["object", "null"] },
+    "skipped_stages": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "next_state": {
+      "type": "string",
+      "enum": ["DECISION", "DISPUTE", "SETTLED"]
+    }
+  }
+}
