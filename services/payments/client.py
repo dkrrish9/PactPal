@@ -8,6 +8,7 @@ Linked Tasks: C10, C14, C24
 import os
 import time
 import json
+import uuid
 import base64
 import urllib.request
 import urllib.parse
@@ -116,7 +117,10 @@ class PayPalClient:
 
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
-                return json.loads(resp.read().decode())
+                raw_bytes = resp.read()
+                if not raw_bytes:
+                    return {"status": "SUCCESS"}
+                return json.loads(raw_bytes.decode("utf-8"))
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 # Token may have expired upstream; force refresh and retry once
@@ -125,7 +129,10 @@ class PayPalClient:
                 retry_req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
                 try:
                     with urllib.request.urlopen(retry_req, timeout=15) as resp:
-                        return json.loads(resp.read().decode())
+                        raw_bytes = resp.read()
+                        if not raw_bytes:
+                            return {"status": "SUCCESS"}
+                        return json.loads(raw_bytes.decode("utf-8"))
                 except urllib.error.HTTPError as retry_e:
                     err_body = retry_e.read().decode()
                     raise PayPalAPIError(f"Request failed after token refresh ({retry_e.code}): {err_body}", status_code=retry_e.code)
@@ -234,5 +241,99 @@ class PayPalClient:
             "currency": data.get("amount", {}).get("currency_code"),
             "raw_response": data
         }
+
+    def capture_authorization(
+        self,
+        authorization_id: str,
+        amount: float,
+        currency: str = "USD",
+        is_final_capture: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Captures an authorized payment by authorization ID.
+        Endpoint: POST /v2/payments/authorizations/{authorization_id}/capture
+        """
+        url = f"{self.base_url}/v2/payments/authorizations/{authorization_id}/capture"
+        payload = {
+            "amount": {
+                "currency_code": currency,
+                "value": f"{amount:.2f}"
+            },
+            "is_final_capture": is_final_capture,
+            "final_capture": is_final_capture,
+            "note_to_payer": "PactPal Milestone Release"
+        }
+        data = self._send_authorized_request(url, data=json.dumps(payload).encode(), method="POST")
+        capture_id = data.get("id") or data.get("capture_id")
+        return {
+            "capture_id": capture_id,
+            "status": data.get("status", "COMPLETED"),
+            "amount": data.get("amount", {}).get("value", f"{amount:.2f}"),
+            "currency": data.get("amount", {}).get("currency_code", currency),
+            "final_capture": data.get("final_capture", is_final_capture),
+            "raw_response": data
+        }
+
+    def void_authorization(self, authorization_id: str) -> Dict[str, Any]:
+        """
+        Voids an authorized payment by authorization ID to release uncaptured hold amount.
+        Endpoint: POST /v2/payments/authorizations/{authorization_id}/void
+        """
+        url = f"{self.base_url}/v2/payments/authorizations/{authorization_id}/void"
+        data = self._send_authorized_request(url, data=b"", method="POST")
+        status = "VOIDED"
+        if isinstance(data, dict):
+            status = data.get("status", "VOIDED")
+        return {
+            "authorization_id": authorization_id,
+            "status": status,
+            "raw_response": data
+        }
+
+    def create_payout(
+        self,
+        receiver_email: str,
+        amount: float,
+        currency: str = "USD",
+        note: str = "PactPal Milestone Release",
+        sender_batch_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Disburses funds to the seller's PayPal account via PayPal Payouts API.
+        Endpoint: POST /v1/payments/payouts
+        """
+        url = f"{self.base_url}/v1/payments/payouts"
+        batch_id = sender_batch_id or f"pactpal_payout_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        item_id = f"pactpal_item_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        payload = {
+            "sender_batch_header": {
+                "sender_batch_id": batch_id,
+                "email_subject": "PactPal Milestone Payout Released",
+                "email_message": "Feature tests passed. Milestone funds released by PactPal AI Referee."
+            },
+            "items": [{
+                "recipient_type": "EMAIL",
+                "amount": {
+                    "value": f"{amount:.2f}",
+                    "currency": currency
+                },
+                "receiver": receiver_email,
+                "note": note,
+                "sender_item_id": item_id
+            }]
+        }
+        data = self._send_authorized_request(url, data=json.dumps(payload).encode(), method="POST")
+        batch_header = data.get("batch_header", {}) if isinstance(data, dict) else {}
+        payout_batch_id = batch_header.get("payout_batch_id") or (data.get("payout_batch_id") if isinstance(data, dict) else None)
+        return {
+            "payout_batch_id": payout_batch_id,
+            "batch_status": batch_header.get("batch_status") or (data.get("batch_status") if isinstance(data, dict) else "PENDING"),
+            "sender_batch_id": batch_header.get("sender_batch_header", {}).get("sender_batch_id", batch_id),
+            "amount": f"{amount:.2f}",
+            "currency": currency,
+            "receiver": receiver_email,
+            "raw_response": data
+        }
+
 
 

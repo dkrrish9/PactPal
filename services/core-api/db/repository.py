@@ -95,6 +95,18 @@ class ContractRepository:
             metadata TEXT,
             sent_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS payments (
+            id TEXT PRIMARY KEY,
+            contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE RESTRICT,
+            payment_type TEXT NOT NULL CHECK(payment_type IN ('AUTHORIZATION','CAPTURE','PAYOUT','REFUND','VOID')),
+            paypal_reference_id TEXT NOT NULL,
+            amount REAL NOT NULL CHECK(amount > 0),
+            currency TEXT NOT NULL DEFAULT 'USD',
+            status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','COMPLETED','FAILED')),
+            metadata TEXT,
+            processed_at TEXT NOT NULL
+        );
         """)
         self.conn.commit()
 
@@ -315,13 +327,14 @@ class ContractRepository:
 
         # 3. Log Audit Message
         sender_type = actor.role.value
+        sender_id = actor.id if self.get_user(actor.id) else None
         cursor.execute("""
             INSERT INTO messages (id, contract_id, sender_id, sender_type, content, metadata, sent_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             generate_uuid(),
             contract_id,
-            actor.id,
+            sender_id,
             sender_type,
             f"State transitioned from {contract['status']} to {target_state.value} by {actor.name}.",
             json.dumps({"transition": f"{contract['status']} -> {target_state.value}", "metadata": metadata or {}}),
@@ -330,6 +343,62 @@ class ContractRepository:
 
         self.conn.commit()
         return self.get_contract(contract_id)
+
+    # --- Payment Ledger Management (C24) ---
+    def record_payment(
+        self,
+        contract_id: str,
+        payment_type: str,
+        paypal_reference_id: str,
+        amount: float,
+        currency: str = "USD",
+        status: str = "COMPLETED",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Inserts a payment ledger entry into the relational payments table.
+        Valid payment types: AUTHORIZATION, CAPTURE, PAYOUT, REFUND, VOID.
+        """
+        payment_id = generate_uuid()
+        timestamp = now_iso()
+        meta_str = json.dumps(metadata or {})
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO payments (
+                id, contract_id, payment_type, paypal_reference_id,
+                amount, currency, status, metadata, processed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            payment_id, contract_id, payment_type, paypal_reference_id,
+            float(amount), currency, status, meta_str, timestamp
+        ))
+        self.conn.commit()
+        return {
+            "id": payment_id,
+            "contract_id": contract_id,
+            "payment_type": payment_type,
+            "paypal_reference_id": paypal_reference_id,
+            "amount": float(amount),
+            "currency": currency,
+            "status": status,
+            "metadata": metadata or {},
+            "processed_at": timestamp
+        }
+
+    def get_payments(self, contract_id: str) -> List[Dict[str, Any]]:
+        """Retrieves all payment records for a contract in chronological order."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM payments WHERE contract_id = ? ORDER BY processed_at ASC", (contract_id,))
+        records = []
+        for row in cursor.fetchall():
+            rec = dict(row)
+            if isinstance(rec.get("metadata"), str):
+                try:
+                    rec["metadata"] = json.loads(rec["metadata"])
+                except Exception:
+                    pass
+            records.append(rec)
+        return records
 
     def close(self):
         self.conn.close()

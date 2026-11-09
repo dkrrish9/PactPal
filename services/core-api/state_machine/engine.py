@@ -11,6 +11,7 @@ from datetime import datetime, timezone, timedelta
 from ..auth.roles import (
     User,
     UserRole,
+    UnauthorizedRoleError,
     assert_can_submit_for_review,
     assert_can_sign_contract,
     assert_can_request_revision,
@@ -34,7 +35,7 @@ VALID_TRANSITIONS: Dict[ContractState, Set[ContractState]] = {
     ContractState.DRAFT: {ContractState.REVIEW},
     ContractState.REVIEW: {ContractState.SIGNED, ContractState.DRAFT},
     ContractState.SIGNED: {ContractState.FUNDED},
-    ContractState.FUNDED: {ContractState.IN_PROGRESS},
+    ContractState.FUNDED: {ContractState.IN_PROGRESS, ContractState.SETTLED},
     ContractState.IN_PROGRESS: {ContractState.SUBMITTED, ContractState.IN_PROGRESS},
     ContractState.SUBMITTED: {ContractState.VERIFYING},
     ContractState.VERIFYING: {ContractState.DECISION},
@@ -125,5 +126,14 @@ class ContractStateMachine:
             updates["paypal_auth_id"] = str(paypal_auth_id)
             updates["auth_expires_at"] = auth_expires_at
             updates["funded_at"] = now.isoformat()
+
+        elif target_state == ContractState.SETTLED:
+            is_admin = (actor.role == UserRole.ADMIN)
+            is_referee = (getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee")
+            if not (is_admin or is_referee):
+                raise UnauthorizedRoleError(
+                    f"User '{actor.id}' with role '{actor.role.value}' cannot settle contracts. "
+                    "Only platform ADMIN or AI Referee can settle contract."
+                )
 
         return updates

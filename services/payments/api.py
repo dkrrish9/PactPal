@@ -14,18 +14,21 @@ import urllib.parse
 from typing import Dict, Any, Optional, Tuple
 from wsgiref.simple_server import make_server
 
+from .client import PayPalAPIError
 from .service import (
     EscrowPaymentService,
     ContractRepository,
     User,
     UserRole,
     ForbiddenActionError,
+    UnauthorizedRoleError,
     StateValidationError
 )
 
 HOLD_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/hold/?$")
 CREATE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/create-hold/?$")
 AUTHORIZE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/authorize/?$")
+SETTLE_REGEX = re.compile(r"^/api/v1/payments/settle/?$")
 
 class PaymentsAPIHandler:
     """
@@ -92,6 +95,12 @@ class PaymentsAPIHandler:
             if method != "POST":
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on authorize."})
             return self._handle_authorize(headers, body)
+
+        # 4. POST /api/v1/payments/settle (C24 Milestone 2)
+        if SETTLE_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on settle."})
+            return self._handle_settle(headers, body)
 
         return self._json_response(404, {"error": "NOT_FOUND", "message": f"Endpoint '{clean_path}' not found in Payments API."})
 
@@ -188,6 +197,67 @@ class PaymentsAPIHandler:
             return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
         except StateValidationError as e:
             return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_settle(self, headers: Dict[str, str], body: Optional[bytes]) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/settle.
+        Executes milestone partial/full capture, void/refund, and seller payouts matching
+        SHARED_API_CONTRACT.md Section 3.4.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        try:
+            data = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "Invalid JSON body."})
+
+        contract_id = data.get("contract_id")
+        if not contract_id:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "contract_id is required."})
+
+        if "passed_amount" not in data or "refund_amount" not in data:
+            return self._json_response(
+                400,
+                {"error": "BAD_REQUEST", "message": "Both passed_amount and refund_amount are required."}
+            )
+
+        try:
+            passed_amount = float(data.get("passed_amount"))
+            refund_amount = float(data.get("refund_amount"))
+        except (ValueError, TypeError):
+            return self._json_response(
+                400,
+                {"error": "BAD_REQUEST", "message": "passed_amount and refund_amount must be numbers."}
+            )
+
+        seller_paypal_email = data.get("seller_paypal_email", "")
+
+        try:
+            res = self.service.settle_contract_escrow(
+                contract_id=contract_id,
+                passed_amount=passed_amount,
+                refund_amount=refund_amount,
+                seller_paypal_email=seller_paypal_email,
+                actor=actor
+            )
+            return self._json_response(200, res)
+        except ValueError as e:
+            if "not found" in str(e).lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except StateValidationError as e:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except PayPalAPIError as e:
+            return self._json_response(502, {"error": "PAYPAL_API_ERROR", "message": str(e), "details": e.details})
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
 
