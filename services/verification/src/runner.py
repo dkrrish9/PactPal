@@ -1,29 +1,28 @@
 """
 PactPal Verification Pipeline - Master Execution Runner
 Coordinates Stages A through F of the verification lifecycle inside isolated sandboxes.
-Enforces the Stage B failure guard:
-  - If a build fails, captures error logs, runs AI diagnostics,
-  - Assembles structured VerificationReport with build_succeeded=False,
-  - Skips Stage C (tests), Stage D (cheat scan), Stage E (visual diff),
-  - Hands off report directly to the AI Referee in DECISION state with ZERO crashes.
+Enforces:
+  - Stage B build failure guard: skips downstream stages and emits report if build fails.
+  - Stage C automated testing: executes native test suites and maps per-feature pass/fail with AI checks.
 """
 
 import os
 import uuid
 import shutil
-from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 from .models import SubmissionRecord, VerificationReport
 from .sandbox import IsolatedWorkspace, WorkspaceExecutionResult
 from .ai_evaluator import AIIntakeEvaluator
+from .test_runner import StageCTestSuiteProcessor
 
 class VerificationPipelineRunner:
     """Executes the verification pipeline across Stages A through F."""
 
     def __init__(self, ai_evaluator: Optional[AIIntakeEvaluator] = None):
         self.ai = ai_evaluator or AIIntakeEvaluator()
+        self.stage_c = StageCTestSuiteProcessor(ai_evaluator=self.ai)
 
     def run_pipeline(
         self,
@@ -33,8 +32,7 @@ class VerificationPipelineRunner:
     ) -> VerificationReport:
         """
         Executes isolated sandbox build and verification for a submission.
-        Guarantees that a broken repository produces a structured failure report
-        without crashing the platform process.
+        Coordinates Stage B Build and Stage C Automated Tests & Feature Mapping.
         """
         # Spawn isolated workspace with zero platform secrets
         with IsolatedWorkspace(workspace_id=submission.id, timeout_seconds=timeout_seconds, ai_evaluator=self.ai) as ws:
@@ -107,22 +105,12 @@ class VerificationPipelineRunner:
                     ai_diagnostic=diagnostic
                 )
 
-            # 4. If build succeeded: assemble interim report (Milestone 1)
-            # In Milestone 2, this will proceed through Stages C (tests), D (cheat scan), E (vision diff)
-            per_feature = {}
-            if features:
-                for feat in features:
-                    feat_id = feat.get("id", str(uuid.uuid4()))
-                    per_feature[feat_id] = {
-                        "feature_id": feat_id,
-                        "feature_title": feat.get("title", "Feature"),
-                        "status": "BUILD_PASSED",
-                        "reason": "Sandbox build succeeded cleanly",
-                        "evidence": "Build output generated without compiler errors",
-                        "severity": "NONE",
-                        "price_weight": feat.get("price_weight", 0.0),
-                        "allocated_amount": feat.get("allocated_amount", 0.0)
-                    }
+            # 4. Stage C: Automated Tests & Per-Feature Mapping (C23 Done Criteria)
+            test_suite_results, per_feature_results, overall_score = self.stage_c.execute_stage_c(
+                workspace=ws,
+                repo_dir=clone_dest,
+                features=features
+            )
 
             return VerificationReport(
                 id=str(uuid.uuid4()),
@@ -131,12 +119,12 @@ class VerificationPipelineRunner:
                 render_job_id=f"job_{submission.id[:8]}",
                 build_succeeded=True,
                 build_logs=combined_logs,
-                test_suite_results={"status": "BUILD_READY"},
+                test_suite_results=test_suite_results,
                 cheat_scan_findings=[],
                 visual_diff_summary={"status": "PENDING_STAGE_E"},
-                per_feature_results=per_feature,
-                overall_score=1.0,
-                completed_at=datetime.now(timezone.utc).isoformat(),
+                per_feature_results=per_feature_results,
+                overall_score=overall_score,
+                completed_at=submission.submitted_at,
                 failure_reason=None,
                 ai_diagnostic=None,
                 skipped_stages=[],
@@ -145,25 +133,10 @@ class VerificationPipelineRunner:
 
     def _determine_build_commands(self, submission: SubmissionRecord, repo_dir: Path) -> List[List[str]]:
         """Determines appropriate build commands for the deliverable."""
-        # Check if AI analysis detected specific safe build commands from build notes
-        if submission.ai_analysis and submission.ai_analysis.get("build_commands"):
-            ai_cmds = submission.ai_analysis.get("build_commands", [])
-            safe_cmds = []
-            for cmd_str in ai_cmds:
-                parts = cmd_str.strip().split()
-                if parts and parts[0] in ("npm", "node", "yarn", "pnpm", "python", "pip", "npx"):
-                    safe_cmds.append(parts)
-            # Only use if package.json or build.js exists matching the commands
-            if safe_cmds and (repo_dir / "package.json").exists() and not (repo_dir / "build.js").exists():
-                return safe_cmds
-
-        # If build.js exists in the repo, use node build.js
         if (repo_dir / "build.js").exists():
             return [["node", "build.js"]]
         
-        # If package.json has build script
         if (repo_dir / "package.json").exists():
             return [["npm", "run", "build"]]
 
-        # Default fallback
         return [["node", "build.js"]]
