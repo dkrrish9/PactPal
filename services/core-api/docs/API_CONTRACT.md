@@ -29,45 +29,44 @@ Roles supported: `BUYER`, `SELLER`, `ADMIN`.
   "seller_id": "4a7c8e9b-0123-4567-89ab-cdef01234567",
   "title": "Portfolio Web Application",
   "description": "Develop 4-feature responsive website matching Figma mockup.",
-  "total_amount": 1000.00,
+  "total_amount": 1500.00,
   "currency": "USD",
   "deadline": "2026-12-01T00:00:00Z",
   "figma_url": "https://figma.com/file/sample-design",
   "repo_url": "https://github.com/freelancer/repo",
   "features": [
     {
-      "title": "Navigation & Header",
+      "title": "Landing Page & Navigation",
       "acceptance_test": "Responsive nav with 4 working links and logo",
-      "price_weight": 40.00,
-      "allocated_amount": 400.00,
+      "price_weight": 25.00,
+      "allocated_amount": 375.00,
       "sort_order": 1
     },
     {
-      "title": "Contact Form API",
-      "acceptance_test": "Submits form data to endpoint and shows confirmation banner",
-      "price_weight": 60.00,
-      "allocated_amount": 600.00,
+      "title": "Dashboard UI & Charts",
+      "acceptance_test": "Bryntum Gantt chart renders tasks and milestones",
+      "price_weight": 30.00,
+      "allocated_amount": 450.00,
       "sort_order": 2
+    },
+    {
+      "title": "Authentication & OAuth",
+      "acceptance_test": "Working NextAuth session with hashed credentials",
+      "price_weight": 20.00,
+      "allocated_amount": 300.00,
+      "sort_order": 3
+    },
+    {
+      "title": "PayPal Escrow Webhook Listeners",
+      "acceptance_test": "Validates PayPal sandbox webhook signatures",
+      "price_weight": 25.00,
+      "allocated_amount": 375.00,
+      "sort_order": 4
     }
   ]
 }
 ```
-* **Success Response (201 Created)**:
-```json
-{
-  "id": "e3a89172-1b6c-4820-a6e5-4a5c53147819",
-  "status": "DRAFT",
-  "title": "Portfolio Web Application",
-  "buyer_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
-  "seller_id": "4a7c8e9b-0123-4567-89ab-cdef01234567",
-  "total_amount": 1000.00,
-  "currency": "USD",
-  "deadline": "2026-12-01T00:00:00Z",
-  "features": [ ... ],
-  "created_at": "2026-11-09T23:45:00Z",
-  "updated_at": "2026-11-09T23:45:00Z"
-}
-```
+* **Success Response (201 Created)**: Returns contract object with `status: "DRAFT"`.
 
 ---
 
@@ -111,8 +110,8 @@ Roles supported: `BUYER`, `SELLER`, `ADMIN`.
 * **Request Body**:
 ```json
 {
-  "paypal_order_id": "ORDER_PP_12345",
-  "paypal_auth_id": "AUTH_PP_67890"
+  "paypal_order_id": "17M76648VK7664316",
+  "paypal_auth_id": "8BA1234567890123"
 }
 ```
 * **Response (200 OK)**:
@@ -120,10 +119,10 @@ Roles supported: `BUYER`, `SELLER`, `ADMIN`.
 {
   "id": "e3a89172-1b6c-4820-a6e5-4a5c53147819",
   "status": "FUNDED",
-  "paypal_order_id": "ORDER_PP_12345",
-  "paypal_auth_id": "AUTH_PP_67890",
-  "auth_expires_at": "2026-12-08T23:48:00Z",
-  "funded_at": "2026-11-09T23:48:00Z"
+  "paypal_order_id": "17M76648VK7664316",
+  "paypal_auth_id": "8BA1234567890123",
+  "auth_expires_at": "2026-12-09T01:30:00Z",
+  "funded_at": "2026-11-10T01:30:00Z"
 }
 ```
 
@@ -136,7 +135,23 @@ Roles supported: `BUYER`, `SELLER`, `ADMIN`.
 
 ---
 
-## 3. Standard Error Responses
+## 3. Verification Report Specification
+The verification pipeline outputs a standardized report conforming to `shared/schemas/verification_report.json`.
+Each feature evaluation in `per_feature_results` strictly includes:
+* `feature_id`: UUID
+* `title`: string
+* `status`: `"passed" | "failed" | "partially_met"`
+* `price_weight`: numeric (0-100)
+* `allocated_amount`: numeric
+* `severity`: `"none" | "low" | "medium" | "high"`
+* `evidence`: string
+
+See sample mock payload: `shared/mock/verification_report.mock.json`.
+Full master contract across all services: `shared/docs/SHARED_API_CONTRACT.md`.
+
+---
+
+## 4. Standard Error Responses
 
 ### 403 Forbidden (Unauthorized Role):
 ```json
@@ -153,4 +168,3 @@ Roles supported: `BUYER`, `SELLER`, `ADMIN`.
   "message": "Illegal state jump: Cannot transition from 'DRAFT' to 'FUNDED'. Allowed next states: ['REVIEW']"
 }
 ```
-

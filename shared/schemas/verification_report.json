@@ -1,0 +1,193 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VerificationReport",
+  "description": "Standardized schema for PactPal multimodal verification reports produced by isolated Render Workflows containers",
+  "type": "object",
+  "required": [
+    "id",
+    "submission_id",
+    "contract_id",
+    "render_job_id",
+    "build_succeeded",
+    "test_suite_results",
+    "cheat_scan_findings",
+    "visual_diff_summary",
+    "per_feature_results",
+    "decision_recommendation",
+    "completed_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique verification report UUID"
+    },
+    "submission_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Linked submission UUID"
+    },
+    "contract_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Linked contract UUID"
+    },
+    "render_job_id": {
+      "type": "string",
+      "description": "Render Workflow execution/container job ID"
+    },
+    "build_succeeded": {
+      "type": "boolean",
+      "description": "True if repository built clean without errors in isolated container"
+    },
+    "build_logs": {
+      "type": "string",
+      "description": "Standard output and stderr from the sandbox build step"
+    },
+    "overall_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Weighted overall score between 0.0 and 1.0"
+    },
+    "decision_recommendation": {
+      "type": "string",
+      "enum": [
+        "FULL_RELEASE",
+        "PARTIAL_RELEASE_80_PERCENT",
+        "RE_VERIFY_REQUESTED",
+        "HOLD_FUNDS"
+      ],
+      "description": "AI Referee initial rules-based recommendation"
+    },
+    "decision_summary": {
+      "type": "string",
+      "description": "Human-readable verdict explanation generated for buyer and seller"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 completion timestamp"
+    },
+    "test_suite_results": {
+      "type": "object",
+      "required": ["total_tests", "passed_tests", "failed_tests", "coverage_percent"],
+      "properties": {
+        "total_tests": { "type": "integer", "minimum": 0 },
+        "passed_tests": { "type": "integer", "minimum": 0 },
+        "failed_tests": { "type": "integer", "minimum": 0 },
+        "skipped_tests": { "type": "integer", "minimum": 0, "default": 0 },
+        "coverage_percent": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cheat_scan_findings": {
+      "type": "array",
+      "description": "List of cheat, loophole, or security vulnerability alerts detected by AI scan",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "feature_id", "rule_violated", "severity", "description"],
+        "properties": {
+          "finding_id": { "type": "string" },
+          "feature_id": { "type": "string", "format": "uuid" },
+          "rule_violated": {
+            "type": "string",
+            "enum": [
+              "hardcoded_trick",
+              "disabled_test",
+              "placeholder_content",
+              "dead_ui",
+              "exposed_secret",
+              "sandbox_probe"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["none", "low", "medium", "high"]
+          },
+          "description": { "type": "string" },
+          "file_path": { "type": "string" },
+          "line_number": { "type": "integer" }
+        }
+      }
+    },
+    "visual_diff_summary": {
+      "type": "object",
+      "required": ["similarity_score", "threshold", "passed"],
+      "properties": {
+        "similarity_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.85 },
+        "passed": { "type": "boolean" },
+        "diff_image_url": { "type": ["string", "null"] },
+        "notes": { "type": "string" }
+      }
+    },
+    "per_feature_results": {
+      "type": "array",
+      "description": "Evaluation of each contract checklist item",
+      "items": {
+        "type": "object",
+        "required": [
+          "feature_id",
+          "title",
+          "status",
+          "price_weight",
+          "allocated_amount",
+          "evidence",
+          "severity"
+        ],
+        "properties": {
+          "feature_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Matching feature ID from the contract"
+          },
+          "title": {
+            "type": "string",
+            "description": "Feature display name"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "partially_met"],
+            "description": "Feature verification verdict"
+          },
+          "price_weight": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 100.0,
+            "description": "Percentage weight of total contract price"
+          },
+          "allocated_amount": {
+            "type": "number",
+            "minimum": 0.0,
+            "description": "Dollar amount tied to this feature"
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete justification for the verdict"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["none", "low", "medium", "high"],
+            "description": "Severity level of any flaws or vulnerabilities affecting this feature"
+          },
+          "test_passed": {
+            "type": "boolean",
+            "description": "Whether automated tests mapped to this feature succeeded"
+          },
+          "cheat_flagged": {
+            "type": "boolean",
+            "description": "True if AI scanner detected hardcoding or disabled tests"
+          },
+          "visual_similarity_score": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "description": "Figma visual diff score for this feature's views"
+          }
+        }
+      }
+    }
+  }
+}
+
