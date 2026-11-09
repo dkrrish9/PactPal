@@ -159,7 +159,9 @@ class IsolatedWorkspace:
                 sanitized[key] = val
 
         # Set container identifiers
-        sanitized["PACOPAL_SANDBOX"] = "true"
+        sanitized["PACTPAL_SANDBOX"] = "true"
+        sanitized["PACOPAL_SANDBOX"] = "true"  # backward compatibility
+        sanitized["PACTPAL_WORKSPACE_ID"] = self.workspace_id
         sanitized["PACOPAL_WORKSPACE_ID"] = self.workspace_id
         sanitized["CI"] = "true"
         sanitized["NODE_ENV"] = "test"

@@ -16,34 +16,135 @@
     "next_state"
   ],
   "properties": {
-    "id": { "type": "string", "format": "uuid" },
-    "submission_id": { "type": "string", "format": "uuid" },
-    "contract_id": { "type": "string", "format": "uuid" },
-    "render_job_id": { "type": ["string", "null"] },
-    "build_succeeded": { "type": "boolean" },
-    "build_logs": { "type": "string" },
-    "test_suite_results": { "type": "object" },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "submission_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "contract_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "render_job_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "build_succeeded": {
+      "type": "boolean"
+    },
+    "build_logs": {
+      "type": "string"
+    },
+    "test_suite_results": {
+      "type": "object"
+    },
     "cheat_scan_findings": {
       "type": "array",
-      "items": { "type": "object" }
+      "items": {
+        "type": "object"
+      }
     },
-    "visual_diff_summary": { "type": "object" },
-    "per_feature_results": { "type": "object" },
+    "visual_diff_summary": {
+      "type": "object"
+    },
+    "per_feature_results": {
+      "type": "object",
+      "description": "Per-feature verdicts mapped by feature_id satisfying C07 contract",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "feature_id",
+          "status"
+        ],
+        "properties": {
+          "feature_id": {
+            "type": "string"
+          },
+          "feature_title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PASSED",
+              "FAILED",
+              "PARTIAL",
+              "BUILD_PASSED",
+              "PENDING"
+            ]
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "NONE",
+              "LOW",
+              "MEDIUM",
+              "HIGH"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "allocated_amount": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
     "overall_score": {
       "type": "number",
       "minimum": 0,
       "maximum": 1
     },
-    "completed_at": { "type": "string", "format": "date-time" },
-    "failure_reason": { "type": ["string", "null"] },
-    "ai_diagnostic": { "type": ["object", "null"] },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "failure_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ai_diagnostic": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
     "skipped_stages": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "next_state": {
       "type": "string",
-      "enum": ["DECISION", "DISPUTE", "SETTLED"]
+      "enum": [
+        "DECISION",
+        "DISPUTE",
+        "SETTLED"
+      ]
     }
   }
 }

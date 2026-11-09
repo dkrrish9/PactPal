@@ -197,6 +197,8 @@ class StageAIntakeProcessor:
 
         # 4. Git Metadata
         git_meta = self.verify_git_commit(valid_repo, valid_sha)
+        if git_meta.get("commit_message") == "Initial milestone submission" and submission_number > 1:
+            git_meta["commit_message"] = f"Milestone resubmission #{submission_number} (commit {valid_sha[:8]})" 
 
         # 5. AI Safety & Build Analysis
         ai_analysis = self.ai.evaluate_submission(

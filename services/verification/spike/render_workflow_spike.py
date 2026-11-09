@@ -88,7 +88,8 @@ def create_scrubbed_environment():
             clean_env[key] = val
             
     # Mark container identity
-    clean_env["PACOPAL_VERIFICATION_SANDBOX"] = "true"
+    clean_env["PACTPAL_VERIFICATION_SANDBOX"] = "true"
+    clean_env["PACOPAL_VERIFICATION_SANDBOX"] = "true"  # backward compatibility
     clean_env["NODE_ENV"] = "test"
     return clean_env
 
@@ -124,10 +125,16 @@ def run_isolated_container_lifecycle(repo_source):
         # Step B: Git Clone into Container
         print("\n--- Step B: Stage A Intake - Git Clone Repository ---")
         clone_dest = container_path / "repo"
-        clone_cmd = ["git", "clone", repo_source, str(clone_dest)]
-        res_clone = subprocess.run(clone_cmd, capture_output=True, text=True, env=clean_env, timeout=30)
-        if res_clone.returncode != 0:
-            raise RuntimeError(f"Git clone failed: {res_clone.stderr}")
+        local_fixture = Path(repo_source)
+        if local_fixture.exists() and local_fixture.is_dir():
+            # For local fixtures on Windows, git clone can fail due to drive letters/MSYS sh.exe path resolution.
+            # Mirror the robust behavior in services/verification/src/runner.py:
+            shutil.copytree(local_fixture, clone_dest)
+        else:
+            clone_cmd = ["git", "clone", repo_source, str(clone_dest)]
+            res_clone = subprocess.run(clone_cmd, capture_output=True, text=True, env=clean_env, timeout=30)
+            if res_clone.returncode != 0:
+                raise RuntimeError(f"Git clone failed: {res_clone.stderr}")
         print(f"[GIT CLONE SUCCESS] Repository cloned into {clone_dest}")
 
         # Step C: Sandbox Build Execution
