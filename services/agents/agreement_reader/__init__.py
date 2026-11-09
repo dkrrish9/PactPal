@@ -1,23 +1,38 @@
 """
 Agreement Reader Package
-Linked Tasks: C12 / A3 / A4 / A5
+Linked Tasks: C12 / C16 / A3 / A4 / A5
 """
 
-from .models import ChecklistFeature, PricedChecklist, ValidationResult, ClarificationPrompt
+from .models import (
+    ChecklistFeature,
+    PricedChecklist,
+    ValidationResult,
+    ClarificationPrompt,
+    ClarificationRequest
+)
 from .validator import validate_contract_form
-from .reader import parse_contract_form, AgreementValidationError
+from .reader import parse_contract_form, read_or_clarify, AgreementValidationError
 from .lock import lock_checklist, assert_checklist_is_unlocked, ChecklistLockError
+from .clarifier import (
+    generate_clarification_request,
+    apply_clarification,
+    build_conversational_message
+)
 
 __all__ = [
     "ChecklistFeature",
     "PricedChecklist",
     "ValidationResult",
     "ClarificationPrompt",
+    "ClarificationRequest",
     "validate_contract_form",
     "parse_contract_form",
+    "read_or_clarify",
     "AgreementValidationError",
     "lock_checklist",
     "assert_checklist_is_unlocked",
     "ChecklistLockError",
+    "generate_clarification_request",
+    "apply_clarification",
+    "build_conversational_message",
 ]
-
