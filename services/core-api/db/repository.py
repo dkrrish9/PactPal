@@ -1,7 +1,7 @@
 """
 PactPal Database Repository Layer
 Supports local SQLite and PostgreSQL (Supabase).
-Linked Tasks: C09 / A2
+Linked Tasks: C09 / C19 / A2 / A5
 """
 
 import sqlite3
@@ -12,6 +12,10 @@ from typing import Optional, Dict, Any, List
 
 from ..auth.roles import User, UserRole, assert_can_create_contract
 from ..state_machine.engine import ContractState, ContractStateMachine
+
+class ChecklistLockError(Exception):
+    """Raised when an unauthorized modification is attempted on a locked checklist."""
+    pass
 
 def generate_uuid() -> str:
     return str(uuid.uuid4())
@@ -57,6 +61,10 @@ class ContractRepository:
             auth_expires_at TEXT,
             figma_url TEXT,
             repo_url TEXT,
+            is_locked INTEGER NOT NULL DEFAULT 0,
+            buyer_confirmed_at TEXT,
+            seller_confirmed_at TEXT,
+            locked_at TEXT,
             signed_at TEXT,
             funded_at TEXT,
             created_at TEXT NOT NULL,
@@ -72,6 +80,8 @@ class ContractRepository:
             allocated_amount REAL NOT NULL CHECK(allocated_amount >= 0),
             status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'PASSED', 'FAILED', 'DISPUTED')),
             sort_order INTEGER NOT NULL DEFAULT 0,
+            change_request_id TEXT,
+            amended INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -138,8 +148,8 @@ class ContractRepository:
             INSERT INTO contracts (
                 id, buyer_id, seller_id, title, description, status,
                 total_amount, currency, deadline, figma_url, repo_url,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?)
+                is_locked, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, 0, ?, ?)
         """, (
             contract_id, buyer.id, seller_id, title, description, status,
             total_amount, deadline, figma_url, repo_url, timestamp, timestamp
@@ -164,10 +174,52 @@ class ContractRepository:
         if not row:
             return None
         contract = dict(row)
+        contract["is_locked"] = bool(contract.get("is_locked", 0))
         contract["features"] = self.get_features(contract_id)
         return contract
 
-    # --- Feature Checklist Items ---
+    # --- Dual Confirmation & Checklist Locking (Task C19) ---
+    def confirm_checklist(self, contract_id: str, actor: User) -> Dict[str, Any]:
+        """
+        Registers timestamped confirmation from Buyer or Seller.
+        When BOTH parties confirm, the checklist transitions to LOCKED status.
+        """
+        contract = self.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        timestamp = now_iso()
+        cursor = self.conn.cursor()
+
+        if actor.role == UserRole.BUYER:
+            if contract.get("buyer_id") != actor.id:
+                raise ChecklistLockError("Actor is not the designated buyer for this contract.")
+            cursor.execute("UPDATE contracts SET buyer_confirmed_at = ?, updated_at = ? WHERE id = ?", (timestamp, timestamp, contract_id))
+        elif actor.role == UserRole.SELLER:
+            if contract.get("seller_id") != actor.id:
+                raise ChecklistLockError("Actor is not the designated seller for this contract.")
+            cursor.execute("UPDATE contracts SET seller_confirmed_at = ?, updated_at = ? WHERE id = ?", (timestamp, timestamp, contract_id))
+        else:
+            raise ChecklistLockError(f"Role '{actor.role.value}' cannot confirm checklist. Only BUYER and SELLER can confirm.")
+
+        # Check if both confirmations are now recorded
+        updated = self.get_contract(contract_id)
+        if updated.get("buyer_confirmed_at") and updated.get("seller_confirmed_at"):
+            cursor.execute("UPDATE contracts SET is_locked = 1, locked_at = ?, updated_at = ? WHERE id = ?", (timestamp, timestamp, contract_id))
+            cursor.execute("""
+                INSERT INTO messages (id, contract_id, sender_id, sender_type, content, metadata, sent_at)
+                VALUES (?, ?, NULL, 'AI_REFEREE', ?, ?, ?)
+            """, (
+                generate_uuid(), contract_id,
+                "Checklist LOCKED by timestamped dual confirmation. Features cannot change except via the Price Negotiator.",
+                json.dumps({"event": "CHECKLIST_LOCKED", "buyer_confirmed_at": updated["buyer_confirmed_at"], "seller_confirmed_at": updated["seller_confirmed_at"]}),
+                timestamp
+            ))
+
+        self.conn.commit()
+        return self.get_contract(contract_id)
+
+    # --- Feature Checklist Items with Lock Guard ---
     def add_feature(
         self,
         contract_id: str,
@@ -175,19 +227,40 @@ class ContractRepository:
         acceptance_test: str,
         price_weight: float,
         allocated_amount: float,
-        sort_order: int = 0
+        sort_order: int = 0,
+        source: str = "DIRECT",
+        change_request_id: Optional[str] = None
     ) -> Dict[str, Any]:
+        """
+        Adds a checklist feature.
+        Invariant (C19): Once locked, checklist cannot change except via the Price Negotiator.
+        """
+        contract = self.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        # Lock Guard: Block direct edits if locked
+        if contract.get("is_locked"):
+            if source != "PRICE_NEGOTIATOR" or not change_request_id:
+                raise ChecklistLockError(
+                    f"Checklist for contract '{contract_id}' is LOCKED by dual confirmation. "
+                    "Checklist cannot change except via the Price Negotiator with an approved change request."
+                )
+
         feature_id = generate_uuid()
         timestamp = now_iso()
         cursor = self.conn.cursor()
         cursor.execute("""
             INSERT INTO features (
                 id, contract_id, title, acceptance_test, price_weight,
-                allocated_amount, status, sort_order, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)
+                allocated_amount, status, sort_order, change_request_id, amended,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
         """, (
             feature_id, contract_id, title, acceptance_test,
-            price_weight, allocated_amount, sort_order, timestamp, timestamp
+            price_weight, allocated_amount, sort_order,
+            change_request_id, 1 if change_request_id else 0,
+            timestamp, timestamp
         ))
         self.conn.commit()
         return {
@@ -198,7 +271,9 @@ class ContractRepository:
             "price_weight": price_weight,
             "allocated_amount": allocated_amount,
             "status": "PENDING",
-            "sort_order": sort_order
+            "sort_order": sort_order,
+            "change_request_id": change_request_id,
+            "amended": bool(change_request_id)
         }
 
     def get_features(self, contract_id: str) -> List[Dict[str, Any]]:
@@ -258,4 +333,3 @@ class ContractRepository:
 
     def close(self):
         self.conn.close()
-
