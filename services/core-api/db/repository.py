@@ -107,6 +107,15 @@ class ContractRepository:
             metadata TEXT,
             processed_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+            key TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            response_data TEXT NOT NULL,
+            status_code INTEGER NOT NULL DEFAULT 200,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (key, scope)
+        );
         """)
         self.conn.commit()
 
@@ -399,6 +408,38 @@ class ContractRepository:
                     pass
             records.append(rec)
         return records
+
+    # --- Idempotency Key Storage (C28) ---
+    def get_idempotency_key(self, key: str, scope: str = "default") -> Optional[Dict[str, Any]]:
+        """Retrieves a previously cached response by idempotency key and scope."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM idempotency_keys WHERE key = ? AND scope = ?", (key, scope))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        res_data = row["response_data"]
+        try:
+            parsed = json.loads(res_data)
+        except Exception:
+            parsed = res_data
+        return {
+            "key": row["key"],
+            "scope": row["scope"],
+            "response_data": parsed,
+            "status_code": row["status_code"],
+            "created_at": row["created_at"]
+        }
+
+    def save_idempotency_key(self, key: str, scope: str, response_data: Any, status_code: int = 200) -> None:
+        """Stores a response against an idempotency key and scope to prevent duplicate actions."""
+        cursor = self.conn.cursor()
+        meta_str = json.dumps(response_data) if not isinstance(response_data, str) else response_data
+        timestamp = now_iso()
+        cursor.execute("""
+            INSERT OR REPLACE INTO idempotency_keys (key, scope, response_data, status_code, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (key, scope, meta_str, status_code, timestamp))
+        self.conn.commit()
 
     def close(self):
         self.conn.close()

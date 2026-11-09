@@ -22,13 +22,15 @@ from .service import (
     UserRole,
     ForbiddenActionError,
     UnauthorizedRoleError,
-    StateValidationError
+    StateValidationError,
+    WebhookVerificationError
 )
 
 HOLD_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/hold/?$")
 CREATE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/create-hold/?$")
 AUTHORIZE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/authorize/?$")
 SETTLE_REGEX = re.compile(r"^/api/v1/payments/settle/?$")
+WEBHOOK_REGEX = re.compile(r"^/api/v1/payments/webhooks(?:/paypal)?/?$")
 
 class PaymentsAPIHandler:
     """
@@ -61,6 +63,11 @@ class PaymentsAPIHandler:
 
         # Look up user in repository
         return self.repository.get_user(actor_id)
+
+    def _extract_idempotency_key(self, headers: Dict[str, str]) -> Optional[str]:
+        """Extracts Idempotency-Key or X-Idempotency-Key from headers."""
+        norm_headers = {k.lower(): v for k, v in headers.items()}
+        return norm_headers.get("idempotency-key") or norm_headers.get("x-idempotency-key")
 
     def dispatch(
         self,
@@ -101,6 +108,12 @@ class PaymentsAPIHandler:
             if method != "POST":
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on settle."})
             return self._handle_settle(headers, body)
+
+        # 5. POST /api/v1/payments/webhooks (C28 Milestone 2)
+        if WEBHOOK_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on webhooks."})
+            return self._handle_webhook(headers, body)
 
         return self._json_response(404, {"error": "NOT_FOUND", "message": f"Endpoint '{clean_path}' not found in Payments API."})
 
@@ -147,12 +160,15 @@ class PaymentsAPIHandler:
         if not contract_id:
             return self._json_response(400, {"error": "BAD_REQUEST", "message": "contract_id is required."})
 
+        idempotency_key = self._extract_idempotency_key(headers)
+
         try:
             res = self.service.initiate_contract_hold(
                 contract_id=contract_id,
                 actor=actor,
                 return_url=data.get("return_url"),
-                cancel_url=data.get("cancel_url")
+                cancel_url=data.get("cancel_url"),
+                idempotency_key=idempotency_key
             )
             return self._json_response(200, res)
         except ValueError as e:
@@ -184,11 +200,14 @@ class PaymentsAPIHandler:
                 {"error": "BAD_REQUEST", "message": "contract_id and paypal_order_id are required."}
             )
 
+        idempotency_key = self._extract_idempotency_key(headers)
+
         try:
             res = self.service.confirm_and_store_authorization(
                 contract_id=contract_id,
                 paypal_order_id=paypal_order_id,
-                actor=actor
+                actor=actor,
+                idempotency_key=idempotency_key
             )
             return self._json_response(200, res)
         except ValueError as e:
@@ -238,6 +257,7 @@ class PaymentsAPIHandler:
             )
 
         seller_paypal_email = data.get("seller_paypal_email", "")
+        idempotency_key = self._extract_idempotency_key(headers)
 
         try:
             res = self.service.settle_contract_escrow(
@@ -245,7 +265,8 @@ class PaymentsAPIHandler:
                 passed_amount=passed_amount,
                 refund_amount=refund_amount,
                 seller_paypal_email=seller_paypal_email,
-                actor=actor
+                actor=actor,
+                idempotency_key=idempotency_key
             )
             return self._json_response(200, res)
         except ValueError as e:
@@ -258,6 +279,22 @@ class PaymentsAPIHandler:
             return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
         except PayPalAPIError as e:
             return self._json_response(502, {"error": "PAYPAL_API_ERROR", "message": str(e), "details": e.details})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_webhook(self, headers: Dict[str, str], body: Optional[bytes]) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/webhooks.
+        Cryptographically verifies incoming PayPal webhook signature headers
+        and dispatches verified event processing.
+        """
+        try:
+            res = self.service.process_paypal_webhook(headers=headers, raw_body=body or b"")
+            return self._json_response(200, res)
+        except WebhookVerificationError as e:
+            return self._json_response(401, {"error": "INVALID_WEBHOOK_SIGNATURE", "message": str(e)})
+        except ValueError as e:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
 
