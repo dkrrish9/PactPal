@@ -18,7 +18,7 @@ from ..state_machine.engine import (
     InvalidStateTransitionError,
     StateValidationError
 )
-from ..db.repository import ContractRepository
+from ..db.repository import ContractRepository, ChecklistLockError
 
 class TestContractLifecycle(unittest.TestCase):
 
@@ -197,6 +197,49 @@ class TestContractLifecycle(unittest.TestCase):
             metadata={"notes": "Please increase budget for feature 2"}
         )
         self.assertEqual(contract["status"], ContractState.DRAFT.value)
+
+    def test_database_persistence_checklist_lock(self):
+        """
+        Task C19 Invariant: Checklist cannot change except via the Price Negotiator.
+        Verifies dual confirmation and lock enforcement inside the Database Repository.
+        """
+        contract = self.repo.create_contract(
+            buyer=self.buyer, seller_id=self.seller.id, title="Test DB Lock",
+            description="Desc", total_amount=1000.00, deadline="2026-12-01T00:00:00Z"
+        )
+        self.repo.add_feature(contract["id"], "Initial Feature", "Initial Test", 100.0, 1000.0, 1)
+
+        # Step 1: Buyer confirms -> Still unlocked (waiting for seller)
+        contract = self.repo.confirm_checklist(contract["id"], self.buyer)
+        self.assertFalse(contract["is_locked"])
+
+        # Step 2: Seller confirms -> Locks in DB!
+        contract = self.repo.confirm_checklist(contract["id"], self.seller)
+        self.assertTrue(contract["is_locked"])
+
+        # Step 3: Direct add_feature is BLOCKED by DB lock
+        with self.assertRaises(ChecklistLockError):
+            self.repo.add_feature(
+                contract_id=contract["id"],
+                title="Direct Sneaky Feature",
+                acceptance_test="Sneaky test",
+                price_weight=10.0,
+                allocated_amount=100.0,
+                source="DIRECT"
+            )
+
+        # Step 4: Price Negotiator amendment is ALLOWED in DB!
+        feature = self.repo.add_feature(
+            contract_id=contract["id"],
+            title="Negotiated Amendment Feature",
+            acceptance_test="Approved test",
+            price_weight=15.0,
+            allocated_amount=150.0,
+            source="PRICE_NEGOTIATOR",
+            change_request_id="CR-5555"
+        )
+        self.assertEqual(feature["change_request_id"], "CR-5555")
+        self.assertTrue(feature["amended"])
 
 if __name__ == "__main__":
     unittest.main()
