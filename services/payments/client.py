@@ -204,3 +204,37 @@ class PayPalClient:
             err_body = e.read().decode()
             raise PayPalAPIError(f"Authorization failed ({e.code}): {err_body}", status_code=e.code)
 
+    def get_authorization(self, authorization_id: str) -> Dict[str, Any]:
+        """
+        Fetches live authorization details from PayPal REST API v2.
+        Endpoint: GET /v2/payments/authorizations/{authorization_id}
+        """
+        token = self.get_access_token()
+        url = f"{self.base_url}/v2/payments/authorizations/{authorization_id}"
+
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+                return {
+                    "authorization_id": data.get("id"),
+                    "status": data.get("status"),
+                    "expiration_time": data.get("expiration_time"),
+                    "amount": data.get("amount", {}).get("value"),
+                    "currency": data.get("amount", {}).get("currency_code"),
+                    "raw_response": data
+                }
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode()
+            raise PayPalAPIError(f"Get authorization failed ({e.code}): {err_body}", status_code=e.code)
+        except Exception as e:
+            raise PayPalAPIError(f"Failed to fetch authorization: {str(e)}")
+
+
