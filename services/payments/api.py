@@ -7,7 +7,9 @@ Exposes payment rails endpoints matching shared/docs/SHARED_API_CONTRACT.md:
 """
 
 import re
+import os
 import json
+import http.client
 import urllib.parse
 from typing import Dict, Any, Optional, Tuple
 from wsgiref.simple_server import make_server
@@ -246,18 +248,8 @@ def create_payments_app(service: Optional[EscrowPaymentService] = None):
             body=body
         )
 
-        status_map = {
-            200: "200 OK",
-            201: "201 Created",
-            204: "204 No Content",
-            400: "400 Bad Request",
-            401: "401 Unauthorized",
-            403: "403 Forbidden",
-            404: "404 Not Found",
-            405: "405 Method Not Allowed",
-            500: "500 Internal Server Error"
-        }
-        status_line = status_map.get(status_code, f"{status_code} Status")
+        status_desc = http.client.responses.get(status_code, "Status")
+        status_line = f"{status_code} {status_desc}"
         start_response(status_line, list(resp_headers.items()))
         return [resp_bytes]
 
@@ -265,8 +257,8 @@ def create_payments_app(service: Optional[EscrowPaymentService] = None):
 
 if __name__ == "__main__":
     app = create_payments_app()
-    port = 8000
-    print(f"Starting PactPal Payments API on http://localhost:{port} ...")
+    port = int(os.environ.get("PORT", 8000))
+    print(f"Starting PactPal Payments API on http://0.0.0.0:{port} ...")
     with make_server("0.0.0.0", port, app) as httpd:
         httpd.serve_forever()
 

@@ -8,12 +8,17 @@ Fulfills Done criteria for C10:
   - Strictly transitions contract from SIGNED -> FUNDED
 """
 
+import os
 import math
 import importlib
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
 
 from .client import PayPalClient, PayPalAPIError
+
+# Escrow & Hold Limits (matching PayPal Orders & Authorizations specifications)
+PAYPAL_HOLD_DURATION_DAYS = 29
+PAYPAL_HONOR_PERIOD_SECONDS = 3 * 86400  # 3 days (259,200s) honor period window
 
 # Dynamic imports to handle hyphenated directory name 'core-api'
 _repo_mod = importlib.import_module("services.core-api.db.repository")
@@ -82,8 +87,9 @@ class EscrowPaymentService:
         currency = contract.get("currency", "USD")
 
         # 3. Call PayPal to generate AUTHORIZE intent order
-        default_return = f"http://localhost:3000/contracts/{contract_id}/funded"
-        default_cancel = f"http://localhost:3000/contracts/{contract_id}"
+        frontend_base = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
+        default_return = f"{frontend_base}/contracts/{contract_id}/funded"
+        default_cancel = f"{frontend_base}/contracts/{contract_id}"
 
         order_res = self.paypal.create_authorize_order(
             reference_id=contract_id,
@@ -98,6 +104,7 @@ class EscrowPaymentService:
             "contract_id": contract_id,
             "paypal_order_id": order_res["order_id"],
             "approve_url": order_res["approve_url"],
+            "intent": "AUTHORIZE",
             "amount": total_amount,
             "currency": currency,
             "status": order_res["status"]
@@ -179,16 +186,33 @@ class EscrowPaymentService:
                 f"Contract '{contract_id}' does not have an active escrow hold (current status: '{status}')."
             )
 
-        # 3. Resolve Timestamps
-        # Determine authorization expiration target (29 days from authorization)
+        total_amount = float(contract.get("total_amount", 0.0))
+        currency = contract.get("currency", "USD")
         raw_expires_at = contract.get("auth_expires_at")
         raw_funded_at = contract.get("funded_at") or contract.get("updated_at")
 
+        # If contract has completed and settled, hold is concluded
+        if status == ContractState.SETTLED.value:
+            return {
+                "contract_id": contract_id,
+                "authorization_id": paypal_auth_id,
+                "amount": f"{total_amount:.2f}",
+                "currency": currency,
+                "status": "SETTLED",
+                "authorized_at": raw_funded_at or contract.get("updated_at"),
+                "expires_at": raw_expires_at or contract.get("updated_at"),
+                "days_remaining": 0,
+                "seconds_remaining": 0,
+                "is_expired": True
+            }
+
+        # 3. Resolve Timestamps
+        # Determine authorization expiration target (29 days from authorization)
         if raw_expires_at:
             expires_at = datetime.fromisoformat(raw_expires_at.replace("Z", "+00:00"))
         elif raw_funded_at:
             funded_dt = datetime.fromisoformat(raw_funded_at.replace("Z", "+00:00"))
-            expires_at = funded_dt + timedelta(days=29)
+            expires_at = funded_dt + timedelta(days=PAYPAL_HOLD_DURATION_DAYS)
         else:
             raise StateValidationError(f"Contract '{contract_id}' is missing authorization timestamp metadata.")
 
@@ -212,12 +236,12 @@ class EscrowPaymentService:
             days_remaining = math.ceil(seconds_remaining / 86400)
             is_expired = False
             # Within 3 days (259,200 seconds) flags re-authorization urgency
-            if seconds_remaining <= 3 * 86400:
+            if seconds_remaining <= PAYPAL_HONOR_PERIOD_SECONDS:
                 hold_status = "EXPIRING_SOON"
             else:
                 hold_status = "HELD"
 
-        authorized_at_iso = raw_funded_at if raw_funded_at else (expires_at - timedelta(days=29)).isoformat()
+        authorized_at_iso = raw_funded_at if raw_funded_at else (expires_at - timedelta(days=PAYPAL_HOLD_DURATION_DAYS)).isoformat()
         total_amount = float(contract.get("total_amount", 0.0))
         currency = contract.get("currency", "USD")
 

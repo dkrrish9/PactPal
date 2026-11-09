@@ -93,20 +93,64 @@ class PayPalClient:
         except Exception as e:
             raise PayPalAPIError(f"Failed to connect to PayPal OAuth: {str(e)}")
 
+    def _send_authorized_request(
+        self,
+        url: str,
+        data: Optional[bytes] = None,
+        headers: Optional[Dict[str, str]] = None,
+        method: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes an authenticated HTTP request against PayPal REST API.
+        Includes automatic 1-time token refresh on HTTP 401 Unauthorized.
+        """
+        token = self.get_access_token()
+        req_headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        if headers:
+            req_headers.update(headers)
+
+        req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                # Token may have expired upstream; force refresh and retry once
+                fresh_token = self.get_access_token(force_refresh=True)
+                req_headers["Authorization"] = f"Bearer {fresh_token}"
+                retry_req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+                try:
+                    with urllib.request.urlopen(retry_req, timeout=15) as resp:
+                        return json.loads(resp.read().decode())
+                except urllib.error.HTTPError as retry_e:
+                    err_body = retry_e.read().decode()
+                    raise PayPalAPIError(f"Request failed after token refresh ({retry_e.code}): {err_body}", status_code=retry_e.code)
+            err_body = e.read().decode()
+            raise PayPalAPIError(f"PayPal API error ({e.code}): {err_body}", status_code=e.code)
+        except Exception as e:
+            raise PayPalAPIError(f"Failed to communicate with PayPal API: {str(e)}")
+
     def create_authorize_order(
         self,
         reference_id: str,
         amount: float,
         currency: str = "USD",
         description: str = "PactPal Milestone Escrow Hold",
-        return_url: str = "http://localhost:3000/contracts/funded",
-        cancel_url: str = "http://localhost:3000/contracts/cancel"
+        return_url: Optional[str] = None,
+        cancel_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Creates a PayPal Order with intent 'AUTHORIZE' (funds reserved, not captured).
         Returns order ID and the buyer approval redirect URL.
         """
-        token = self.get_access_token()
+        frontend_base = os.environ.get("FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
+        resolved_return = return_url or f"{frontend_base}/contracts/funded"
+        resolved_cancel = cancel_url or f"{frontend_base}/contracts/cancel"
+
         url = f"{self.base_url}/v2/checkout/orders"
 
         payload = {
@@ -120,121 +164,75 @@ class PayPalClient:
                 }
             }],
             "application_context": {
-                "return_url": return_url,
-                "cancel_url": cancel_url,
+                "return_url": resolved_return,
+                "cancel_url": resolved_cancel,
                 "user_action": "CONTINUE",
                 "brand_name": "PactPal Escrow"
             }
         }
 
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode(),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            }
+        data = self._send_authorized_request(url, data=json.dumps(payload).encode(), method="POST")
+        order_id = data["id"]
+        approve_url = next(
+            (link["href"] for link in data.get("links", []) if link.get("rel") == "approve"),
+            None
         )
-
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-                order_id = data["id"]
-                approve_url = next(
-                    (link["href"] for link in data.get("links", []) if link.get("rel") == "approve"),
-                    None
-                )
-                return {
-                    "order_id": order_id,
-                    "approve_url": approve_url,
-                    "status": data.get("status"),
-                    "intent": "AUTHORIZE",
-                    "raw_response": data
-                }
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode()
-            raise PayPalAPIError(f"Create order failed ({e.code}): {err_body}", status_code=e.code)
+        return {
+            "order_id": order_id,
+            "approve_url": approve_url,
+            "status": data.get("status"),
+            "intent": "AUTHORIZE",
+            "raw_response": data
+        }
 
     def execute_authorization(self, order_id: str) -> Dict[str, Any]:
         """
         Executes authorization against an approved PayPal order.
         Extracts and returns the live authorization_id and holding status.
         """
-        token = self.get_access_token()
         url = f"{self.base_url}/v2/checkout/orders/{order_id}/authorize"
+        data = self._send_authorized_request(url, data=json.dumps({}).encode(), method="POST")
 
-        req = urllib.request.Request(
-            url,
-            data=json.dumps({}).encode(),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            }
-        )
+        # Extract authorization reference from purchase_units
+        purchase_units = data.get("purchase_units", [])
+        if not purchase_units:
+            raise PayPalAPIError("Malformed PayPal response: missing purchase_units", details=data)
 
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-                
-                # Extract authorization reference from purchase_units
-                purchase_units = data.get("purchase_units", [])
-                if not purchase_units:
-                    raise PayPalAPIError("Malformed PayPal response: missing purchase_units", details=data)
+        payments = purchase_units[0].get("payments", {})
+        authorizations = payments.get("authorizations", [])
+        if not authorizations:
+            raise PayPalAPIError("No authorization generated for order", details=data)
 
-                payments = purchase_units[0].get("payments", {})
-                authorizations = payments.get("authorizations", [])
-                if not authorizations:
-                    raise PayPalAPIError("No authorization generated for order", details=data)
+        primary_auth = authorizations[0]
+        auth_id = primary_auth["id"]
+        auth_status = primary_auth.get("status")
+        expiration_time = primary_auth.get("expiration_time")
 
-                primary_auth = authorizations[0]
-                auth_id = primary_auth["id"]
-                auth_status = primary_auth.get("status")
-                expiration_time = primary_auth.get("expiration_time")
-
-                return {
-                    "order_id": order_id,
-                    "authorization_id": auth_id,
-                    "status": auth_status,
-                    "expiration_time": expiration_time,
-                    "amount": primary_auth.get("amount", {}).get("value"),
-                    "currency": primary_auth.get("amount", {}).get("currency_code"),
-                    "raw_response": data
-                }
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode()
-            raise PayPalAPIError(f"Authorization failed ({e.code}): {err_body}", status_code=e.code)
+        return {
+            "order_id": order_id,
+            "authorization_id": auth_id,
+            "status": auth_status,
+            "expiration_time": expiration_time,
+            "amount": primary_auth.get("amount", {}).get("value"),
+            "currency": primary_auth.get("amount", {}).get("currency_code"),
+            "raw_response": data
+        }
 
     def get_authorization(self, authorization_id: str) -> Dict[str, Any]:
         """
         Fetches live authorization details from PayPal REST API v2.
         Endpoint: GET /v2/payments/authorizations/{authorization_id}
         """
-        token = self.get_access_token()
         url = f"{self.base_url}/v2/payments/authorizations/{authorization_id}"
+        data = self._send_authorized_request(url, method="GET")
 
-        req = urllib.request.Request(
-            url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            }
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-                return {
-                    "authorization_id": data.get("id"),
-                    "status": data.get("status"),
-                    "expiration_time": data.get("expiration_time"),
-                    "amount": data.get("amount", {}).get("value"),
-                    "currency": data.get("amount", {}).get("currency_code"),
-                    "raw_response": data
-                }
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode()
-            raise PayPalAPIError(f"Get authorization failed ({e.code}): {err_body}", status_code=e.code)
-        except Exception as e:
-            raise PayPalAPIError(f"Failed to fetch authorization: {str(e)}")
+        return {
+            "authorization_id": data.get("id"),
+            "status": data.get("status"),
+            "expiration_time": data.get("expiration_time"),
+            "amount": data.get("amount", {}).get("value"),
+            "currency": data.get("amount", {}).get("currency_code"),
+            "raw_response": data
+        }
 
 

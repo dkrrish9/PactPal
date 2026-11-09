@@ -390,6 +390,60 @@ class TestHoldExpiryAndCountdown(unittest.TestCase):
         self.assertEqual(payload["amount"], "1800.00")
         self.assertEqual(payload["status"], "HELD")
 
+    def test_settled_contract_returns_settled_status(self):
+        """Ensure querying hold for a SETTLED contract returns SETTLED status and zero remaining."""
+        contract = self._create_funded_contract(amount=1200.0)
+        cid = contract["id"]
+
+        # Simulate contract transitioning to SETTLED
+        self.repo.conn.cursor().execute(
+            "UPDATE contracts SET status = ? WHERE id = ?",
+            (ContractState.SETTLED.value, cid)
+        )
+        self.repo.conn.commit()
+
+        hold = self.service.get_contract_hold(cid, actor=self.buyer)
+        self.assertEqual(hold["status"], "SETTLED")
+        self.assertEqual(hold["days_remaining"], 0)
+        self.assertEqual(hold["seconds_remaining"], 0)
+        self.assertTrue(hold["is_expired"])
+
+    def test_dynamic_frontend_base_url(self):
+        """Ensure initiate_contract_hold respects FRONTEND_BASE_URL environment variable."""
+        mock_paypal = unittest.mock.MagicMock()
+        mock_paypal.create_authorize_order.return_value = {
+            "order_id": "ORDER_BASE_URL_123",
+            "approve_url": "https://www.sandbox.paypal.com/checkoutnow?token=ORDER_BASE_URL_123",
+            "status": "CREATED"
+        }
+        service = EscrowPaymentService(repository=self.repo, paypal_client=mock_paypal)
+
+        # Create signed contract
+        contract = self.repo.create_contract(
+            buyer=self.buyer,
+            seller_id=self.seller.id,
+            title="Frontend Base URL Test",
+            description="Testing dynamic frontend base url",
+            total_amount=500.0,
+            deadline=(datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+        )
+        cid = contract["id"]
+        self.repo.transition_contract(cid, self.buyer, ContractState.REVIEW)
+        self.repo.transition_contract(cid, self.seller, ContractState.SIGNED, metadata={"acceptance_confirmed": True})
+
+        try:
+            import os
+            os.environ["FRONTEND_BASE_URL"] = "https://pactpal-app.onrender.com"
+            res = service.initiate_contract_hold(cid, actor=self.buyer)
+            self.assertEqual(res["intent"], "AUTHORIZE")
+
+            # Check that create_authorize_order received return_url with FRONTEND_BASE_URL
+            args, kwargs = mock_paypal.create_authorize_order.call_args
+            return_url = kwargs.get("return_url")
+            self.assertEqual(return_url, f"https://pactpal-app.onrender.com/contracts/{cid}/funded")
+        finally:
+            os.environ.pop("FRONTEND_BASE_URL", None)
+
 if __name__ == "__main__":
     unittest.main()
 
