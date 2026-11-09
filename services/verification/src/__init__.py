@@ -5,6 +5,7 @@ PactPal Verification Pipeline Package
 from .models import IntakeRequest, SubmissionRecord, AIIntakeAnalysis
 from .intake import StageAIntakeProcessor, IntakeValidationError, SubmissionLimitExceededError
 from .ai_evaluator import AIIntakeEvaluator
+from .sandbox import IsolatedWorkspace, WorkspaceSecurityError, WorkspaceExecutionResult
 
 __all__ = [
     "IntakeRequest",
@@ -13,5 +14,8 @@ __all__ = [
     "StageAIntakeProcessor",
     "IntakeValidationError",
     "SubmissionLimitExceededError",
-    "AIIntakeEvaluator"
+    "AIIntakeEvaluator",
+    "IsolatedWorkspace",
+    "WorkspaceSecurityError",
+    "WorkspaceExecutionResult"
 ]
