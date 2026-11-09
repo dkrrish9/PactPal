@@ -99,17 +99,21 @@ class PayPalClient:
         url: str,
         data: Optional[bytes] = None,
         headers: Optional[Dict[str, str]] = None,
-        method: Optional[str] = None
+        method: Optional[str] = None,
+        idempotency_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Executes an authenticated HTTP request against PayPal REST API.
-        Includes automatic 1-time token refresh on HTTP 401 Unauthorized.
+        Includes automatic 1-time token refresh on HTTP 401 Unauthorized,
+        and attaches PayPal-Request-Id for idempotency when supplied.
         """
         token = self.get_access_token()
         req_headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
+        if idempotency_key:
+            req_headers["PayPal-Request-Id"] = str(idempotency_key)
         if headers:
             req_headers.update(headers)
 
@@ -148,7 +152,8 @@ class PayPalClient:
         currency: str = "USD",
         description: str = "PactPal Milestone Escrow Hold",
         return_url: Optional[str] = None,
-        cancel_url: Optional[str] = None
+        cancel_url: Optional[str] = None,
+        idempotency_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Creates a PayPal Order with intent 'AUTHORIZE' (funds reserved, not captured).
@@ -178,7 +183,12 @@ class PayPalClient:
             }
         }
 
-        data = self._send_authorized_request(url, data=json.dumps(payload).encode(), method="POST")
+        data = self._send_authorized_request(
+            url,
+            data=json.dumps(payload).encode(),
+            method="POST",
+            idempotency_key=idempotency_key
+        )
         order_id = data["id"]
         approve_url = next(
             (link["href"] for link in data.get("links", []) if link.get("rel") == "approve"),
@@ -247,7 +257,8 @@ class PayPalClient:
         authorization_id: str,
         amount: float,
         currency: str = "USD",
-        is_final_capture: bool = True
+        is_final_capture: bool = True,
+        idempotency_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Captures an authorized payment by authorization ID.
@@ -263,7 +274,12 @@ class PayPalClient:
             "final_capture": is_final_capture,
             "note_to_payer": "PactPal Milestone Release"
         }
-        data = self._send_authorized_request(url, data=json.dumps(payload).encode(), method="POST")
+        data = self._send_authorized_request(
+            url,
+            data=json.dumps(payload).encode(),
+            method="POST",
+            idempotency_key=idempotency_key
+        )
         capture_id = data.get("id") or data.get("capture_id")
         return {
             "capture_id": capture_id,
@@ -274,13 +290,22 @@ class PayPalClient:
             "raw_response": data
         }
 
-    def void_authorization(self, authorization_id: str) -> Dict[str, Any]:
+    def void_authorization(
+        self,
+        authorization_id: str,
+        idempotency_key: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Voids an authorized payment by authorization ID to release uncaptured hold amount.
         Endpoint: POST /v2/payments/authorizations/{authorization_id}/void
         """
         url = f"{self.base_url}/v2/payments/authorizations/{authorization_id}/void"
-        data = self._send_authorized_request(url, data=b"", method="POST")
+        data = self._send_authorized_request(
+            url,
+            data=b"",
+            method="POST",
+            idempotency_key=idempotency_key
+        )
         status = "VOIDED"
         if isinstance(data, dict):
             status = data.get("status", "VOIDED")
@@ -296,7 +321,8 @@ class PayPalClient:
         amount: float,
         currency: str = "USD",
         note: str = "PactPal Milestone Release",
-        sender_batch_id: Optional[str] = None
+        sender_batch_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Disburses funds to the seller's PayPal account via PayPal Payouts API.
@@ -322,7 +348,12 @@ class PayPalClient:
                 "sender_item_id": item_id
             }]
         }
-        data = self._send_authorized_request(url, data=json.dumps(payload).encode(), method="POST")
+        data = self._send_authorized_request(
+            url,
+            data=json.dumps(payload).encode(),
+            method="POST",
+            idempotency_key=idempotency_key
+        )
         batch_header = data.get("batch_header", {}) if isinstance(data, dict) else {}
         payout_batch_id = batch_header.get("payout_batch_id") or (data.get("payout_batch_id") if isinstance(data, dict) else None)
         return {
@@ -334,6 +365,40 @@ class PayPalClient:
             "receiver": receiver_email,
             "raw_response": data
         }
+
+    def verify_webhook_signature(
+        self,
+        auth_algo: str,
+        cert_url: str,
+        transmission_id: str,
+        transmission_sig: str,
+        transmission_time: str,
+        webhook_event: Dict[str, Any],
+        webhook_id: Optional[str] = None
+    ) -> bool:
+        """
+        Verifies PayPal webhook signature via PayPal REST API.
+        Endpoint: POST /v1/notifications/verify-webhook-signature
+        """
+        resolved_webhook_id = webhook_id or os.environ.get("PAYPAL_WEBHOOK_ID", "PACTPAL_DEFAULT_WEBHOOK")
+        url = f"{self.base_url}/v1/notifications/verify-webhook-signature"
+        payload = {
+            "auth_algo": auth_algo,
+            "cert_url": cert_url,
+            "transmission_id": transmission_id,
+            "transmission_sig": transmission_sig,
+            "transmission_time": transmission_time,
+            "webhook_id": resolved_webhook_id,
+            "webhook_event": webhook_event
+        }
+        try:
+            data = self._send_authorized_request(url, data=json.dumps(payload).encode(), method="POST")
+            status = data.get("verification_status")
+            return status == "SUCCESS"
+        except PayPalAPIError:
+            return False
+        except Exception:
+            return False
 
 
 
