@@ -160,6 +160,31 @@ class TestEscrowPaymentService(unittest.TestCase):
         token = client.get_access_token(force_refresh=False)
         self.assertEqual(token, "cached_test_token_abc")
 
+    def test_paypal_client_401_retry_success(self):
+        """Ensure PayPal client automatically refreshes token and retries when encountering 401 Unauthorized."""
+        import io
+        import urllib.error
+        from unittest.mock import patch, MagicMock
+
+        client = PayPalClient(client_id="dummy_id", client_secret="dummy_secret")
+        client._cached_token = "stale_token_123"
+        client._token_expires_at = datetime.now(timezone.utc).timestamp() + 3600
+
+        # Simulate: 1st call = 401, 2nd call (OAuth token) = success, 3rd call (retry) = success
+        err_401 = urllib.error.HTTPError("https://api.test", 401, "Unauthorized", {}, io.BytesIO(b'{"error":"invalid_token"}'))
+        oauth_resp = MagicMock()
+        oauth_resp.read.return_value = b'{"access_token": "fresh_refreshed_token", "expires_in": 3600}'
+        oauth_resp.__enter__.return_value = oauth_resp
+
+        success_resp = MagicMock()
+        success_resp.read.return_value = b'{"id": "ORDER_RETRY_OK", "status": "CREATED"}'
+        success_resp.__enter__.return_value = success_resp
+
+        with patch("urllib.request.urlopen", side_effect=[err_401, oauth_resp, success_resp]):
+            res = client._send_authorized_request("https://api-m.sandbox.paypal.com/test", method="GET")
+            self.assertEqual(res["id"], "ORDER_RETRY_OK")
+            self.assertEqual(client._cached_token, "fresh_refreshed_token")
+
 if __name__ == "__main__":
     unittest.main()
 
