@@ -20,6 +20,7 @@ from .sandbox import (
     WorkspaceExecutionResult
 )
 from .runner import VerificationPipelineRunner
+from .test_runner import StageCTestSuiteProcessor
 
 __all__ = [
     "IntakeRequest",
@@ -33,5 +34,6 @@ __all__ = [
     "IsolatedWorkspace",
     "WorkspaceSecurityError",
     "WorkspaceExecutionResult",
-    "VerificationPipelineRunner"
+    "VerificationPipelineRunner",
+    "StageCTestSuiteProcessor"
 ]

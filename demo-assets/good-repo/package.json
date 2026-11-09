@@ -1,0 +1,13 @@
+{
+  "name": "pactpal-good-repo",
+  "version": "1.0.0",
+  "description": "Benchmark reference implementation deliverable for PactPal verification pipeline",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node test/runner.js"
+  },
+  "keywords": ["pactpal", "escrow", "benchmark", "good-repo"],
+  "author": "Freelancer Verified Persona",
+  "license": "MIT"
+}
