@@ -10,6 +10,8 @@ Fulfills Done criteria for C10:
 
 import os
 import math
+import json
+import hashlib
 import importlib
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional
@@ -28,6 +30,7 @@ _roles_mod = importlib.import_module("services.core-api.auth.roles")
 User = _roles_mod.User
 UserRole = _roles_mod.UserRole
 ForbiddenActionError = _roles_mod.ForbiddenActionError
+UnauthorizedRoleError = getattr(_roles_mod, "UnauthorizedRoleError", ForbiddenActionError)
 assert_can_fund_contract = _roles_mod.assert_can_fund_contract
 
 _sm_mod = importlib.import_module("services.core-api.state_machine.engine")
@@ -42,6 +45,16 @@ def assert_can_view_contract_hold(actor: User, contract: Dict[str, Any]) -> None
         raise ForbiddenActionError(
             f"User '{actor.id}' with role '{actor.role.value}' is not authorized to view hold details for contract '{contract.get('id')}'. "
             f"Access restricted to contract buyer, seller, or admin."
+        )
+
+def assert_can_settle_contract(actor: User, contract: Dict[str, Any]) -> None:
+    """Only platform ADMIN or AI Referee can settle contract escrow."""
+    is_admin = (actor.role == UserRole.ADMIN)
+    is_referee = (getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee")
+    if not (is_admin or is_referee):
+        raise ForbiddenActionError(
+            f"User '{actor.id}' with role '{actor.role.value}' is not authorized to settle contract '{contract.get('id')}'. "
+            f"Only platform ADMIN or AI Referee can execute escrow settlement."
         )
 
 
@@ -260,4 +273,185 @@ class EscrowPaymentService:
 
     # Alias for flexibility
     get_hold_expiry = get_contract_hold
+
+    def settle_contract_escrow(
+        self,
+        contract_id: str,
+        passed_amount: float,
+        refund_amount: float,
+        seller_paypal_email: str,
+        actor: User
+    ) -> Dict[str, Any]:
+        """
+        Settles contract escrow matching Phase 7 (Partial Payouts) and SHARED_API_CONTRACT.md Section 3.4.
+        
+        1. Validates permissions: Only platform ADMIN or AI Referee can settle.
+        2. Validates contract existence and active escrow state.
+        3. Enforces amount invariant: round(passed_amount + refund_amount, 2) == round(total_amount, 2).
+        4. If passed_amount > 0:
+           - Executes capture_authorization (with is_final_capture=True if refund_amount == 0 else False).
+           - Executes create_payout to seller_paypal_email.
+        5. If refund_amount > 0:
+           - Executes void_authorization to release uncaptured hold amount back to buyer.
+        6. Inserts payment ledger records (CAPTURE, PAYOUT, VOID) into relational payments table.
+        7. Transitions contract to SETTLED state in repository.
+        8. Generates cryptographic SHA-256 receipt hash and returns settlement summary.
+        """
+        contract = self.repository.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        # 1. Permission Guard
+        assert_can_settle_contract(actor, contract)
+
+        # 2. State Guard
+        current_status = contract.get("status")
+        if current_status == ContractState.SETTLED.value:
+            raise StateValidationError(f"Contract '{contract_id}' is already SETTLED.")
+
+        unfunded_states = {
+            ContractState.DRAFT.value,
+            ContractState.REVIEW.value,
+            ContractState.SIGNED.value
+        }
+        if current_status in unfunded_states:
+            raise StateValidationError(
+                f"Cannot settle contract in '{current_status}' state. Contract has not been funded."
+            )
+
+        auth_id = contract.get("paypal_auth_id")
+        if not auth_id:
+            raise StateValidationError(
+                f"Contract '{contract_id}' does not have an active PayPal authorization hold to settle."
+            )
+
+        # 3. Amount Invariant Guard
+        try:
+            passed = round(float(passed_amount), 2)
+            refund = round(float(refund_amount), 2)
+        except (ValueError, TypeError):
+            raise ValueError("passed_amount and refund_amount must be valid numerical values.")
+
+        if passed < 0 or refund < 0:
+            raise ValueError("passed_amount and refund_amount must be non-negative.")
+
+        total_amount = round(float(contract.get("total_amount", 0.0)), 2)
+        if round(passed + refund, 2) != total_amount:
+            raise ValueError(
+                f"Amount invariant violation: passed_amount ({passed:.2f}) + refund_amount ({refund:.2f}) = "
+                f"{round(passed + refund, 2):.2f} does not equal contract total_amount ({total_amount:.2f})."
+            )
+
+        # Validate seller PayPal email if payout is positive
+        target_email = seller_paypal_email or ""
+        if not target_email and hasattr(self.repository, "get_user"):
+            seller_user = self.repository.get_user(contract.get("seller_id"))
+            if seller_user and getattr(seller_user, "paypal_email", None):
+                target_email = seller_user.paypal_email
+
+        if passed > 0 and not target_email:
+            raise ValueError("seller_paypal_email is required when passed_amount > 0.")
+
+        currency = contract.get("currency", "USD")
+        capture_id: Optional[str] = None
+        payout_batch_id: Optional[str] = None
+        void_id: Optional[str] = None
+
+        # 4. Partial / Full Capture
+        if passed > 0:
+            is_final = (refund == 0.0)
+            capture_res = self.paypal.capture_authorization(
+                authorization_id=auth_id,
+                amount=passed,
+                currency=currency,
+                is_final_capture=is_final
+            )
+            capture_id = capture_res.get("capture_id")
+            if hasattr(self.repository, "record_payment"):
+                self.repository.record_payment(
+                    contract_id=contract_id,
+                    payment_type="CAPTURE",
+                    paypal_reference_id=str(capture_id),
+                    amount=passed,
+                    currency=currency,
+                    status="COMPLETED",
+                    metadata=capture_res
+                )
+
+            # Disburse Payout to Seller
+            payout_res = self.paypal.create_payout(
+                receiver_email=target_email,
+                amount=passed,
+                currency=currency,
+                note=f"PactPal Milestone Release for '{contract.get('title')}'"
+            )
+            payout_batch_id = payout_res.get("payout_batch_id")
+            if hasattr(self.repository, "record_payment"):
+                self.repository.record_payment(
+                    contract_id=contract_id,
+                    payment_type="PAYOUT",
+                    paypal_reference_id=str(payout_batch_id),
+                    amount=passed,
+                    currency=currency,
+                    status="COMPLETED",
+                    metadata=payout_res
+                )
+
+        # 5. Void / Refund remainder
+        if refund > 0:
+            void_res = self.paypal.void_authorization(authorization_id=auth_id)
+            void_id = void_res.get("authorization_id") or auth_id
+            if hasattr(self.repository, "record_payment"):
+                self.repository.record_payment(
+                    contract_id=contract_id,
+                    payment_type="VOID",
+                    paypal_reference_id=str(void_id),
+                    amount=refund,
+                    currency=currency,
+                    status="COMPLETED",
+                    metadata=void_res
+                )
+
+        # 6. State Machine Transition to SETTLED
+        settle_meta = {
+            "capture_id": capture_id,
+            "payout_batch_id": payout_batch_id,
+            "void_id": void_id,
+            "passed_amount": passed,
+            "refund_amount": refund,
+            "seller_paypal_email": target_email,
+            "settled_at": datetime.now(timezone.utc).isoformat()
+        }
+        self.repository.transition_contract(
+            contract_id=contract_id,
+            actor=actor,
+            target_state=ContractState.SETTLED,
+            metadata=settle_meta
+        )
+
+        # 7. Cryptographic SHA-256 Receipt Fingerprint
+        receipt_payload = {
+            "contract_id": str(contract_id),
+            "passed_amount": f"{passed:.2f}",
+            "refund_amount": f"{refund:.2f}",
+            "currency": currency,
+            "seller_paypal_email": str(target_email),
+            "capture_id": str(capture_id or ""),
+            "payout_batch_id": str(payout_batch_id or ""),
+            "refund_id": str(void_id or "")
+        }
+        receipt_hash = hashlib.sha256(json.dumps(receipt_payload, sort_keys=True).encode()).hexdigest()
+
+        return {
+            "contract_id": contract_id,
+            "status": "SETTLED",
+            "capture_id": capture_id,
+            "payout_batch_id": payout_batch_id,
+            "refund_id": void_id,
+            "passed_amount": passed,
+            "refund_amount": refund,
+            "currency": currency,
+            "receipt_hash": receipt_hash
+        }
+
 
