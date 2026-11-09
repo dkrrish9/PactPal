@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SubmissionRecord",
+  "description": "Schema for freelancer code submissions entering the PactPal verification pipeline",
+  "type": "object",
+  "required": [
+    "id",
+    "contract_id",
+    "seller_id",
+    "repo_url",
+    "commit_sha",
+    "submission_number",
+    "is_late",
+    "submitted_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "contract_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "seller_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "repo_url": {
+      "type": "string"
+    },
+    "commit_sha": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 64
+    },
+    "build_notes": {
+      "type": "string"
+    },
+    "submission_number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "is_late": {
+      "type": "boolean"
+    },
+    "delay_seconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "submitted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "deadline": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "ai_analysis": {
+      "type": ["object", "null"],
+      "properties": {
+        "detected_framework": { "type": "string" },
+        "build_commands": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "safety_flags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "summary_of_changes": { "type": "string" },
+        "risk_level": {
+          "type": "string",
+          "enum": ["LOW", "MEDIUM", "HIGH"]
+        },
+        "ai_provider_used": { "type": "string" }
+      }
+    },
+    "git_metadata": {
+      "type": ["object", "null"]
+    }
+  }
+}
