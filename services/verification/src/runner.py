@@ -9,7 +9,9 @@ Enforces the Stage B failure guard:
 """
 
 import os
+import uuid
 import shutil
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
@@ -110,16 +112,20 @@ class VerificationPipelineRunner:
             per_feature = {}
             if features:
                 for feat in features:
-                    feat_id = feat.get("id", str(feat.get("title", "")))
+                    feat_id = feat.get("id", str(uuid.uuid4()))
                     per_feature[feat_id] = {
+                        "feature_id": feat_id,
                         "feature_title": feat.get("title", "Feature"),
                         "status": "BUILD_PASSED",
+                        "reason": "Sandbox build succeeded cleanly",
+                        "evidence": "Build output generated without compiler errors",
+                        "severity": "NONE",
                         "price_weight": feat.get("price_weight", 0.0),
                         "allocated_amount": feat.get("allocated_amount", 0.0)
                     }
 
             return VerificationReport(
-                id=str(submission.id),
+                id=str(uuid.uuid4()),
                 submission_id=submission.id,
                 contract_id=submission.contract_id,
                 render_job_id=f"job_{submission.id[:8]}",
@@ -130,7 +136,7 @@ class VerificationPipelineRunner:
                 visual_diff_summary={"status": "PENDING_STAGE_E"},
                 per_feature_results=per_feature,
                 overall_score=1.0,
-                completed_at=submission.submitted_at,
+                completed_at=datetime.now(timezone.utc).isoformat(),
                 failure_reason=None,
                 ai_diagnostic=None,
                 skipped_stages=[],
@@ -139,6 +145,18 @@ class VerificationPipelineRunner:
 
     def _determine_build_commands(self, submission: SubmissionRecord, repo_dir: Path) -> List[List[str]]:
         """Determines appropriate build commands for the deliverable."""
+        # Check if AI analysis detected specific safe build commands from build notes
+        if submission.ai_analysis and submission.ai_analysis.get("build_commands"):
+            ai_cmds = submission.ai_analysis.get("build_commands", [])
+            safe_cmds = []
+            for cmd_str in ai_cmds:
+                parts = cmd_str.strip().split()
+                if parts and parts[0] in ("npm", "node", "yarn", "pnpm", "python", "pip", "npx"):
+                    safe_cmds.append(parts)
+            # Only use if package.json or build.js exists matching the commands
+            if safe_cmds and (repo_dir / "package.json").exists() and not (repo_dir / "build.js").exists():
+                return safe_cmds
+
         # If build.js exists in the repo, use node build.js
         if (repo_dir / "build.js").exists():
             return [["node", "build.js"]]

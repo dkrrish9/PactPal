@@ -132,9 +132,12 @@ class VerificationReport:
             for feat in features:
                 feat_id = feat.get("id", str(uuid.uuid4()))
                 per_feature[feat_id] = {
+                    "feature_id": feat_id,
                     "feature_title": feat.get("title", "Unknown Feature"),
                     "status": "FAILED",
                     "reason": f"Build failed: {failure_reason}",
+                    "evidence": failure_reason,
+                    "severity": "HIGH",
                     "allocated_amount": feat.get("allocated_amount", 0.0),
                     "price_weight": feat.get("price_weight", 0.0)
                 }
