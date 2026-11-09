@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "VerificationReport",
-  "description": "Standardized schema for PactPal multimodal verification reports produced by isolated Render Workflows containers",
+  "description": "Structured multi-modal verification report produced by the verification pipeline",
   "type": "object",
   "required": [
     "id",
@@ -10,196 +10,140 @@
     "build_succeeded",
     "build_logs",
     "test_suite_results",
-    "cheat_scan_findings",
-    "visual_diff_summary",
     "per_feature_results",
     "overall_score",
-    "completed_at"
+    "completed_at",
+    "next_state"
   ],
   "properties": {
     "id": {
       "type": "string",
-      "format": "uuid",
-      "description": "Unique verification report UUID"
+      "format": "uuid"
     },
     "submission_id": {
       "type": "string",
-      "format": "uuid",
-      "description": "Linked submission UUID"
+      "format": "uuid"
     },
     "contract_id": {
       "type": "string",
-      "format": "uuid",
-      "description": "Linked contract UUID"
+      "format": "uuid"
     },
     "render_job_id": {
-      "type": ["string", "null"],
-      "description": "Render Workflow container execution/job ID"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "build_succeeded": {
-      "type": "boolean",
-      "description": "True if repository built clean without errors in isolated container"
+      "type": "boolean"
     },
     "build_logs": {
-      "type": "string",
-      "description": "Standard output and stderr from the sandbox build step"
-    },
-    "overall_score": {
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 1.0,
-      "description": "Weighted overall score between 0.0 and 1.0"
-    },
-    "decision_recommendation": {
-      "type": ["string", "null"],
-      "enum": [
-        "FULL_RELEASE",
-        "PARTIAL_RELEASE_80_PERCENT",
-        "RE_VERIFY_REQUESTED",
-        "HOLD_FUNDS",
-        null
-      ],
-      "description": "AI Referee initial rules-based recommendation"
-    },
-    "decision_summary": {
-      "type": ["string", "null"],
-      "description": "Human-readable verdict explanation generated for buyer and seller"
-    },
-    "failure_reason": {
-      "type": ["string", "null"],
-      "description": "Root cause explanation if build or execution failed"
-    },
-    "ai_diagnostic": {
-      "type": ["object", "null"],
-      "description": "AI-generated failure diagnosis and remediation tips"
-    },
-    "skipped_stages": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "Pipeline stages skipped due to build failure (e.g. STAGE_C_TESTS)"
-    },
-    "next_state": {
-      "type": "string",
-      "enum": ["DECISION", "DISPUTE", "SETTLED", "IN_PROGRESS"],
-      "description": "Target lifecycle state for the contract following this report"
-    },
-    "completed_at": {
-      "type": "string",
-      "format": "date-time",
-      "description": "ISO 8601 completion timestamp"
+      "type": "string"
     },
     "test_suite_results": {
-      "type": "object",
-      "description": "Automated test execution metrics",
-      "properties": {
-        "status": { "type": "string" },
-        "total_tests": { "type": "integer", "minimum": 0 },
-        "passed_tests": { "type": "integer", "minimum": 0 },
-        "failed_tests": { "type": "integer", "minimum": 0 },
-        "skipped_tests": { "type": "integer", "minimum": 0 },
-        "coverage_percent": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-        "duration_ms": { "type": "integer", "minimum": 0 }
-      }
+      "type": "object"
     },
     "cheat_scan_findings": {
       "type": "array",
-      "description": "List of cheat, loophole, or security vulnerability alerts detected by AI scan",
       "items": {
+        "type": "object"
+      }
+    },
+    "visual_diff_summary": {
+      "type": "object"
+    },
+    "per_feature_results": {
+      "type": "object",
+      "description": "Per-feature verdicts mapped by feature_id satisfying C07 contract",
+      "additionalProperties": {
         "type": "object",
-        "required": ["finding_id", "feature_id", "rule_violated", "severity", "description"],
+        "required": [
+          "feature_id",
+          "status"
+        ],
         "properties": {
-          "finding_id": { "type": "string" },
-          "feature_id": { "type": "string" },
-          "rule_violated": {
+          "feature_id": {
+            "type": "string"
+          },
+          "feature_title": {
+            "type": "string"
+          },
+          "status": {
             "type": "string",
             "enum": [
-              "hardcoded_trick",
-              "disabled_test",
-              "placeholder_content",
-              "dead_ui",
-              "exposed_secret",
-              "sandbox_probe"
+              "PASSED",
+              "FAILED",
+              "PARTIAL",
+              "BUILD_PASSED",
+              "PENDING"
+            ]
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
             ]
           },
           "severity": {
             "type": "string",
-            "enum": ["none", "low", "medium", "high"]
+            "enum": [
+              "NONE",
+              "LOW",
+              "MEDIUM",
+              "HIGH"
+            ]
           },
-          "description": { "type": "string" },
-          "file_path": { "type": "string" },
-          "line_number": { "type": "integer" }
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "allocated_amount": {
+            "type": "number",
+            "minimum": 0
+          }
         }
       }
     },
-    "visual_diff_summary": {
-      "type": "object",
-      "description": "Visual comparison metrics against Figma mockups",
-      "properties": {
-        "status": { "type": "string" },
-        "similarity_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-        "threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.85 },
-        "passed": { "type": "boolean" },
-        "diff_image_url": { "type": ["string", "null"] },
-        "notes": { "type": "string" }
+    "overall_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "failure_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ai_diagnostic": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "skipped_stages": {
+      "type": "array",
+      "items": {
+        "type": "string"
       }
     },
-    "per_feature_results": {
-      "description": "Evaluation per contract checklist item (supports map/object by feature_id or array of feature objects)",
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": {
-            "type": "object",
-            "required": ["status"],
-            "properties": {
-              "feature_id": { "type": "string" },
-              "feature_title": { "type": "string" },
-              "title": { "type": "string" },
-              "status": {
-                "type": "string",
-                "enum": ["passed", "failed", "partially_met", "PASSED", "FAILED", "BUILD_PASSED", "PENDING"]
-              },
-              "price_weight": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-              "allocated_amount": { "type": "number", "minimum": 0.0 },
-              "evidence": { "type": "string" },
-              "reason": { "type": "string" },
-              "severity": {
-                "type": "string",
-                "enum": ["none", "low", "medium", "high", "NONE", "LOW", "MEDIUM", "HIGH"]
-              },
-              "test_passed": { "type": "boolean" },
-              "cheat_flagged": { "type": "boolean" },
-              "visual_similarity_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
-            }
-          }
-        },
-        {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["feature_id", "status"],
-            "properties": {
-              "feature_id": { "type": "string" },
-              "title": { "type": "string" },
-              "feature_title": { "type": "string" },
-              "status": {
-                "type": "string",
-                "enum": ["passed", "failed", "partially_met", "PASSED", "FAILED", "BUILD_PASSED", "PENDING"]
-              },
-              "price_weight": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
-              "allocated_amount": { "type": "number", "minimum": 0.0 },
-              "evidence": { "type": "string" },
-              "reason": { "type": "string" },
-              "severity": {
-                "type": "string",
-                "enum": ["none", "low", "medium", "high", "NONE", "LOW", "MEDIUM", "HIGH"]
-              },
-              "test_passed": { "type": "boolean" },
-              "cheat_flagged": { "type": "boolean" },
-              "visual_similarity_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
-            }
-          }
-        }
+    "next_state": {
+      "type": "string",
+      "enum": [
+        "DECISION",
+        "DISPUTE",
+        "SETTLED"
       ]
     }
   }

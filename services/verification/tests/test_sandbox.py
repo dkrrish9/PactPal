@@ -65,6 +65,7 @@ class TestIsolatedWorkspace(unittest.TestCase):
             self.assertNotIn("APP_SECRET", clean_env)
             self.assertNotIn("JWT_SECRET", clean_env)
             # Verify safe container indicators
+            self.assertEqual(clean_env.get("PACTPAL_SANDBOX"), "true")
             self.assertEqual(clean_env.get("PACOPAL_SANDBOX"), "true")
 
     def test_untrusted_code_cannot_read_secrets(self):
