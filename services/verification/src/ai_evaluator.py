@@ -1,11 +1,12 @@
 """
-PactPal Verification Pipeline - AI Intake Evaluator
-Analyzes seller build notes, commit messages, and submission context using
-Google Gemini API (or configured LLM provider) to detect sandbox escape attempts,
-prompt injections, and identify safe build instructions.
+PactPal Verification Pipeline - AI Evaluator & Failure Diagnostician
+Analyzes seller build notes, commit messages, and build failure logs using
+Google Gemini API (or configured LLM provider) to diagnose build crashes,
+detect sandbox escape attempts, and provide plain-language explanations for the AI Referee.
 """
 
 import os
+import re
 import json
 import urllib.request
 import urllib.error
@@ -26,7 +27,7 @@ def _load_env_if_needed():
                         os.environ.setdefault(k.strip(), v.strip())
 
 class AIIntakeEvaluator:
-    """Interacts with Gemini API to evaluate submission build notes and metadata."""
+    """Interacts with Gemini API to evaluate submissions and diagnose build failures."""
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         _load_env_if_needed()
@@ -54,7 +55,6 @@ class AIIntakeEvaluator:
             try:
                 return self._call_gemini_api(repo_url, commit_sha, build_notes, commit_message, submission_number)
             except Exception as e:
-                # Log warning and fall back to semantic analyzer
                 print(f"[AI EVALUATOR WARNING] Gemini API call failed: {e}. Using semantic analyzer.")
 
         return self._semantic_fallback_analysis(build_notes, commit_message, submission_number)
@@ -135,12 +135,10 @@ Return strictly a JSON object with this exact schema:
     ) -> AIIntakeAnalysis:
         """
         Deterministic semantic inspection used when running offline or without API keys.
-        Ensures malicious patterns are caught even without network access.
         """
         flags = []
         notes_lower = (build_notes or "").lower()
 
-        # Check for dangerous or evasive directives
         SUSPICIOUS_PATTERNS = [
             ("curl", "Build notes contain external network call (curl)"),
             ("wget", "Build notes contain external network call (wget)"),
@@ -154,7 +152,6 @@ Return strictly a JSON object with this exact schema:
             if pattern in notes_lower:
                 flags.append(warning)
 
-        # Framework heuristics
         if "next" in notes_lower:
             framework = "Next.js"
             cmds = ["npm install", "npm run build"]
@@ -179,3 +176,107 @@ Return strictly a JSON object with this exact schema:
             risk_level=risk_level,
             ai_provider_used="heuristic-semantic-engine"
         )
+
+    def diagnose_build_failure(
+        self,
+        build_stdout: str,
+        build_stderr: str,
+        exit_code: int
+    ) -> Dict[str, Any]:
+        """
+        Uses AI (Gemini) or heuristic analyzer to inspect raw compiler/build error output,
+        extract root cause, and produce a human-readable explanation for both the seller
+        and the AI Referee decision engine.
+        """
+        combined_logs = f"STDOUT:\n{build_stdout}\n\nSTDERR:\n{build_stderr}"
+
+        if self.is_ai_available():
+            try:
+                return self._call_gemini_build_diagnostics(combined_logs, exit_code)
+            except Exception as e:
+                print(f"[AI DIAGNOSTICIAN WARNING] Gemini call failed: {e}. Using semantic analyzer.")
+
+        return self._semantic_build_diagnostics(build_stdout, build_stderr, exit_code)
+
+    def _call_gemini_build_diagnostics(self, combined_logs: str, exit_code: int) -> Dict[str, Any]:
+        """Queries Google Gemini API for an intelligent diagnostic explanation of build failure."""
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        
+        # Limit log length to safe payload size
+        truncated_logs = combined_logs[-4000:]
+
+        prompt = f"""
+You are the Build Failure Diagnostician for PactPal, an automated AI Escrow Referee.
+A freelancer's code deliverable failed to build in our isolated verification container with exit code {exit_code}.
+
+Here are the build logs:
+\"\"\"
+{truncated_logs}
+\"\"\"
+
+Analyze the build failure and return strictly a JSON object:
+{{
+  "root_cause": "Short 1-sentence summary of the exact reason (e.g. Missing dependency 'react-icons', Syntax error in app.js line 14)",
+  "error_type": "SYNTAX_ERROR|MISSING_DEPENDENCY|COMPILER_ERROR|COMMAND_NOT_FOUND|RUNTIME_CRASH|TIMEOUT",
+  "suggested_fix": "Actionable instructions for the freelancer to fix the issue before resubmitting",
+  "referee_summary": "Objective explanation for the AI Referee to include in the dispute/escrow notice"
+}}
+"""
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"response_mime_type": "application/json", "temperature": 0.2}
+        }
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            candidate = data["candidates"][0]["content"]["parts"][0]["text"]
+            result = json.loads(candidate)
+            result["diagnostician"] = f"gemini ({self.model})"
+            return result
+
+    def _semantic_build_diagnostics(self, stdout: str, stderr: str, exit_code: int) -> Dict[str, Any]:
+        """
+        Deterministic log analyzer to pinpoint root cause when running offline.
+        """
+        combined = f"{stdout}\n{stderr}"
+        error_type = "COMPILER_ERROR"
+        root_cause = f"Build command exited with non-zero exit code ({exit_code})."
+        suggested_fix = "Inspect project dependencies and verify build commands run cleanly in a fresh environment."
+
+        # Pattern detection
+        if "Cannot find module" in combined or "ModuleNotFoundError" in combined:
+            error_type = "MISSING_DEPENDENCY"
+            match = re.search(r"(?:Cannot find module|No module named) ['\"]?([^'\"\n]+)['\"]?", combined)
+            mod_name = match.group(1) if match else "unknown package"
+            root_cause = f"Missing required module or dependency: '{mod_name}'"
+            suggested_fix = f"Add '{mod_name}' to package dependencies and verify clean installation."
+        elif "SyntaxError" in combined or "Unexpected token" in combined:
+            error_type = "SYNTAX_ERROR"
+            match = re.search(r"SyntaxError: ([^\n]+)", combined)
+            detail = match.group(1) if match else "invalid code syntax"
+            root_cause = f"Syntax error in source code: {detail}"
+            suggested_fix = "Fix syntax error and run linter before resubmitting."
+        elif "is not recognized as an internal or external command" in combined or "command not found" in combined:
+            error_type = "COMMAND_NOT_FOUND"
+            root_cause = "Specified build command or binary is not available in the container environment."
+            suggested_fix = "Ensure standard npm/node build scripts are defined in package.json."
+
+        referee_summary = (
+            f"Deliverable failed cleanly in Stage B Build ({error_type}): {root_cause}. "
+            "Under PactPal Zero-Trust escrow rules, all downstream tests are skipped and funds remain on hold "
+            "pending freelancer resubmission or AI Referee review."
+        )
+
+        return {
+            "root_cause": root_cause,
+            "error_type": error_type,
+            "suggested_fix": suggested_fix,
+            "referee_summary": referee_summary,
+            "diagnostician": "semantic-log-engine"
+        }
