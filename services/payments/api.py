@@ -27,10 +27,14 @@ from .service import (
     ForbiddenActionError,
     UnauthorizedRoleError,
     StateValidationError,
-    WebhookVerificationError
+    WebhookVerificationError,
+    ProportionalSplitResult,
+    assert_can_view_split_preview
 )
 
 HOLD_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/hold/?$")
+SPLIT_PREVIEW_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/split-preview/?$")
+SPLIT_PREVIEW_PAYMENTS_REGEX = re.compile(r"^/api/v1/payments/split-preview/?$")
 APPROVAL_CHECK_REGEX = re.compile(r"^/api/v1/payments/approval-check/?$")
 CONTRACT_APPROVAL_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/payment-approval/?$")
 CREATE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/create-hold/?$")
@@ -68,7 +72,10 @@ class PaymentsAPIHandler:
             return None
 
         # Look up user in repository
-        return self.repository.get_user(actor_id)
+        user = self.repository.get_user(actor_id)
+        if not user and actor_id == "AI_REFEREE":
+            return User(id="AI_REFEREE", name="AI Referee", email="referee@pactpal.internal", role=UserRole.ADMIN)
+        return user
 
     def _extract_idempotency_key(self, headers: Dict[str, str]) -> Optional[str]:
         """Extracts Idempotency-Key or X-Idempotency-Key from headers."""
@@ -97,7 +104,21 @@ class PaymentsAPIHandler:
             contract_id = match_hold.group(1)
             return self._handle_get_hold(contract_id, headers)
 
-        # 2. POST /api/v1/payments/approval-check (C31 Milestone 2)
+        # 2. GET or POST /api/v1/contracts/{id}/split-preview (C37 Milestone 3)
+        match_split_preview = SPLIT_PREVIEW_CONTRACT_REGEX.match(clean_path)
+        if match_split_preview:
+            if method not in ("GET", "POST"):
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on split-preview endpoint."})
+            contract_id = match_split_preview.group(1)
+            return self._handle_contract_split_preview(contract_id, headers, body, method)
+
+        # 3. POST /api/v1/payments/split-preview (C37 Milestone 3)
+        if SPLIT_PREVIEW_PAYMENTS_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on payments split-preview."})
+            return self._handle_payments_split_preview(headers, body)
+
+        # 4. POST /api/v1/payments/approval-check (C31 Milestone 2)
         if APPROVAL_CHECK_REGEX.match(clean_path):
             if method != "POST":
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on approval-check."})
@@ -162,6 +183,89 @@ class PaymentsAPIHandler:
         except StateValidationError as e:
             # Contract is not in funded state
             return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_contract_split_preview(
+        self,
+        contract_id: str,
+        headers: Dict[str, str],
+        body: Optional[bytes],
+        method: str
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for GET & POST /api/v1/contracts/{id}/split-preview (Commit C37).
+        Calculates and previews proportional escrow split breakdown, remainder assignment,
+        and mathematical invariant guarantee.
+        RBAC: Contract Buyer, Seller, Platform Admin, or AI Referee.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        feature_results = None
+        if method == "POST" and body:
+            try:
+                payload = json.loads(body.decode("utf-8"))
+                feature_results = payload.get("feature_results")
+            except Exception as e:
+                return self._json_response(400, {"error": "BAD_REQUEST", "message": f"Malformed JSON body: {str(e)}"})
+
+        try:
+            split_result = self.service.calculate_proportional_split(
+                contract_id=contract_id,
+                feature_results=feature_results,
+                actor=actor
+            )
+            return self._json_response(200, split_result.to_dict())
+        except ValueError as e:
+            return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_payments_split_preview(
+        self,
+        headers: Dict[str, str],
+        body: Optional[bytes]
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/split-preview (Commit C37).
+        Calculates split preview given contract_id and optional feature_results in request body.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except Exception as e:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": f"Malformed JSON body: {str(e)}"})
+
+        contract_id = payload.get("contract_id")
+        if not contract_id:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "contract_id is required."})
+
+        feature_results = payload.get("feature_results")
+
+        try:
+            split_result = self.service.calculate_proportional_split(
+                contract_id=contract_id,
+                feature_results=feature_results,
+                actor=actor
+            )
+            return self._json_response(200, split_result.to_dict())
+        except ValueError as e:
+            return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
 

@@ -38,7 +38,7 @@ The **Model Context Protocol (MCP)**, developed by Anthropic and adopted within 
 | Agent Role | Required PayPal Capabilities | MCP Tool |
 | :--- | :--- | :--- |
 | **Payment Agent** | Create authorization order, verify buyer approval, inspect hold countdown | `paypal_get_authorization`, `paypal_check_approval_policy` |
-| **AI Referee** | Verify milestone deliverables, evaluate test/cheat reports, trigger split settlement | `paypal_capture_authorization`, `paypal_create_payout`, `paypal_void_authorization` |
+| **AI Referee** | Verify milestone deliverables, evaluate test/cheat reports, calculate split math, trigger split settlement | `paypal_calculate_split_preview`, `paypal_capture_authorization`, `paypal_create_payout`, `paypal_void_authorization` |
 | **Dispute Arbitrator** | Triage claims, inspect buyer chargebacks, review evidence | `paypal_list_disputes`, `paypal_get_dispute_details` |
 | **Compliance Auditor** | Cryptographic webhook verification, payout reconciliation | `paypal_verify_webhook`, `paypal_get_payout_status` |
 
@@ -231,6 +231,33 @@ Enables the AI Referee or Dispute Arbitrator to monitor buyer disputes and charg
         "description": "ISO-8601 start date."
       }
     }
+  }
+}
+```
+
+### 3.7 `paypal_calculate_split_preview` (Commit C37 Milestone 3)
+Calculates and previews proportional partial escrow split math:
+- Itemized feature allocations according to `price_weight`.
+- Deterministic Remainder Rule: Dynamically assigns the rounding delta ($\pm \$0.01$) to the last feature so that $\sum_{i=1}^N \text{allocated}_i == \text{total\_amount}$ exactly to the cent.
+- Invariant guarantee: `round(passed_amount + refund_amount, 2) == round(total_amount, 2)` with zero lost pennies under any combination of weights and prices.
+
+```json
+{
+  "name": "paypal_calculate_split_preview",
+  "description": "Computes exact itemized milestone feature split math and remainder cents reconciliation for an escrow contract.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "contract_id": {
+        "type": "string",
+        "description": "Unique UUID of the contract in PactPal core repository."
+      },
+      "feature_results": {
+        "type": "object",
+        "description": "Optional map of feature IDs to PASSED or FAILED verdicts."
+      }
+    },
+    "required": ["contract_id"]
   }
 }
 ```
