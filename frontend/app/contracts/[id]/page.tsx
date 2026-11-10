@@ -3,8 +3,31 @@ import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Clock, CheckCircle, AlertCircle, Circle, BarChart2, MessageSquare, Activity, FileText, ArrowRight, ShieldCheck, UploadCloud, Scale, GitBranch, ExternalLink, AlertTriangle } from "lucide-react";
-import { mockApi, Contract, HoldInfo, Feature, Submission } from "@/lib/mockApi";
+import { 
+  Clock, 
+  CheckCircle, 
+  AlertCircle, 
+  Circle, 
+  BarChart2, 
+  MessageSquare, 
+  Activity, 
+  FileText, 
+  ArrowRight, 
+  ShieldCheck, 
+  UploadCloud, 
+  Scale, 
+  GitBranch, 
+  ExternalLink, 
+  AlertTriangle,
+  Play,
+  Pause,
+  RotateCcw,
+  Zap,
+  ChevronRight,
+  Terminal as TerminalIcon,
+  Sparkles
+} from "lucide-react";
+import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
 
 type TabId = "overview" | "gantt" | "chat" | "activity" | "receipt";
 
@@ -37,6 +60,7 @@ export default function ContractDashboardPage() {
   const [holdInfo, setHoldInfo] = useState<HoldInfo | null>(null);
   const [releaseModalOpen, setReleaseModalOpen] = useState(false);
   const [isReleased, setIsReleased] = useState(false);
+  const [simulatedStatus, setSimulatedStatus] = useState<ContractStatus | null>(null);
 
   useEffect(() => {
     const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
@@ -47,8 +71,16 @@ export default function ContractDashboardPage() {
   }, [contractId]);
 
   const activeContract = contract || mockApi.getContracts()[0];
-  const currentStatus = isReleased ? "SETTLED" : (activeContract.status || "VERIFYING");
-  const meta = STATUS_META[currentStatus] || STATUS_META["VERIFYING"];
+  const currentStatus: ContractStatus = simulatedStatus || (isReleased ? "SETTLED" : (activeContract.status || "VERIFYING"));
+  const meta = CONTRACT_STATES_META[currentStatus] || CONTRACT_STATES_META["VERIFYING"];
+
+  const handleSimulateStatus = (status: ContractStatus) => {
+    setSimulatedStatus(status);
+    mockApi.updateContractStatus(activeContract.id, status);
+    if (contract) {
+      setContract({ ...contract, status });
+    }
+  };
 
   const features = activeContract.features || [];
   const passedAmount = features
@@ -237,6 +269,137 @@ export default function ContractDashboardPage() {
           </div>
         </div>
 
+        {/* The 10 Contract Lifecycle State Stepper (C33 Core Requirement) */}
+        <div
+          style={{
+            background: "rgba(255, 255, 255, 0.02)",
+            border: "1px solid rgba(255, 255, 255, 0.08)",
+            borderRadius: 20,
+            padding: "20px 24px",
+            marginBottom: 28,
+          }}
+          role="region"
+          aria-label="10-state contract lifecycle stepper"
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Sparkles size={16} color="#60A5FA" />
+              <span style={{ fontSize: 13, fontWeight: 800, color: "white", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                10-State Contract Lifecycle Stepper (C33)
+              </span>
+              <span
+                style={{
+                  background: meta.bg,
+                  color: meta.color,
+                  border: `1px solid ${meta.border}`,
+                  padding: "2px 10px",
+                  borderRadius: 20,
+                  fontSize: 11,
+                  fontWeight: 800,
+                }}
+              >
+                CURRENT: {currentStatus}
+              </span>
+            </div>
+
+            {/* State Simulator Selector */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Simulate Any State:</span>
+              <select
+                value={currentStatus}
+                onChange={(e) => handleSimulateStatus(e.target.value as ContractStatus)}
+                style={{
+                  background: "rgba(0,0,0,0.6)",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: 10,
+                  color: "white",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  padding: "5px 12px",
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+                aria-label="Simulate contract state"
+              >
+                {Object.keys(CONTRACT_STATES_META).map((st) => (
+                  <option key={st} value={st} style={{ background: "#0F172A", color: "white" }}>
+                    {CONTRACT_STATES_META[st as ContractStatus].step}. {CONTRACT_STATES_META[st as ContractStatus].label} ({st})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Stepper items row */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(105px, 1fr))",
+              gap: 8,
+            }}
+          >
+            {Object.entries(CONTRACT_STATES_META).map(([stKey, stMeta]) => {
+              const isActive = currentStatus === stKey;
+              const isPast = CONTRACT_STATES_META[currentStatus]?.step > stMeta.step;
+              return (
+                <button
+                  key={stKey}
+                  onClick={() => handleSimulateStatus(stKey as ContractStatus)}
+                  title={`${stMeta.label}: ${stMeta.shortDesc}`}
+                  style={{
+                    background: isActive ? stMeta.bg : isPast ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.01)",
+                    border: `1px solid ${isActive ? stMeta.border : isPast ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.05)"}`,
+                    borderRadius: 12,
+                    padding: "10px 6px",
+                    textAlign: "center",
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    position: "relative",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 800,
+                      fontFamily: "JetBrains Mono, monospace",
+                      color: isActive ? stMeta.color : isPast ? "#81C784" : "var(--color-text-muted)",
+                      marginBottom: 2,
+                    }}
+                  >
+                    {isPast ? "✓" : `0${stMeta.step}`}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: isActive ? "white" : isPast ? "rgba(255,255,255,0.85)" : "var(--color-text-muted)",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {stMeta.label}
+                  </div>
+                  {isActive && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: 0,
+                        left: "15%",
+                        right: "15%",
+                        height: 2,
+                        background: stMeta.color,
+                        borderRadius: 2,
+                        boxShadow: `0 0 10px ${stMeta.color}`,
+                      }}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Milestone Action Callout Banner */}
         {activeContract.status === "REVIEW" && (
           <div
@@ -316,6 +479,48 @@ export default function ContractDashboardPage() {
               }}
             >
               Open PayPal Funding Page →
+            </Link>
+          </div>
+        )}
+
+        {(activeContract.status === "VERIFYING" || activeContract.status === "SUBMITTED" || activeContract.status === "DECISION" || activeContract.status === "SETTLED") && (
+          <div
+            style={{
+              marginBottom: 28,
+              padding: "18px 24px",
+              background: "rgba(122, 92, 255, 0.1)",
+              border: "1px solid rgba(122, 92, 255, 0.35)",
+              borderRadius: 18,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 24 }}>🤖</span>
+              <div>
+                <strong style={{ color: "white", fontSize: 15 }}>C29 AI Referee Verification Results</strong>
+                <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
+                  Review per-feature verdicts, test suite evidence, and side-by-side Figma vs headless browser screenshots.
+                </p>
+              </div>
+            </div>
+            <Link
+              href={`/contracts/${activeContract.id}/verification`}
+              style={{
+                background: "linear-gradient(135deg, #7A5CFF, #0066FF)",
+                color: "white",
+                padding: "10px 22px",
+                borderRadius: 30,
+                fontSize: 13,
+                fontWeight: 700,
+                textDecoration: "none",
+                boxShadow: "0 0 20px rgba(122,92,255,0.4)",
+              }}
+            >
+              View Verification Results (C29) →
             </Link>
           </div>
         )}
@@ -536,6 +741,27 @@ function OverviewTab({
                 </div>
               </div>
             </div>
+
+            <Link
+              href={`/contracts/${contractId}/verification`}
+              style={{
+                background: "rgba(122,92,255,0.12)",
+                border: "1px solid rgba(122,92,255,0.35)",
+                borderRadius: 10,
+                color: "#A78BFA",
+                padding: "11px 16px",
+                fontSize: 13,
+                fontWeight: 600,
+                textDecoration: "none",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+              aria-label="View verification report"
+            >
+              <span>Verification report (C29)</span>
+              <ShieldCheck size={14} aria-hidden />
+            </Link>
 
             <Link
               href={`/contracts/${contractId}/submit`}
@@ -834,6 +1060,27 @@ function OverviewTab({
             </button>
 
             <Link
+              href={`/contracts/${contractId}/verification`}
+              style={{
+                background: "rgba(122,92,255,0.12)",
+                border: "1px solid rgba(122,92,255,0.35)",
+                borderRadius: 10,
+                color: "#A78BFA",
+                padding: "11px 16px",
+                fontSize: 13,
+                fontWeight: 600,
+                textDecoration: "none",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+              aria-label="View verification report"
+            >
+              <span>Verification report (C29)</span>
+              <ShieldCheck size={14} aria-hidden />
+            </Link>
+
+            <Link
               href={`/contracts/${contractId}/submit`}
               style={{
                 background: "rgba(0,102,255,0.1)",
@@ -1099,22 +1346,173 @@ function ChatTab({ features = [] }: { features?: Feature[] }) {
 }
 
 function ActivityTab({ submission }: { submission?: Submission | null }) {
-  const stages = [
+  const [activeStageIndex, setActiveStageIndex] = useState<number>(4);
+  const [isSimulating, setIsSimulating] = useState<boolean>(true);
+  const [expandedStage, setExpandedStage] = useState<number | null>(null);
+  const [eventLogs, setEventLogs] = useState<Array<{ time: string; text: string; type: "info" | "pass" | "warn" | "fail" }>>([
+    { time: "14:30:00.120", text: "MicroVM sandbox initialized in gVisor container (rnd_gvisor_89f0).", type: "info" },
+    { time: "14:30:01.440", text: `Cloned repo: ${submission?.repo_url || "https://github.com/freelancer/pactpal-storefront"} (branch: ${submission?.branch || "main"}).`, type: "pass" },
+    { time: "14:30:02.100", text: `Pinned commit SHA: ${submission?.commit_sha?.substring(0, 8) || "a1b8c9d4"} — immutable verification lock active.`, type: "info" },
+    { time: "14:30:45.320", text: "Clean container build finished in 38s (0 syntax errors).", type: "pass" },
+    { time: "14:31:12.890", text: "Automated test suite: 42 assertions executed, 35 passed, 7 failed.", type: "warn" },
+    { time: "14:31:30.400", text: "AST cheat-scan flagged hardcoded mock token in app/api/auth/route.ts:42 (HIGH severity).", type: "fail" },
+    { time: "14:31:45.150", text: "Headless Chrome captured 1440x900 viewport; calculating visual pixel similarity vs Figma...", type: "info" },
+  ]);
+
+  const stagesData = [
     { 
       stage: "A", 
       label: "Intake & Git clone", 
-      status: "passed", 
-      time: submission ? new Date(submission.submitted_at).toLocaleTimeString() : "14:30:01", 
+      defaultTime: "14:30:01", 
       detail: submission 
         ? `Repo cloned: ${submission.repo_url} · Commit: ${submission.commit_sha.substring(0, 8)} · ${submission.is_late ? "⚠️ LATE SUBMISSION" : "✅ ON-TIME"}`
-        : "Repo cloned: github.com/freelancer/pactpal-storefront · Commit: 4a9f2b1 · ✅ ON-TIME" 
+        : "Repo cloned: github.com/freelancer/pactpal-storefront · Commit: a1b8c9d4 · ✅ ON-TIME",
+      logs: [
+        "$ git init /sandbox/workspace",
+        "$ git remote add origin " + (submission?.repo_url || "https://github.com/freelancer/pactpal-storefront"),
+        "$ git fetch --depth=1 origin " + (submission?.branch || "main"),
+        "$ git checkout " + (submission?.commit_sha || "a1b8c9d4e5f67890123456789abcdef012345678"),
+        "HEAD is now at " + (submission?.commit_sha?.substring(0, 8) || "a1b8c9d4") + " feat: implement milestone features",
+        "[OK] Workspace integrity verified. Network proxy isolated to sandbox localhost.",
+      ]
     },
-    { stage: "B", label: "Clean build", status: "passed", time: "14:30:45", detail: "Build succeeded in 38s. 0 errors, 2 warnings." },
-    { stage: "C", label: "Automated test suite", status: "passed", time: "14:31:12", detail: "42 tests passed, 0 failed. Coverage: 87%." },
-    { stage: "D", label: "Cheat & loophole scan", status: "failed", time: "14:31:30", detail: "HIGH: Hardcoded JWT response in /api/login. Not real auth.", severity: "HIGH" },
-    { stage: "E", label: "Visual diff (Figma)", status: "running", time: "14:31:45", detail: "Comparing 4 screens against Figma specs..." },
-    { stage: "F", label: "QA multimodal report", status: "pending", time: "—", detail: "Waiting for Stage E to complete." },
+    { 
+      stage: "B", 
+      label: "Clean build in microVM", 
+      defaultTime: "14:30:45", 
+      detail: "Clean container build succeeded in 38s. Zero platform secrets exposed.",
+      logs: [
+        "$ npm install --frozen-lockfile",
+        "added 342 packages in 12.4s",
+        "$ npm run build",
+        "> pactpal-storefront@0.1.0 build",
+        "> next build",
+        "✓ Creating an optimized production build",
+        "✓ Compiled successfully in 18.2s",
+        "[OK] Build artifact ready. Exit code: 0.",
+      ]
+    },
+    { 
+      stage: "C", 
+      label: "Automated test suite", 
+      defaultTime: "14:31:12", 
+      detail: "Jest test runner: 42 assertions executed. 35 passed, 7 failed. Coverage: 88.5%.",
+      logs: [
+        "$ npm test -- --coverage --ci",
+        "PASS tests/unit/landing.test.tsx",
+        "PASS tests/unit/navigation.test.tsx",
+        "PASS tests/unit/cart.test.tsx",
+        "FAIL tests/unit/auth.test.tsx",
+        "  ● Session Authentication › persists across browser refresh",
+        "    Expected real JWT session token, received hardcoded string 'mock_jwt_token_123'",
+        "Tests: 7 failed, 35 passed, 42 total",
+        "Coverage: 88.5% Stmts, 84.2% Branch",
+      ]
+    },
+    { 
+      stage: "D", 
+      label: "Cheat & loophole scan", 
+      defaultTime: "14:31:30", 
+      detail: "HIGH: Hardcoded mock token in /app/api/auth/route.ts:42 violates acceptance contract.", 
+      severity: "HIGH",
+      logs: [
+        "$ ast-walker --scan-mocks --ast-rules ./rules.json",
+        "[AST] Parsing 24 source TypeScript files into AST nodes...",
+        "[AST WARNING] File: app/api/auth/route.ts:42",
+        "  Rule: NO_HARDCODED_AUTH_RESPONSES",
+        "  Snippet: return NextResponse.json({ token: 'mock_jwt_token_123' })",
+        "  Verdict: Stubbed auth violates acceptance criteria #2.",
+        "[AST] Scan finished with 1 HIGH finding.",
+      ]
+    },
+    { 
+      stage: "E", 
+      label: "Visual diff (Figma vs Headless)", 
+      defaultTime: "14:31:45", 
+      detail: "Headless Chromium visual regression: 89.2% similarity (Figma threshold: 90.0%).",
+      logs: [
+        "$ chromium-headless --virtual-time-budget=5000 --window-size=1440,900 --screenshot",
+        "[PIXELMATCH] Target: figma-specs/desktop_v2.png",
+        "[PIXELMATCH] Actual: artifacts/renders/viewport_1440x900.png",
+        "[PIXELMATCH] Total pixels: 1,296,000",
+        "[PIXELMATCH] Mismatched pixels: 139,968 (10.8% delta)",
+        "[PIXELMATCH] Similarity Score: 89.2% vs Threshold 90.0%",
+        "[DIFF] Delta concentrated around header padding and button font-size.",
+      ]
+    },
+    { 
+      stage: "F", 
+      label: "QA multimodal report & decision", 
+      defaultTime: "14:32:00", 
+      detail: "Evaluation complete. Recommended settlement: $1,125 USD released, $375 USD refunded.",
+      logs: [
+        "[DECISION ENGINE] Merging stages A through E into unified JSON report...",
+        "[ALLOCATION] Feature 01: PASSED ($375 released)",
+        "[ALLOCATION] Feature 02: FAILED ($300 held/refunded)",
+        "[ALLOCATION] Feature 03: PASSED ($450 released)",
+        "[ALLOCATION] Feature 04: PASSED ($300 released)",
+        "[SUMMARY] Total released: $1,125 USD | Total refunded: $375 USD",
+        "[STATUS] State transitioning: VERIFYING -> DECISION",
+      ]
+    },
   ];
+
+  // Live ticker simulation (Feed updates as the Referee works)
+  useEffect(() => {
+    if (!isSimulating) return;
+
+    const timer = setInterval(() => {
+      setActiveStageIndex((prev) => {
+        if (prev < stagesData.length - 1) {
+          const next = prev + 1;
+          const nowStr = new Date().toLocaleTimeString() + "." + Math.floor(Math.random() * 900 + 100);
+          setEventLogs((logs) => [
+            ...logs,
+            {
+              time: nowStr,
+              text: `Stage ${stagesData[next].stage} (${stagesData[next].label}) active — executing container tasks...`,
+              type: "info",
+            },
+          ]);
+          return next;
+        } else {
+          return prev;
+        }
+      });
+    }, 4000);
+
+    return () => clearInterval(timer);
+  }, [isSimulating, stagesData]);
+
+  const handleRestartSimulation = () => {
+    setActiveStageIndex(0);
+    setIsSimulating(true);
+    setEventLogs([
+      {
+        time: new Date().toLocaleTimeString() + ".001",
+        text: "AI Referee simulation restarted by user. Booting container microVM...",
+        type: "info",
+      },
+      {
+        time: new Date().toLocaleTimeString() + ".250",
+        text: "Stage A: Intake & Git clone started for commit " + (submission?.commit_sha?.substring(0, 8) || "a1b8c9d4"),
+        type: "pass",
+      },
+    ]);
+  };
+
+  const handleFastForward = () => {
+    setActiveStageIndex(5);
+    setIsSimulating(false);
+    setEventLogs((logs) => [
+      ...logs,
+      {
+        time: new Date().toLocaleTimeString() + ".999",
+        text: "Fast-forward: All 6 stages completed. Payout settlement proposal ready.",
+        type: "pass",
+      },
+    ]);
+  };
 
   const stageColors: Record<string, string> = {
     passed: "#4CAF50",
@@ -1127,118 +1525,315 @@ function ActivityTab({ submission }: { submission?: Submission | null }) {
     <div
       style={{
         background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.07)",
+        border: "1px solid rgba(255,255,255,0.08)",
         borderRadius: 24,
         overflow: "hidden",
       }}
       role="log"
-      aria-label="Verification activity feed"
+      aria-label="Verification live activity feed"
       aria-live="polite"
     >
-      <div style={{ padding: "20px 28px", borderBottom: "1px solid rgba(255,255,255,0.07)", fontWeight: 700, fontSize: 15, color: "white" }}>
-        Verification Pipeline — Stages A–F
-      </div>
-      <div style={{ padding: "24px 28px", display: "flex", flexDirection: "column", gap: 0 }}>
-        {stages.map((s, i) => (
+      {/* Top Controls Bar */}
+      <div
+        style={{
+          padding: "18px 28px",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 14,
+          background: "rgba(0,0,0,0.2)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div
-            key={i}
             style={{
-              display: "flex",
-              gap: 20,
-              paddingBottom: i < stages.length - 1 ? 28 : 0,
-              position: "relative",
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              background: isSimulating ? "#4CAF50" : "#FF9800",
+              boxShadow: isSimulating ? "0 0 10px #4CAF50" : "none",
             }}
-            role="listitem"
-            aria-label={`Stage ${s.stage}: ${s.label} — ${s.status}`}
+          />
+          <span style={{ fontWeight: 800, fontSize: 15, color: "white" }}>
+            Live Verification Pipeline — Stages A to F (C33)
+          </span>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              background: isSimulating ? "rgba(76,175,80,0.15)" : "rgba(255,152,0,0.15)",
+              color: isSimulating ? "#81C784" : "#FFB74D",
+              padding: "2px 8px",
+              borderRadius: 20,
+            }}
           >
-            {/* Vertical connector */}
-            {i < stages.length - 1 && (
+            {isSimulating ? "FEED STREAMING LIVE" : "FEED PAUSED"}
+          </span>
+        </div>
+
+        {/* Live Simulation Controls */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            onClick={() => setIsSimulating(!isSimulating)}
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              color: "white",
+              padding: "6px 14px",
+              borderRadius: 20,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {isSimulating ? <Pause size={12} /> : <Play size={12} />}
+            {isSimulating ? "Pause Feed" : "Resume Feed"}
+          </button>
+
+          <button
+            onClick={handleRestartSimulation}
+            style={{
+              background: "rgba(0,102,255,0.12)",
+              border: "1px solid rgba(0,102,255,0.3)",
+              color: "#60A5FA",
+              padding: "6px 14px",
+              borderRadius: 20,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <RotateCcw size={12} /> Re-run Simulation
+          </button>
+
+          <button
+            onClick={handleFastForward}
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              color: "white",
+              padding: "6px 14px",
+              borderRadius: 20,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Zap size={12} /> Fast Forward
+          </button>
+        </div>
+      </div>
+
+      {/* Stages Vertical Timeline */}
+      <div style={{ padding: "28px", display: "flex", flexDirection: "column", gap: 0 }}>
+        {stagesData.map((s, i) => {
+          let status: "passed" | "failed" | "running" | "pending";
+          if (i < activeStageIndex) {
+            status = i === 3 ? "failed" : "passed";
+          } else if (i === activeStageIndex) {
+            status = isSimulating ? "running" : (i === 3 ? "failed" : "passed");
+          } else {
+            status = "pending";
+          }
+
+          const isExpanded = expandedStage === i;
+
+          return (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                gap: 20,
+                paddingBottom: i < stagesData.length - 1 ? 28 : 12,
+                position: "relative",
+              }}
+              role="listitem"
+              aria-label={`Stage ${s.stage}: ${s.label} — ${status}`}
+            >
+              {/* Connector */}
+              {i < stagesData.length - 1 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 20,
+                    top: 42,
+                    bottom: 0,
+                    width: 2,
+                    background: status === "passed"
+                      ? "rgba(76, 175, 80, 0.4)"
+                      : status === "running"
+                      ? "rgba(0, 102, 255, 0.4)"
+                      : "rgba(255, 255, 255, 0.08)",
+                  }}
+                  aria-hidden
+                />
+              )}
+
+              {/* Stage Dot / Badge */}
               <div
                 style={{
-                  position: "absolute",
-                  left: 20,
-                  top: 40,
-                  bottom: 0,
-                  width: 2,
-                  background: stageColors[s.status] === "#7C89A8"
-                    ? "rgba(124,137,168,0.2)"
-                    : `${stageColors[s.status]}30`,
+                  width: 42,
+                  height: 42,
+                  borderRadius: "50%",
+                  background: `${stageColors[status]}18`,
+                  border: `2px solid ${stageColors[status]}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  fontWeight: 900,
+                  fontSize: 14,
+                  color: stageColors[status],
+                  fontFamily: "JetBrains Mono, monospace",
+                  boxShadow: status === "running" ? `0 0 20px ${stageColors[status]}60` : "none",
+                  animation: status === "running" ? "pulse 1.5s infinite" : "none",
                 }}
                 aria-hidden
-              />
-            )}
+              >
+                {status === "running" ? "⏳" : s.stage}
+              </div>
 
-            {/* Stage dot */}
-            <div
-              style={{
-                width: 42,
-                height: 42,
-                borderRadius: "50%",
-                background: `${stageColors[s.status]}18`,
-                border: `2px solid ${stageColors[s.status]}50`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-                fontWeight: 800,
-                fontSize: 14,
-                color: stageColors[s.status],
-                fontFamily: "JetBrains Mono, monospace",
-                boxShadow: s.status === "running" ? `0 0 20px ${stageColors[s.status]}40` : "none",
-              }}
-              aria-hidden
-            >
-              {s.stage}
-            </div>
+              {/* Stage Content */}
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8, marginBottom: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15, color: "white" }}>
+                      Stage {s.stage}: {s.label}
+                    </span>
+                    {s.severity && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          color: "#F44336",
+                          background: "rgba(244,67,54,0.15)",
+                          border: "1px solid rgba(244,67,54,0.3)",
+                          borderRadius: 50,
+                          padding: "2px 8px",
+                        }}
+                      >
+                        {s.severity} SEVERITY
+                      </span>
+                    )}
+                  </div>
 
-            <div style={{ flex: 1 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontWeight: 700, fontSize: 15, color: "white" }}>Stage {s.stage}: {s.label}</span>
-                  {s.severity && (
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <span style={{ fontSize: 12, fontFamily: "JetBrains Mono, monospace", color: "var(--color-text-muted)" }}>
+                      {s.defaultTime}
+                    </span>
                     <span
                       style={{
-                        fontSize: 10,
+                        fontSize: 11,
                         fontWeight: 800,
-                        letterSpacing: "0.08em",
-                        color: "#F44336",
-                        background: "rgba(244,67,54,0.1)",
-                        border: "1px solid rgba(244,67,54,0.3)",
-                        borderRadius: 50,
-                        padding: "2px 10px",
+                        letterSpacing: "0.06em",
+                        color: stageColors[status],
+                        textTransform: "uppercase",
                       }}
                     >
-                      {s.severity}
+                      {status}
                     </span>
-                  )}
+                  </div>
                 </div>
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <span
+
+                <p style={{ fontSize: 13, color: "var(--color-text-secondary)", lineHeight: 1.5, margin: "0 0 8px" }}>
+                  {s.detail}
+                </p>
+
+                {/* Stdout Console Logs Expandable Drawer */}
+                <button
+                  onClick={() => setExpandedStage(isExpanded ? null : i)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#60A5FA",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    padding: 0,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <TerminalIcon size={12} /> {isExpanded ? "Hide console stdout ▲" : "View console stdout ▼"}
+                </button>
+
+                {isExpanded && (
+                  <pre
                     style={{
-                      fontSize: 12,
+                      background: "rgba(0, 0, 0, 0.45)",
+                      border: "1px solid rgba(255,255,255,0.06)",
+                      borderRadius: 10,
+                      padding: "12px 16px",
+                      color: "#93C5FD",
                       fontFamily: "JetBrains Mono, monospace",
-                      color: "var(--color-text-muted)",
+                      fontSize: 12,
+                      lineHeight: 1.6,
+                      marginTop: 8,
+                      overflowX: "auto",
                     }}
                   >
-                    {s.time}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      letterSpacing: "0.06em",
-                      color: stageColors[s.status],
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {s.status}
-                  </span>
-                </div>
+                    {s.logs.join("\n")}
+                  </pre>
+                )}
               </div>
-              <p style={{ fontSize: 13, color: "var(--color-text-muted)", lineHeight: 1.5 }}>{s.detail}</p>
             </div>
-          </div>
-        ))}
+          );
+        })}
+      </div>
+
+      {/* Live Event Log Stream (C33 Core Requirement) */}
+      <div
+        style={{
+          borderTop: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(0,0,0,0.35)",
+          padding: "20px 28px",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.08em" }}>
+            REAL-TIME EVENT TICKER LOG
+          </span>
+          <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+            {eventLogs.length} events logged
+          </span>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            maxHeight: 160,
+            overflowY: "auto",
+            fontFamily: "JetBrains Mono, monospace",
+            fontSize: 12,
+          }}
+        >
+          {eventLogs.slice(-6).map((log, lIdx) => (
+            <div key={lIdx} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <span style={{ color: "var(--color-text-muted)", flexShrink: 0 }}>[{log.time}]</span>
+              <span
+                style={{
+                  color: log.type === "pass" ? "#81C784" : log.type === "fail" ? "#EF5350" : log.type === "warn" ? "#FFB74D" : "#93C5FD",
+                }}
+              >
+                {log.text}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
