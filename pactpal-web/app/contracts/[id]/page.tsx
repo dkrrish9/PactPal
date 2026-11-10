@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -25,9 +25,16 @@ import {
   Zap,
   ChevronRight,
   Terminal as TerminalIcon,
-  Sparkles
+  Sparkles,
+  Send,
+  Bot,
+  User,
+  CheckCheck,
+  RefreshCw,
+  Check,
+  Copy
 } from "lucide-react";
-import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
+import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META, ChatMessage } from "@/lib/mockApi";
 
 type TabId = "overview" | "gantt" | "chat" | "activity" | "receipt";
 
@@ -61,6 +68,7 @@ export default function ContractDashboardPage() {
   const [releaseModalOpen, setReleaseModalOpen] = useState(false);
   const [isReleased, setIsReleased] = useState(false);
   const [simulatedStatus, setSimulatedStatus] = useState<ContractStatus | null>(null);
+  const [deadlineAlert, setDeadlineAlert] = useState<string | null>(null);
 
   useEffect(() => {
     const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
@@ -79,6 +87,16 @@ export default function ContractDashboardPage() {
     mockApi.updateContractStatus(activeContract.id, status);
     if (contract) {
       setContract({ ...contract, status });
+    }
+  };
+
+  const handleAdminSimulateDeadline = () => {
+    const res = mockApi.simulateDeadlineWatcher(activeContract.id);
+    if (res) {
+      setSimulatedStatus("SETTLED");
+      setContract({ ...res.contract });
+      setDeadlineAlert(`⚡ [DEADLINE WATCHER FIRED (C49/C50)] Simulated deadline elapsed! Automated final verification completed. $${res.payoutAmount} USD disbursed to seller, $${res.refundAmount} USD refunded to buyer. Status transitioned to SETTLED.`);
+      setTimeout(() => setDeadlineAlert(null), 7000);
     }
   };
 
@@ -327,8 +345,53 @@ export default function ContractDashboardPage() {
                   </option>
                 ))}
               </select>
+
+              {/* Admin Simulate Deadline Button (C50) */}
+              <button
+                onClick={handleAdminSimulateDeadline}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "5px 12px",
+                  borderRadius: 10,
+                  background: "linear-gradient(135deg, rgba(245,158,11,0.2) 0%, rgba(239,68,68,0.2) 100%)",
+                  border: "1px solid rgba(245,158,11,0.5)",
+                  color: "#FBBF24",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+                title="Admin C50: Simulate deadline elapsed (triggers C49 deadline watcher, final verification & partial payout)"
+              >
+                <Zap size={13} color="#FBBF24" />
+                Simulate Deadline (Admin C50)
+              </button>
             </div>
           </div>
+
+          {/* Deadline Alert Banner (C50) */}
+          {deadlineAlert && (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: "12px 18px",
+                borderRadius: 12,
+                background: "rgba(245,158,11,0.15)",
+                border: "1px solid rgba(245,158,11,0.45)",
+                color: "#FDE68A",
+                fontSize: 13,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <Zap size={16} color="#FBBF24" />
+              <span>{deadlineAlert}</span>
+            </div>
+          )}
 
           {/* Stepper items row */}
           <div
@@ -525,6 +588,49 @@ export default function ContractDashboardPage() {
           </div>
         )}
 
+        {/* C45 Settled Receipt Notification Banner */}
+        {activeContract.status === "SETTLED" && (
+          <div
+            style={{
+              padding: "16px 24px",
+              borderRadius: 16,
+              background: "linear-gradient(135deg, rgba(16,185,129,0.15) 0%, rgba(0,102,255,0.1) 100%)",
+              border: "1px solid rgba(16,185,129,0.4)",
+              marginBottom: 24,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 24 }}>🧾</span>
+              <div>
+                <strong style={{ color: "white", fontSize: 15 }}>C45 Cryptographic Settlement Receipt Sealed</strong>
+                <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
+                  This contract has concluded. View the full proof-of-work summary, SHA-256 hash, timestamps, and evidence links.
+                </p>
+              </div>
+            </div>
+            <Link
+              href={`/contracts/${activeContract.id}/receipt`}
+              style={{
+                background: "linear-gradient(135deg, #10B981, #00A3E0)",
+                color: "white",
+                padding: "10px 22px",
+                borderRadius: 30,
+                fontSize: 13,
+                fontWeight: 700,
+                textDecoration: "none",
+                boxShadow: "0 0 20px rgba(16,185,129,0.3)",
+              }}
+            >
+              Open Official Receipt Page (C45) →
+            </Link>
+          </div>
+        )}
+
         {/* Tabs */}
         <div
           style={{
@@ -580,10 +686,10 @@ export default function ContractDashboardPage() {
               onOpenRelease={() => setReleaseModalOpen(true)}
             />
           )}
-          {tab === "gantt"     && <GanttTab />}
-          {tab === "chat"      && <ChatTab features={features} />}
+          {tab === "gantt"     && <GanttTab contract={activeContract} features={features} />}
+          {tab === "chat"      && <ChatTab contract={activeContract} features={features} />}
           {tab === "activity"  && <ActivityTab submission={activeContract.submission} />}
-          {tab === "receipt"   && <ReceiptTab total={activeContract.total_amount} passedAmount={passedAmount} features={features} />}
+          {tab === "receipt"   && <ReceiptTab contract={activeContract} total={activeContract.total_amount} passedAmount={passedAmount} features={features} />}
         </div>
       </div>
 
@@ -1158,185 +1264,1385 @@ function OverviewTab({
   );
 }
 
-function GanttTab() {
+function GanttTab({
+  contract,
+  features = [],
+}: {
+  contract?: Contract | null;
+  features?: Feature[];
+}) {
+  const activeContract = contract || mockApi.getContracts()[0];
+  const contractId = activeContract?.id || "pct_099e77";
+
+  const [zoomLevel, setZoomLevel] = useState<"Day" | "Week" | "Month">("Week");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [tasksList, setTasksList] = useState<Feature[]>(activeContract?.features || features);
+  const [changeToast, setChangeToast] = useState<string | null>(null);
+  const [hoveredTask, setHoveredTask] = useState<string | null>(null);
+
+  useEffect(() => {
+    const updated = mockApi.getContract(contractId);
+    if (updated?.features) {
+      setTasksList(updated.features);
+    }
+  }, [contractId]);
+
+  const hasAcceptedChange = tasksList.some((f) => f.title.includes("Dark Mode"));
+
+  const handleToggleScopeChange = () => {
+    if (hasAcceptedChange) {
+      mockApi.removeScopeChange(contractId);
+      const updated = mockApi.getContract(contractId);
+      setTasksList(updated?.features || []);
+      setChangeToast("Simulated scope change removed from Gantt timeline.");
+    } else {
+      mockApi.acceptScopeChange(contractId, {
+        title: "[CR-01] Dark Mode Theme Support (Accepted Change)",
+        price_weight: 10,
+        allocated_amount: 150,
+      });
+      const updated = mockApi.getContract(contractId);
+      setTasksList(updated?.features || []);
+      setChangeToast("✓ Scope change accepted! Task '[CR-01] Dark Mode Theme Support' automatically appeared in Bryntum Gantt (C48).");
+    }
+    setTimeout(() => setChangeToast(null), 5000);
+  };
+
+  const filteredTasks = tasksList.filter((t) => {
+    if (statusFilter === "ALL") return true;
+    if (statusFilter === "PASSED") return t.status === "PASSED";
+    if (statusFilter === "FAILED") return t.status === "FAILED";
+    if (statusFilter === "PENDING") return t.status === "PENDING";
+    return true;
+  });
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "PASSED":
+        return "#4CAF50";
+      case "FAILED":
+        return "#F44336";
+      case "VERIFYING":
+      case "IN_PROGRESS":
+        return "#0066FF";
+      default:
+        return "#7C89A8";
+    }
+  };
+
+  // Schedule task widths and start offsets for Gantt rendering
+  const taskScheduleMap: Record<string, { startPct: number; widthPct: number; days: string }> = {
+    feat_01: { startPct: 4, widthPct: 24, days: "Nov 01 - Nov 07" },
+    feat_02: { startPct: 20, widthPct: 22, days: "Nov 05 - Nov 11" },
+    feat_03: { startPct: 36, widthPct: 28, days: "Nov 09 - Nov 17" },
+    feat_04: { startPct: 56, widthPct: 26, days: "Nov 14 - Nov 21" },
+  };
+
   return (
     <div
       style={{
         background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.07)",
+        border: "1px solid rgba(255,255,255,0.08)",
         borderRadius: 24,
-        padding: "24px",
-        minHeight: 500,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
-        gap: 16,
+        overflow: "hidden",
+        minHeight: 560,
+        boxShadow: "0 0 60px rgba(0,102,255,0.06)",
+        fontFamily: "Inter, sans-serif",
       }}
       id="bryntum-gantt"
       role="region"
-      aria-label="Gantt timeline — Bryntum integration point"
+      aria-label="Bryntum Gantt Chart with status colors, hold-expiry and deadline milestones"
     >
-      <div style={{ fontSize: 48, opacity: 0.3 }} aria-hidden>📊</div>
-      <div style={{ fontSize: 16, color: "var(--color-text-muted)", textAlign: "center" }}>
-        Bryntum Gantt component mounts here
-        <br />
-        <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "rgba(124,137,168,0.5)" }}>
-          #bryntum-gantt · min-height: 500px · full-width
-        </span>
+      {/* Scope Change Alert Toast */}
+      {changeToast && (
+        <div
+          style={{
+            padding: "12px 20px",
+            background: "linear-gradient(135deg, rgba(16,185,129,0.2) 0%, rgba(0,102,255,0.15) 100%)",
+            borderBottom: "1px solid rgba(16,185,129,0.35)",
+            color: "#A7F3D0",
+            fontSize: 13,
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <Sparkles size={16} color="#34D399" />
+          <span>{changeToast}</span>
+        </div>
+      )}
+
+      {/* Bryntum Gantt Toolbar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "18px 24px",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(255,255,255,0.015)",
+          flexWrap: "wrap",
+          gap: 12,
+        }}
+      >
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Clock size={16} color="#00A3E0" />
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: "white", margin: 0 }}>
+              Bryntum Gantt Timeline
+            </h3>
+            <span
+              style={{
+                fontSize: 11,
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: "rgba(0,102,255,0.15)",
+                color: "#60A5FA",
+                border: "1px solid rgba(0,102,255,0.3)",
+                fontWeight: 600,
+              }}
+            >
+              #bryntum-gantt · C48
+            </span>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "3px 0 0" }}>
+            Feature milestone tasks, 29-day hold expiry, and delivery deadline
+          </p>
+        </div>
+
+        {/* Action Controls & Change Request Simulator (C48 Done When) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {/* Zoom controls */}
+          <div
+            style={{
+              display: "inline-flex",
+              borderRadius: 8,
+              background: "rgba(255,255,255,0.04)",
+              padding: 2,
+              border: "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            {(["Day", "Week", "Month"] as const).map((z) => (
+              <button
+                key={z}
+                onClick={() => setZoomLevel(z)}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                  background: zoomLevel === z ? "#0066FF" : "transparent",
+                  color: zoomLevel === z ? "white" : "var(--color-text-muted)",
+                }}
+              >
+                {z}
+              </button>
+            ))}
+          </div>
+
+          {/* Status filter pills */}
+          <div style={{ display: "flex", gap: 5 }}>
+            {[
+              { id: "ALL", label: "All" },
+              { id: "PASSED", label: "Passed (Green)" },
+              { id: "FAILED", label: "Failed (Red)" },
+              { id: "PENDING", label: "Pending" },
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setStatusFilter(f.id)}
+                style={{
+                  padding: "4px 9px",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  border: statusFilter === f.id ? "1px solid #00A3E0" : "1px solid rgba(255,255,255,0.08)",
+                  background: statusFilter === f.id ? "rgba(0,163,224,0.18)" : "rgba(255,255,255,0.03)",
+                  color: statusFilter === f.id ? "white" : "var(--color-text-muted)",
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* C48 Requirement: Accept Change Request -> New task appears automatically */}
+          <button
+            onClick={handleToggleScopeChange}
+            style={{
+              padding: "6px 14px",
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              background: hasAcceptedChange
+                ? "rgba(16,185,129,0.18)"
+                : "linear-gradient(135deg, #FF9800, #F57C00)",
+              border: hasAcceptedChange ? "1px solid rgba(16,185,129,0.4)" : "none",
+              color: hasAcceptedChange ? "#34D399" : "white",
+              boxShadow: hasAcceptedChange ? "none" : "0 0 16px rgba(255,152,0,0.3)",
+              transition: "all 0.2s ease",
+            }}
+            title="C48: Simulate an accepted mini-agreement change request to see new task appear automatically in Gantt"
+          >
+            {hasAcceptedChange ? (
+              <>
+                <CheckCircle size={13} color="#34D399" />
+                <span>Scope Change #1 Accepted (Click to Reset)</span>
+              </>
+            ) : (
+              <>
+                <Zap size={13} />
+                <span>Accept Scope Change #1 (+10% Task)</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Gantt Dual-Pane Grid Layout (Task Table Left, Timeline Right) */}
+      <div style={{ display: "grid", gridTemplateColumns: "330px 1fr", minHeight: 440 }}>
+        {/* Left Column: Task Checklist Columns */}
+        <div style={{ borderRight: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.01)" }}>
+          {/* Table Header */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 50px 60px 70px",
+              padding: "12px 16px",
+              borderBottom: "1px solid rgba(255,255,255,0.08)",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-text-muted)",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+            }}
+          >
+            <div>Task Name</div>
+            <div style={{ textAlign: "right" }}>Wt</div>
+            <div style={{ textAlign: "right" }}>Amt</div>
+            <div style={{ textAlign: "right" }}>Status</div>
+          </div>
+
+          {/* Task Rows */}
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {filteredTasks.map((t, idx) => {
+              const isAcceptedChange = t.title.includes("Dark Mode");
+              return (
+                <div
+                  key={t.id || idx}
+                  onMouseEnter={() => setHoveredTask(t.id)}
+                  onMouseLeave={() => setHoveredTask(null)}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 50px 60px 70px",
+                    padding: "14px 16px",
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    fontSize: 12,
+                    background: hoveredTask === t.id
+                      ? "rgba(0,102,255,0.08)"
+                      : isAcceptedChange
+                      ? "rgba(255,152,0,0.06)"
+                      : "transparent",
+                    transition: "background 0.15s ease",
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden" }}>
+                    <div
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: getStatusColor(t.status),
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        color: isAcceptedChange ? "#FDBA74" : "white",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                      title={t.title}
+                    >
+                      {t.title}
+                    </span>
+                  </div>
+                  <div style={{ textAlign: "right", color: "var(--color-text-muted)", fontFamily: "JetBrains Mono, monospace" }}>
+                    {t.price_weight}%
+                  </div>
+                  <div style={{ textAlign: "right", color: "white", fontFamily: "JetBrains Mono, monospace", fontWeight: 600 }}>
+                    ${t.allocated_amount}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                        background: `${getStatusColor(t.status)}22`,
+                        color: getStatusColor(t.status),
+                        border: `1px solid ${getStatusColor(t.status)}55`,
+                      }}
+                    >
+                      {t.status}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Hold-Expiry Milestone Row in Table */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 50px 60px 70px",
+                padding: "14px 16px",
+                borderBottom: "1px solid rgba(255,255,255,0.04)",
+                fontSize: 12,
+                background: "rgba(255,152,0,0.04)",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#FBBF24", fontWeight: 700 }}>
+                <span>◆</span>
+                <span>29-Day PayPal Hold Expiry</span>
+              </div>
+              <div style={{ textAlign: "right", color: "var(--color-text-muted)" }}>-</div>
+              <div style={{ textAlign: "right", color: "#FBBF24", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>Hold</div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#FBBF24", padding: "2px 6px", borderRadius: 4, background: "rgba(255,152,0,0.15)" }}>
+                  MILESTONE
+                </span>
+              </div>
+            </div>
+
+            {/* Deadline Milestone Row in Table */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 50px 60px 70px",
+                padding: "14px 16px",
+                borderBottom: "1px solid rgba(255,255,255,0.04)",
+                fontSize: 12,
+                background: "rgba(168,85,247,0.04)",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#C084FC", fontWeight: 700 }}>
+                <span>◆</span>
+                <span>Final Deliverable Deadline</span>
+              </div>
+              <div style={{ textAlign: "right", color: "var(--color-text-muted)" }}>-</div>
+              <div style={{ textAlign: "right", color: "#C084FC", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>Due</div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#C084FC", padding: "2px 6px", borderRadius: 4, background: "rgba(168,85,247,0.15)" }}>
+                  DEADLINE
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Bryntum Timeline Calendar Grid */}
+        <div style={{ display: "flex", flexDirection: "column", position: "relative", overflowX: "auto" }}>
+          {/* Timeline Date Header Scale */}
+          <div
+            style={{
+              height: 40,
+              borderBottom: "1px solid rgba(255,255,255,0.08)",
+              display: "grid",
+              gridTemplateColumns: "repeat(6, 1fr)",
+              background: "rgba(255,255,255,0.02)",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-text-muted)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            {["Nov 01 - 05", "Nov 06 - 10", "Nov 11 - 15", "Nov 16 - 20", "Nov 21 - 25", "Nov 26 - 30"].map((w, i) => (
+              <div
+                key={i}
+                style={{
+                  padding: "10px 12px",
+                  borderRight: i < 5 ? "1px solid rgba(255,255,255,0.05)" : "none",
+                }}
+              >
+                {w}
+              </div>
+            ))}
+          </div>
+
+          {/* Timeline Grid Body */}
+          <div style={{ flex: 1, position: "relative", minHeight: 380 }}>
+            {/* Background vertical grid columns */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "grid",
+                gridTemplateColumns: "repeat(6, 1fr)",
+                pointerEvents: "none",
+              }}
+            >
+              {[0, 1, 2, 3, 4, 5].map((c) => (
+                <div
+                  key={c}
+                  style={{
+                    borderRight: c < 5 ? "1px dashed rgba(255,255,255,0.04)" : "none",
+                    height: "100%",
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Vertical "TODAY" Line */}
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: "42%",
+                width: 2,
+                background: "#0066FF",
+                boxShadow: "0 0 12px #0066FF",
+                zIndex: 10,
+                pointerEvents: "none",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: -20,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  background: "#0066FF",
+                  color: "white",
+                  fontSize: 9,
+                  fontWeight: 800,
+                  padding: "1px 6px",
+                  borderRadius: 999,
+                  letterSpacing: "0.05em",
+                }}
+              >
+                TODAY
+              </div>
+            </div>
+
+            {/* Task Gantt Bars */}
+            <div style={{ display: "flex", flexDirection: "column", position: "relative", zIndex: 2 }}>
+              {filteredTasks.map((t, idx) => {
+                const isAcceptedChange = t.title.includes("Dark Mode");
+                const defaultSchedule = taskScheduleMap[t.id] || {
+                  startPct: 40 + idx * 8,
+                  widthPct: 22,
+                  days: "Nov 15 - Nov 22",
+                };
+                const schedule = isAcceptedChange
+                  ? { startPct: 62, widthPct: 24, days: "Nov 18 - Nov 24" }
+                  : defaultSchedule;
+
+                return (
+                  <div
+                    key={t.id || idx}
+                    onMouseEnter={() => setHoveredTask(t.id)}
+                    onMouseLeave={() => setHoveredTask(null)}
+                    style={{
+                      height: 48,
+                      position: "relative",
+                      display: "flex",
+                      alignItems: "center",
+                      borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    }}
+                  >
+                    {/* Gantt Bar */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: `${schedule.startPct}%`,
+                        width: `${schedule.widthPct}%`,
+                        height: 28,
+                        borderRadius: 8,
+                        background: getStatusColor(t.status),
+                        boxShadow: `0 0 16px ${getStatusColor(t.status)}55`,
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "0 12px",
+                        color: "white",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        transform: hoveredTask === t.id ? "scaleY(1.08)" : "none",
+                        transition: "all 0.15s ease",
+                      }}
+                      title={`${t.title} (${t.price_weight}% · $${t.allocated_amount}) · Status: ${t.status}`}
+                    >
+                      <span style={{ marginRight: 6 }}>
+                        {t.status === "PASSED" ? "✓" : t.status === "FAILED" ? "✗" : "○"}
+                      </span>
+                      <span>{t.title}</span>
+                      <span style={{ marginLeft: "auto", opacity: 0.85, fontSize: 10 }}>
+                        {t.price_weight}%
+                      </span>
+                    </div>
+
+                    {/* Dependency line connecting preceding task to this one if accepted change */}
+                    {isAcceptedChange && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: "58%",
+                          top: 0,
+                          width: "4%",
+                          height: 24,
+                          borderLeft: "2px solid #F59E0B",
+                          borderBottom: "2px solid #F59E0B",
+                          pointerEvents: "none",
+                        }}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* 29-Day PayPal Hold Expiry Milestone Marker */}
+              <div
+                style={{
+                  height: 48,
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  background: "rgba(255,152,0,0.02)",
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "92%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transform: "translateX(-50%)",
+                    cursor: "pointer",
+                  }}
+                  title="29-Day PayPal Escrow Authorization Expiry Point (C20/C48)"
+                >
+                  <div
+                    style={{
+                      width: 18,
+                      height: 18,
+                      background: "#FF9800",
+                      transform: "rotate(45deg)",
+                      boxShadow: "0 0 16px rgba(255,152,0,0.8)",
+                      borderRadius: 3,
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 800,
+                      color: "#FBBF24",
+                      whiteSpace: "nowrap",
+                      background: "rgba(0,0,0,0.6)",
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(255,152,0,0.3)",
+                    }}
+                  >
+                    ◆ 29-Day Hold Expiry
+                  </span>
+                </div>
+              </div>
+
+              {/* Final Delivery Deadline Milestone Marker */}
+              <div
+                style={{
+                  height: 48,
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  background: "rgba(168,85,247,0.02)",
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transform: "translateX(-50%)",
+                    cursor: "pointer",
+                  }}
+                  title="Final Deliverable Submission Deadline (C48/C50)"
+                >
+                  <div
+                    style={{
+                      width: 18,
+                      height: 18,
+                      background: "#A855F7",
+                      transform: "rotate(45deg)",
+                      boxShadow: "0 0 16px rgba(168,85,247,0.8)",
+                      borderRadius: 3,
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 800,
+                      color: "#C084FC",
+                      whiteSpace: "nowrap",
+                      background: "rgba(0,0,0,0.6)",
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(168,85,247,0.3)",
+                    }}
+                  >
+                    ◆ Contract Deadline
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bryntum Gantt Status Legend & Footer Bar */}
+      <div
+        style={{
+          padding: "16px 24px",
+          borderTop: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(255,255,255,0.015)",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 12,
+          fontSize: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, color: "var(--color-text-muted)" }}>Legend:</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: "#4CAF50" }} />
+            <span style={{ color: "white" }}>Passed</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: "#F44336" }} />
+            <span style={{ color: "white" }}>Failed</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: "#0066FF" }} />
+            <span style={{ color: "white" }}>In Progress</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: "#7C89A8" }} />
+            <span style={{ color: "var(--color-text-muted)" }}>Pending</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: "#FF9800", fontWeight: 800 }}>◆</span>
+            <span style={{ color: "#FBBF24" }}>Hold Expiry (29-Day)</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: "#A855F7", fontWeight: 800 }}>◆</span>
+            <span style={{ color: "#C084FC" }}>Deadline</span>
+          </div>
+        </div>
+
+        <div style={{ color: "var(--color-text-muted)", fontSize: 11 }}>
+          Live Gantt state synced with contract: <code style={{ color: "#60A5FA" }}>{contractId}</code>
+        </div>
       </div>
     </div>
   );
 }
 
-function ChatTab({ features = [] }: { features?: Feature[] }) {
-  const displayFeatures = features.length > 0 ? features : (mockApi.getContracts()[0]?.features || []);
-  const messages = [
-    { from: "Buyer", msg: "Can you add dark mode support as well?", time: "14:20", type: "user" },
-    { from: "AI Referee", msg: "Dark mode estimated: +$120, +3 extra days. Approve to create a mini-agreement?", time: "14:21", type: "ai" },
-    { from: "Seller", msg: "I can do it for $100 and 2 days.", time: "14:23", type: "seller" },
-    { from: "AI Referee", msg: "Counter accepted. Creating mini-agreement for $100, 2 days. Awaiting buyer authorization.", time: "14:24", type: "ai" },
-    { from: "Buyer", msg: "Approved! Let's do it.", time: "14:26", type: "user" },
-  ];
+function ChatTab({ 
+  contract, 
+  features = [] 
+}: { 
+  contract?: Contract | null; 
+  features?: Feature[];
+}) {
+  const activeContract = contract || mockApi.getContracts()[0];
+  const contractId = activeContract?.id || "pct_099e77";
+  const displayFeatures = features.length > 0 ? features : (activeContract?.features || []);
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputText, setInputText] = useState("");
+  const [senderRole, setSenderRole] = useState<"BUYER" | "SELLER" | "AI_REFEREE">("BUYER");
+  const [roleFilter, setRoleFilter] = useState<"ALL" | "BUYER" | "SELLER" | "AI_REFEREE">("ALL");
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load persisted messages from mockApi
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setMessages(mockApi.getMessages(contractId));
+    }
+  }, [contractId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isAiThinking]);
+
+  const handleSendMessage = (contentToSend?: string, roleOverride?: "BUYER" | "SELLER" | "AI_REFEREE") => {
+    const text = (contentToSend || inputText).trim();
+    if (!text) return;
+
+    const role = roleOverride || senderRole;
+    let senderName = "AI Referee";
+    if (role === "BUYER") senderName = activeContract?.buyer_name || "Priya Sharma";
+    if (role === "SELLER") senderName = activeContract?.seller_name || "Alex Mercer";
+
+    mockApi.sendMessage(contractId, {
+      sender_type: role,
+      sender_name: senderName,
+      content: text,
+    });
+
+    setMessages([...mockApi.getMessages(contractId)]);
+    if (!contentToSend) setInputText("");
+
+    // Simulate smart AI Referee response if a user triggers scope, weight, or terms discussion
+    const lower = text.toLowerCase();
+    if (role !== "AI_REFEREE" && (
+      lower.includes("scope") ||
+      lower.includes("weight") ||
+      lower.includes("price") ||
+      lower.includes("counter") ||
+      lower.includes("deadline") ||
+      lower.includes("test") ||
+      lower.includes("add") ||
+      lower.includes("change")
+    )) {
+      setIsAiThinking(true);
+      setTimeout(() => {
+        mockApi.sendMessage(contractId, {
+          sender_type: "AI_REFEREE",
+          sender_name: "AI Referee",
+          content: `AI Referee Analysis: Scope alteration noted for "${activeContract?.title}". In accordance with PactPal arbitration rules, any modification to milestone weights or deadline requires dual-party confirmation before funding hold adjustment.`,
+          metadata: { action: "SCOPE_ADVISORY" },
+        });
+        setMessages([...mockApi.getMessages(contractId)]);
+        setIsAiThinking(false);
+      }, 900);
+    }
+  };
+
+  const handleResetChat = () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(`pactpal_chat_v1_${contractId}`);
+      setMessages(mockApi.getMessages(contractId));
+    }
+  };
+
+  const filteredMessages = messages.filter((m) => {
+    if (roleFilter === "ALL") return true;
+    return m.sender_type === roleFilter;
+  });
+
+  const buyerCount = messages.filter((m) => m.sender_type === "BUYER").length;
+  const sellerCount = messages.filter((m) => m.sender_type === "SELLER").length;
+  const aiCount = messages.filter((m) => m.sender_type === "AI_REFEREE").length;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 20, minHeight: 500 }}>
-      {/* Task list panel */}
+    <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 20, minHeight: 620 }}>
+      {/* Left panel: Context & Features */}
       <div
         style={{
           background: "rgba(255,255,255,0.02)",
-          border: "1px solid rgba(255,255,255,0.07)",
+          border: "1px solid rgba(255,255,255,0.08)",
           borderRadius: 20,
+          display: "flex",
+          flexDirection: "column",
           overflow: "hidden",
         }}
         role="complementary"
-        aria-label="Contract features list"
+        aria-label="Negotiation scope overview"
       >
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.07)", fontWeight: 700, fontSize: 14, color: "white" }}>
-          Features
+        <div style={{ padding: "18px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "#60A5FA", textTransform: "uppercase" }}>
+              Negotiation Scope
+            </span>
+            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "rgba(255,255,255,0.06)", color: "var(--color-text-muted)" }}>
+              {activeContract?.id}
+            </span>
+          </div>
+          <h4 style={{ fontSize: 15, fontWeight: 700, color: "white", margin: 0 }}>
+            {activeContract?.title}
+          </h4>
+          <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4, marginBottom: 0 }}>
+            Total Value: <strong style={{ color: "white" }}>${activeContract?.total_amount?.toLocaleString()} {activeContract?.currency || "USD"}</strong>
+          </p>
         </div>
-        {displayFeatures.map((f, i) => {
-          const title = f.title || (f as any).name;
-          const weight = f.price_weight ?? (f as any).weight;
-          const amount = f.allocated_amount ?? (f as any).amount;
-          return (
-            <div
-              key={f.id || i}
-              style={{
-                padding: "14px 20px",
-                borderBottom: "1px solid rgba(255,255,255,0.05)",
-                cursor: "pointer",
-                transition: "background 0.2s",
-              }}
-              onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(0,102,255,0.06)"))}
-              onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
-              tabIndex={0}
-              role="option"
-              aria-label={`${title}: ${f.status}`}
-            >
-              <div style={{ fontSize: 13, fontWeight: 600, color: "white", marginBottom: 4 }}>{title}</div>
-              <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{weight}% · ${amount}</div>
-            </div>
-          );
-        })}
-      </div>
 
-      {/* Chat panel */}
-      <div
-        style={{
-          background: "rgba(255,255,255,0.02)",
-          border: "1px solid rgba(255,255,255,0.07)",
-          borderRadius: 20,
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-        }}
-        role="log"
-        aria-label="Negotiation chat"
-        aria-live="polite"
-      >
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.07)", fontWeight: 700, fontSize: 14, color: "white" }}>
-          Negotiation Chat
-        </div>
-        <div style={{ flex: 1, padding: "20px", display: "flex", flexDirection: "column", gap: 16, overflowY: "auto" }}>
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: m.type === "user" ? "flex-end" : m.type === "seller" ? "flex-start" : "flex-start",
-              }}
-            >
-              <span style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4, fontWeight: 600 }}>
-                {m.from} · {m.time}
-              </span>
-              <div
-                style={{
-                  background: m.type === "ai"
-                    ? "rgba(0,102,255,0.1)"
-                    : m.type === "user"
-                    ? "rgba(255,255,255,0.08)"
-                    : "rgba(255,152,0,0.08)",
-                  border: `1px solid ${m.type === "ai" ? "rgba(0,102,255,0.3)" : m.type === "user" ? "rgba(255,255,255,0.1)" : "rgba(255,152,0,0.3)"}`,
-                  borderRadius: 14,
-                  padding: "11px 16px",
-                  maxWidth: "75%",
-                  fontSize: 14,
-                  color: m.type === "ai" ? "#60A5FA" : "var(--color-text-secondary)",
-                  lineHeight: 1.5,
-                  boxShadow: m.type === "ai" ? "0 0 20px rgba(0,102,255,0.1)" : "none",
-                }}
-              >
-                {m.msg}
-              </div>
+        {/* Parties involved */}
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.01)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", marginBottom: 8, textTransform: "uppercase" }}>
+            Parties at the Table
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3B82F6" }} />
+              <span style={{ color: "white", fontWeight: 600 }}>{activeContract?.buyer_name || "Priya Sharma"}</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Buyer)</span>
             </div>
-          ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#10B981" }} />
+              <span style={{ color: "white", fontWeight: 600 }}>{activeContract?.seller_name || "Alex Mercer"}</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Seller)</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#A855F7" }} />
+              <span style={{ color: "white", fontWeight: 600 }}>AI Referee</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Autonomous Arbiter)</span>
+            </div>
+          </div>
         </div>
-        <div
-          style={{
-            padding: "16px 20px",
-            borderTop: "1px solid rgba(255,255,255,0.07)",
-            display: "flex",
-            gap: 10,
-          }}
-        >
-          <input
-            style={{
-              flex: 1,
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 12,
-              color: "white",
-              fontSize: 14,
-              padding: "10px 16px",
-              outline: "none",
-              fontFamily: "Inter, sans-serif",
-            }}
-            placeholder="Type a message..."
-            aria-label="Type a message"
-          />
+
+        {/* Feature click-to-discuss list */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", padding: "4px 6px 8px 6px", textTransform: "uppercase" }}>
+            Contract Milestones (Click to Discuss)
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {displayFeatures.map((f, i) => {
+              const title = f.title || (f as any).name;
+              const weight = f.price_weight ?? (f as any).weight;
+              const amount = f.allocated_amount ?? (f as any).amount;
+              return (
+                <div
+                  key={f.id || i}
+                  onClick={() => {
+                    setInputText(`Regarding "${title}": `);
+                  }}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    background: "rgba(255,255,255,0.03)",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(0,102,255,0.1)";
+                    e.currentTarget.style.borderColor = "rgba(0,102,255,0.3)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.03)";
+                    e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)";
+                  }}
+                  title="Click to draft a message about this feature"
+                >
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "white", marginBottom: 4 }}>
+                    {title}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-muted)" }}>
+                    <span>{weight}% weight</span>
+                    <span style={{ color: "#10B981", fontWeight: 600 }}>${amount}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Reset button footer */}
+        <div style={{ padding: "14px 18px", borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.01)" }}>
           <button
+            onClick={handleResetChat}
             style={{
-              background: "linear-gradient(135deg, #0066FF, #00A3E0)",
-              border: "none",
-              borderRadius: 12,
-              color: "white",
-              padding: "10px 18px",
-              fontSize: 14,
-              fontWeight: 700,
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              padding: "8px 12px",
+              borderRadius: 10,
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "var(--color-text-muted)",
+              fontSize: 12,
+              fontWeight: 600,
               cursor: "pointer",
             }}
-            aria-label="Send message"
+            title="Reset messages to default seed history"
           >
-            Send
+            <RefreshCw size={13} />
+            Reset Chat to Default
           </button>
         </div>
       </div>
 
+      {/* Right panel: Full Negotiation Timeline & Active Chat */}
+      <div
+        style={{
+          background: "rgba(255,255,255,0.02)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 20,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+        role="log"
+        aria-label="Negotiation chat stream"
+        aria-live="polite"
+      >
+        {/* Chat Header & Filters */}
+        <div
+          style={{
+            padding: "16px 20px",
+            borderBottom: "1px solid rgba(255,255,255,0.08)",
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            background: "rgba(255,255,255,0.015)",
+          }}
+        >
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <MessageSquare size={17} color="#60A5FA" />
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: "white", margin: 0 }}>
+                Negotiation Chat & Audit History
+              </h3>
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: "rgba(16,185,129,0.15)",
+                  color: "#10B981",
+                  border: "1px solid rgba(16,185,129,0.3)",
+                  fontWeight: 600,
+                }}
+              >
+                ● Live & Persisted
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "4px 0 0 0" }}>
+              Full audit trail between AI Referee, Buyer, and Seller (C40)
+            </p>
+          </div>
+
+          {/* Filter Pills */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "var(--color-text-muted)", marginRight: 4 }}>Filter:</span>
+            {[
+              { id: "ALL", label: `All (${messages.length})` },
+              { id: "AI_REFEREE", label: `AI (${aiCount})` },
+              { id: "BUYER", label: `Buyer (${buyerCount})` },
+              { id: "SELLER", label: `Seller (${sellerCount})` },
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setRoleFilter(f.id as any)}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  border: roleFilter === f.id ? "1px solid #3B82F6" : "1px solid rgba(255,255,255,0.08)",
+                  background: roleFilter === f.id ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.03)",
+                  color: roleFilter === f.id ? "white" : "var(--color-text-muted)",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Message Stream */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: "20px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 18,
+            maxHeight: "460px",
+          }}
+        >
+          {filteredMessages.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--color-text-muted)", fontSize: 13 }}>
+              No messages found for this filter.
+            </div>
+          ) : (
+            filteredMessages.map((m) => {
+              const isAi = m.sender_type === "AI_REFEREE";
+              const isBuyer = m.sender_type === "BUYER";
+              const isSeller = m.sender_type === "SELLER";
+
+              const timeStr = m.sent_at
+                ? new Date(m.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : "Just now";
+
+              return (
+                <div
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: isBuyer ? "flex-end" : "flex-start",
+                    width: "100%",
+                  }}
+                >
+                  {/* Sender Header info */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginBottom: 6,
+                      flexDirection: isBuyer ? "row-reverse" : "row",
+                    }}
+                  >
+                    {/* Avatar Icon */}
+                    <div
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: isAi
+                          ? "linear-gradient(135deg, #7A5CFF, #0066FF)"
+                          : isBuyer
+                          ? "rgba(59,130,246,0.2)"
+                          : "rgba(16,185,129,0.2)",
+                        border: `1px solid ${
+                          isAi ? "#7A5CFF" : isBuyer ? "rgba(59,130,246,0.4)" : "rgba(16,185,129,0.4)"
+                        }`,
+                      }}
+                    >
+                      {isAi ? <Bot size={14} color="white" /> : <User size={14} color={isBuyer ? "#60A5FA" : "#34D399"} />}
+                    </div>
+
+                    {/* Sender Name */}
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "white" }}>
+                      {m.sender_name || (isAi ? "AI Referee" : isBuyer ? "Buyer" : "Seller")}
+                    </span>
+
+                    {/* Role Pill */}
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: "0.04em",
+                        padding: "1px 7px",
+                        borderRadius: 6,
+                        textTransform: "uppercase",
+                        background: isAi
+                          ? "rgba(122,92,255,0.18)"
+                          : isBuyer
+                          ? "rgba(59,130,246,0.18)"
+                          : "rgba(16,185,129,0.18)",
+                        color: isAi ? "#C084FC" : isBuyer ? "#93C5FD" : "#6EE7B7",
+                        border: `1px solid ${
+                          isAi ? "rgba(122,92,255,0.3)" : isBuyer ? "rgba(59,130,246,0.3)" : "rgba(16,185,129,0.3)"
+                        }`,
+                      }}
+                    >
+                      {isAi ? "Referee" : isBuyer ? "Buyer" : "Seller"}
+                    </span>
+
+                    {/* Timestamp */}
+                    <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                      {timeStr}
+                    </span>
+                  </div>
+
+                  {/* Message Bubble */}
+                  <div
+                    style={{
+                      maxWidth: isAi ? "86%" : "78%",
+                      padding: "14px 18px",
+                      borderRadius: isAi ? 16 : isBuyer ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
+                      background: isAi
+                        ? "linear-gradient(135deg, rgba(122,92,255,0.12) 0%, rgba(0,102,255,0.06) 100%)"
+                        : isBuyer
+                        ? "rgba(0,102,255,0.14)"
+                        : "rgba(255,255,255,0.05)",
+                      border: isAi
+                        ? "1px solid rgba(122,92,255,0.35)"
+                        : isBuyer
+                        ? "1px solid rgba(0,102,255,0.3)"
+                        : "1px solid rgba(255,255,255,0.1)",
+                      boxShadow: isAi ? "0 4px 24px rgba(122,92,255,0.1)" : "none",
+                      color: isAi ? "#E0E7FF" : "white",
+                      fontSize: 13.5,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {m.content}
+
+                    {/* Special Metadata Cards */}
+                    {m.metadata && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: "10px 14px",
+                          borderRadius: 10,
+                          fontSize: 12,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          background:
+                            m.metadata.action === "COUNTER_OFFER"
+                              ? "rgba(255,152,0,0.12)"
+                              : m.metadata.action === "ACCEPT_TERMS"
+                              ? "rgba(16,185,129,0.15)"
+                              : m.metadata.action === "VERDICT_SUMMARY"
+                              ? "rgba(122,92,255,0.18)"
+                              : "rgba(0,163,224,0.12)",
+                          border: `1px solid ${
+                            m.metadata.action === "COUNTER_OFFER"
+                              ? "rgba(255,152,0,0.3)"
+                              : m.metadata.action === "ACCEPT_TERMS"
+                              ? "rgba(16,185,129,0.3)"
+                              : m.metadata.action === "VERDICT_SUMMARY"
+                              ? "rgba(122,92,255,0.35)"
+                              : "rgba(0,163,224,0.25)"
+                          }`,
+                          color:
+                            m.metadata.action === "COUNTER_OFFER"
+                              ? "#FDBA74"
+                              : m.metadata.action === "ACCEPT_TERMS"
+                              ? "#86EFAC"
+                              : m.metadata.action === "VERDICT_SUMMARY"
+                              ? "#D8B4FE"
+                              : "#93C5FD",
+                        }}
+                      >
+                        {m.metadata.action === "ACCEPT_TERMS" && <CheckCheck size={16} />}
+                        {m.metadata.action === "COUNTER_OFFER" && <Scale size={16} />}
+                        {m.metadata.action === "VERDICT_SUMMARY" && <ShieldCheck size={16} />}
+                        {m.metadata.action === "SCOPE_ADVISORY" && <Sparkles size={16} />}
+                        <div>
+                          <strong>
+                            {m.metadata.action === "COUNTER_OFFER" && "Terms Adjustment: Counter-Offer Filed"}
+                            {m.metadata.action === "ACCEPT_TERMS" && "Dual Acceptance Confirmed"}
+                            {m.metadata.action === "VERDICT_SUMMARY" && "Escrow Settlement Allocation"}
+                            {m.metadata.action === "SCOPE_ADVISORY" && "Official Scope Advisory Notice"}
+                          </strong>
+                          {m.metadata.proposed_amount && (
+                            <span style={{ marginLeft: 8, opacity: 0.9 }}>
+                              · Amount: ${m.metadata.proposed_amount.toLocaleString()} USD
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          {isAiThinking && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 12, background: "rgba(122,92,255,0.1)", border: "1px solid rgba(122,92,255,0.25)", width: "fit-content" }}>
+              <Bot size={16} color="#C084FC" className="animate-spin" />
+              <span style={{ fontSize: 12, color: "#D8B4FE" }}>AI Referee is analyzing scope & agreement terms...</span>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Quick mediation prompt suggestions */}
+        <div
+          style={{
+            padding: "8px 20px",
+            background: "rgba(255,255,255,0.015)",
+            borderTop: "1px solid rgba(255,255,255,0.06)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            overflowX: "auto",
+          }}
+        >
+          <span style={{ fontSize: 11, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>
+            Suggested:
+          </span>
+          {[
+            { text: "Can you add dark mode support as well?", role: "BUYER" as const },
+            { text: "I can deliver dark mode for $100 and 2 extra days.", role: "SELLER" as const },
+            { text: "Ask AI Referee: Verify if milestone 2 acceptance criteria is ambiguous", role: "BUYER" as const },
+          ].map((s, idx) => (
+            <button
+              key={idx}
+              onClick={() => {
+                setSenderRole(s.role);
+                setInputText(s.text);
+              }}
+              style={{
+                whiteSpace: "nowrap",
+                fontSize: 11,
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "var(--color-text-secondary)",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "rgba(0,102,255,0.4)";
+                e.currentTarget.style.color = "white";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
+                e.currentTarget.style.color = "var(--color-text-secondary)";
+              }}
+            >
+              {s.text}
+            </button>
+          ))}
+        </div>
+
+        {/* Send Input Bar & Sender Role Switcher */}
+        <div
+          style={{
+            padding: "16px 20px",
+            borderTop: "1px solid rgba(255,255,255,0.08)",
+            background: "rgba(255,255,255,0.02)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}
+        >
+          {/* Identity switcher */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>
+                Send as:
+              </span>
+              <div
+                style={{
+                  display: "inline-flex",
+                  borderRadius: 10,
+                  background: "rgba(255,255,255,0.04)",
+                  padding: 3,
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+              >
+                {[
+                  { role: "BUYER" as const, label: `👔 ${activeContract?.buyer_name || "Buyer"}` },
+                  { role: "SELLER" as const, label: `🧑‍💻 ${activeContract?.seller_name || "Seller"}` },
+                  { role: "AI_REFEREE" as const, label: "🤖 AI Referee" },
+                ].map((item) => (
+                  <button
+                    key={item.role}
+                    type="button"
+                    onClick={() => setSenderRole(item.role)}
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: 7,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      border: "none",
+                      background: senderRole === item.role ? "#0066FF" : "transparent",
+                      color: senderRole === item.role ? "white" : "var(--color-text-muted)",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+              Escrow Key: <code style={{ color: "#60A5FA" }}>pactpal_chat_v1_{contractId}</code>
+            </span>
+          </div>
+
+          {/* Form input */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSendMessage();
+            }}
+            style={{ display: "flex", gap: 10 }}
+          >
+            <input
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder={`Type a negotiation message as ${
+                senderRole === "BUYER"
+                  ? `${activeContract?.buyer_name || "Buyer"}`
+                  : senderRole === "SELLER"
+                  ? `${activeContract?.seller_name || "Seller"}`
+                  : "AI Referee"
+              }...`}
+              style={{
+                flex: 1,
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 12,
+                color: "white",
+                fontSize: 14,
+                padding: "12px 16px",
+                outline: "none",
+                fontFamily: "Inter, sans-serif",
+              }}
+              aria-label="Negotiation chat input"
+            />
+            <button
+              type="submit"
+              disabled={!inputText.trim()}
+              style={{
+                background: inputText.trim()
+                  ? "linear-gradient(135deg, #0066FF, #00A3E0)"
+                  : "rgba(255,255,255,0.06)",
+                border: "none",
+                borderRadius: 12,
+                color: inputText.trim() ? "white" : "rgba(255,255,255,0.3)",
+                padding: "12px 22px",
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: inputText.trim() ? "pointer" : "not-allowed",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                transition: "all 0.2s ease",
+              }}
+            >
+              <span>Send</span>
+              <Send size={15} />
+            </button>
+          </form>
+        </div>
+      </div>
+
       <style>{`
-        @media (max-width: 768px) {
-          [style*="grid-template-columns: 280px 1fr"] {
+        @media (max-width: 860px) {
+          [style*="grid-template-columns: 300px 1fr"] {
             grid-template-columns: 1fr !important;
           }
         }
@@ -1840,21 +3146,37 @@ function ActivityTab({ submission }: { submission?: Submission | null }) {
 }
 
 function ReceiptTab({
+  contract,
   total,
   passedAmount,
   features,
 }: {
+  contract?: Contract | null;
   total: number;
   passedAmount: number;
   features: Feature[];
 }) {
+  const activeContract = contract || mockApi.getContracts()[0];
+  const receipt = mockApi.getReceipt(activeContract?.id || "pct_099e77");
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(receipt.receipt_hash);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const passedCount = features.filter((f) => (f.status || "").toLowerCase() === "passed").length;
+  const sellerPayout = passedAmount > 0 ? passedAmount : receipt.financial_dispatch.seller_payout_amount;
+  const buyerRefund = total - sellerPayout;
+
   return (
-    <div style={{ maxWidth: 680, margin: "0 auto" }}>
+    <div style={{ maxWidth: 760, margin: "0 auto" }}>
       <div
         style={{
           background: "rgba(255,255,255,0.03)",
           border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 28,
+          borderRadius: 24,
           overflow: "hidden",
           boxShadow: "0 0 60px rgba(122,92,255,0.1)",
         }}
@@ -1866,24 +3188,28 @@ function ReceiptTab({
           style={{
             background: "linear-gradient(135deg, rgba(122,92,255,0.15), rgba(0,102,255,0.1))",
             borderBottom: "1px solid rgba(255,255,255,0.08)",
-            padding: "28px 32px",
+            padding: "24px 30px",
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
+            flexWrap: "wrap",
+            gap: 12,
           }}
         >
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: 4 }}>
               PROOF-OF-WORK RECEIPT
             </div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: "white" }}>PactPal Verification Certificate</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: "white" }}>
+              PactPal Cryptographic Verification Certificate
+            </div>
           </div>
           <div
             style={{
               background: "rgba(76,175,80,0.15)",
               border: "1px solid rgba(76,175,80,0.4)",
               borderRadius: 50,
-              padding: "8px 18px",
+              padding: "6px 16px",
               fontSize: 12,
               fontWeight: 700,
               color: "#4CAF50",
@@ -1892,22 +3218,27 @@ function ReceiptTab({
               gap: 7,
             }}
           >
-            <CheckCircle size={14} aria-hidden /> Verified
+            <CheckCircle size={14} aria-hidden /> Immutable Record
           </div>
         </div>
 
-        <div style={{ padding: "28px 32px", display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* SHA-256 */}
+        <div style={{ padding: "26px 30px", display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* SHA-256 Hash box */}
           <div
             style={{
-              background: "rgba(0,0,0,0.3)",
-              border: "1px solid rgba(122,92,255,0.2)",
+              background: "rgba(0,0,0,0.4)",
+              border: "1px solid rgba(122,92,255,0.25)",
               borderRadius: 14,
-              padding: "18px 20px",
+              padding: "16px 20px",
             }}
           >
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: 10 }}>
-              SHA-256 FINGERPRINT
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--color-text-muted)" }}>
+                SHA-256 FINGERPRINT (HMAC LATCHED)
+              </span>
+              <span style={{ fontSize: 11, color: "#34D399", fontWeight: 600 }}>
+                ✓ Attached to PayPal Note
+              </span>
             </div>
             <div
               style={{
@@ -1920,38 +3251,46 @@ function ReceiptTab({
               role="textbox"
               aria-label="SHA-256 fingerprint"
             >
-              0xa9f3e8c2d4b16f7a3e2d1c9b8a7f6e5d4c3b2a190887766554433221100aabb
+              {receipt.receipt_hash}
             </div>
-            <button
-              style={{
-                marginTop: 10,
-                background: "none",
-                border: "1px solid rgba(122,92,255,0.3)",
-                borderRadius: 8,
-                color: "#A78BFA",
-                padding: "5px 14px",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-              aria-label="Copy SHA-256 fingerprint to clipboard"
-            >
-              📋 Copy
-            </button>
+            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+              <button
+                onClick={handleCopy}
+                style={{
+                  background: "rgba(122,92,255,0.15)",
+                  border: "1px solid rgba(122,92,255,0.3)",
+                  borderRadius: 8,
+                  color: "#C084FC",
+                  padding: "6px 14px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+                aria-label="Copy SHA-256 fingerprint to clipboard"
+              >
+                {copied ? <Check size={13} color="#34D399" /> : <Copy size={13} />}
+                {copied ? "Copied to Clipboard!" : "Copy Hash"}
+              </button>
+            </div>
           </div>
 
-          {/* Summary rows */}
+          {/* Summary metadata rows */}
           {[
-            ["Contract ID", "pact_01JDFG49XK4VD"],
-            ["Issued", new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })],
-            ["Buyer", "Priya S."],
-            ["Seller", "Alex M."],
-            ["Total held", `$${total.toLocaleString()} USD`],
-            ["Features passed", `${features.filter((f) => (f.status || "").toLowerCase() === "passed").length} of ${features.length}`],
-            ["Seller payout", `$${passedAmount.toLocaleString()} USD`],
-            ["Buyer refund", `$${(total - passedAmount).toLocaleString()} USD`],
-            ["Visual match avg", "94.3%"],
-            ["Test coverage", "87%"],
+            ["Contract ID", activeContract.id],
+            ["Contract Title", activeContract.title],
+            ["Settlement Timestamp", new Date(receipt.settled_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })],
+            ["Hirer (Buyer)", activeContract.buyer_name || "Priya Sharma"],
+            ["Freelancer (Seller)", activeContract.seller_name || "Alex Mercer"],
+            ["Total Held in Escrow", `$${total.toLocaleString()}.00 USD`],
+            ["Features Passed", `${passedCount} of ${features.length} milestones verified`],
+            ["Freelancer Disbursal", `$${sellerPayout.toLocaleString()}.00 USD`],
+            ["Hirer Refund", `$${buyerRefund.toLocaleString()}.00 USD`],
+            ["Test Assertions", `${receipt.verification_metrics.tests_passed}/${receipt.verification_metrics.tests_total} Passed (${receipt.verification_metrics.coverage_percent}% Coverage)`],
+            ["Visual Match Avg", `${receipt.verification_metrics.visual_similarity_score}% (Threshold: 90%)`],
+            ["PayPal Batch ID", receipt.financial_dispatch.paypal_payout_batch_id],
           ].map(([k, v]) => (
             <div
               key={k}
@@ -1959,38 +3298,62 @@ function ReceiptTab({
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                fontSize: 14,
-                paddingBottom: 14,
+                fontSize: 13.5,
+                paddingBottom: 12,
                 borderBottom: "1px solid rgba(255,255,255,0.05)",
               }}
             >
               <span style={{ color: "var(--color-text-muted)" }}>{k}</span>
-              <span style={{ fontWeight: 600, color: "white", fontFamily: ["Total held", "Seller payout", "Buyer refund"].includes(k) ? "JetBrains Mono, monospace" : "Inter, sans-serif" }}>
+              <span style={{ fontWeight: 600, color: "white", fontFamily: ["Total Held in Escrow", "Freelancer Disbursal", "Hirer Refund", "Contract ID", "PayPal Batch ID"].includes(k) ? "JetBrains Mono, monospace" : "Inter, sans-serif" }}>
                 {v}
               </span>
             </div>
           ))}
 
-          {/* PayPal link */}
-          <a
-            href="#"
+          {/* Direct link to dedicated C45 standalone receipt page */}
+          <Link
+            href={`/contracts/${activeContract.id}/receipt`}
             style={{
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               gap: 8,
-              background: "rgba(0,102,255,0.08)",
-              border: "1px solid rgba(0,102,255,0.25)",
+              background: "linear-gradient(135deg, #0066FF, #00A3E0)",
               borderRadius: 12,
-              color: "#60A5FA",
+              color: "white",
               padding: "14px",
               fontSize: 14,
+              fontWeight: 700,
+              textDecoration: "none",
+              boxShadow: "0 0 20px rgba(0,102,255,0.3)",
+              marginTop: 6,
+            }}
+          >
+            Open Dedicated Proof-of-Work Receipt Page (C45) →
+          </Link>
+
+          {/* PayPal link */}
+          <a
+            href={receipt.evidence_links.paypal_transaction_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 12,
+              color: "var(--color-text-secondary)",
+              padding: "12px",
+              fontSize: 13,
               fontWeight: 600,
               textDecoration: "none",
             }}
             aria-label="View PayPal transaction reference"
           >
-            🔗 View PayPal reference · PP-R-4A9F3E8C2D4B
+            🔗 View PayPal Reference · {receipt.financial_dispatch.paypal_order_id}
           </a>
         </div>
       </div>

@@ -308,6 +308,23 @@ export default function HirerDashboardPage() {
                         >
                           Fund with PayPal →
                         </Link>
+                      ) : c.status === "SETTLED" ? (
+                        <Link
+                          href={`/contracts/${c.id}/receipt`}
+                          style={{
+                            fontSize: 12,
+                            color: "#34D399",
+                            background: "rgba(16,185,129,0.12)",
+                            border: "1px solid rgba(16,185,129,0.3)",
+                            padding: "5px 12px",
+                            borderRadius: 20,
+                            textDecoration: "none",
+                            fontWeight: 700,
+                            display: "inline-block",
+                          }}
+                        >
+                          View Receipt (C45) →
+                        </Link>
                       ) : (
                         <Link
                           href={`/contracts/${c.id}`}

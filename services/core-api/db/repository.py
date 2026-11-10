@@ -710,6 +710,28 @@ class ContractRepository:
         row = cursor.fetchone()
         return dict(row) if row else None
 
+    def create_submission(
+        self,
+        contract_id: str,
+        seller_id: str,
+        repo_url: str = "https://github.com/pactpal/deliverable",
+        commit_sha: str = "c049dead11",
+        build_notes: str = "Deliverable submission for milestone verification",
+        submission_number: int = 1,
+        is_late: bool = False,
+        submitted_at: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Creates a submission record in the submissions table."""
+        sub_id = generate_uuid()
+        timestamp = submitted_at or now_iso()
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO submissions (id, contract_id, seller_id, repo_url, commit_sha, build_notes, submission_number, is_late, submitted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (sub_id, contract_id, seller_id, repo_url, commit_sha, build_notes, submission_number, 1 if is_late else 0, timestamp))
+        self.conn.commit()
+        return self.get_submission(sub_id)
+
     def create_change_request(
         self,
         contract_id: str,
@@ -822,6 +844,36 @@ class ContractRepository:
         cursor.execute(sql, tuple(params))
         self.conn.commit()
         return self.get_contract(contract_id)
+
+    # --- Active Contracts & Status Queries (Commit C49) ---
+    def get_contracts_by_status(self, statuses: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieves contracts matching a given list of statuses (or all contracts if None),
+        ordered by deadline ASC, created_at DESC.
+        """
+        cursor = self.conn.cursor()
+        if not statuses:
+            cursor.execute("SELECT * FROM contracts ORDER BY deadline ASC, created_at DESC")
+        else:
+            placeholders = ",".join("?" for _ in statuses)
+            sql = f"SELECT * FROM contracts WHERE status IN ({placeholders}) ORDER BY deadline ASC, created_at DESC"
+            cursor.execute(sql, tuple(statuses))
+        rows = cursor.fetchall()
+        contracts: List[Dict[str, Any]] = []
+        for row in rows:
+            contract = dict(row)
+            contract["is_locked"] = bool(contract.get("is_locked", 0))
+            contract["features"] = self.get_features(contract["id"])
+            contracts.append(contract)
+        return contracts
+
+    def get_active_contracts(self, statuses: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieves active contracts subject to automated deadline monitoring.
+        Defaults to ('IN_PROGRESS', 'SUBMITTED', 'VERIFYING').
+        """
+        target_statuses = statuses or ["IN_PROGRESS", "SUBMITTED", "VERIFYING"]
+        return self.get_contracts_by_status(target_statuses)
 
     def close(self):
         self.conn.close()
