@@ -252,6 +252,41 @@ class PayPalClient:
             "raw_response": data
         }
 
+    def reauthorize_authorization(
+        self,
+        authorization_id: str,
+        amount: float,
+        currency: str = "USD",
+        idempotency_key: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Reauthorizes an authorized payment by authorization ID (Commit C46).
+        Used for incremental authorization holds when change requests are accepted.
+        Endpoint: POST /v2/payments/authorizations/{authorization_id}/reauthorize
+        """
+        url = f"{self.base_url}/v2/payments/authorizations/{authorization_id}/reauthorize"
+        payload = {
+            "amount": {
+                "currency_code": currency,
+                "value": f"{amount:.2f}"
+            }
+        }
+        data = self._send_authorized_request(
+            url,
+            data=json.dumps(payload).encode(),
+            method="POST",
+            idempotency_key=idempotency_key
+        )
+
+        return {
+            "authorization_id": data.get("id", authorization_id),
+            "status": data.get("status"),
+            "expiration_time": data.get("expiration_time"),
+            "amount": data.get("amount", {}).get("value", f"{amount:.2f}"),
+            "currency": data.get("amount", {}).get("currency_code", currency),
+            "raw_response": data
+        }
+
     def capture_authorization(
         self,
         authorization_id: str,

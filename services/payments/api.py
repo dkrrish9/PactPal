@@ -36,7 +36,8 @@ from .service import (
     verify_receipt_hash,
     assert_can_view_receipt,
     assert_can_view_split_preview,
-    assert_can_view_settlement_summary
+    assert_can_view_settlement_summary,
+    assert_can_apply_incremental_hold
 )
 
 HOLD_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/hold/?$")
@@ -49,6 +50,8 @@ APPROVAL_CHECK_REGEX = re.compile(r"^/api/v1/payments/approval-check/?$")
 CONTRACT_APPROVAL_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/payment-approval/?$")
 CREATE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/create-hold/?$")
 AUTHORIZE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/authorize/?$")
+INCREMENTAL_HOLD_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/incremental-hold/?$")
+INCREMENTAL_HOLD_PAYMENTS_REGEX = re.compile(r"^/api/v1/payments/orders/incremental-hold/?$")
 SETTLE_REGEX = re.compile(r"^/api/v1/payments/settle/?$")
 WEBHOOK_REGEX = re.compile(r"^/api/v1/payments/webhooks(?:/paypal)?/?$")
 
@@ -176,7 +179,21 @@ class PaymentsAPIHandler:
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on authorize."})
             return self._handle_authorize(headers, body)
 
-        # 4. POST /api/v1/payments/settle (C24 Milestone 2)
+        # 4. POST /api/v1/contracts/{id}/incremental-hold (C46 Milestone 3)
+        match_inc_hold = INCREMENTAL_HOLD_CONTRACT_REGEX.match(clean_path)
+        if match_inc_hold:
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on incremental-hold endpoint."})
+            contract_id = match_inc_hold.group(1)
+            return self._handle_incremental_hold(headers, body, contract_id=contract_id)
+
+        # 5. POST /api/v1/payments/orders/incremental-hold (C46 Milestone 3)
+        if INCREMENTAL_HOLD_PAYMENTS_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on payments orders incremental-hold."})
+            return self._handle_incremental_hold(headers, body, contract_id=None)
+
+        # 6. POST /api/v1/payments/settle (C24 Milestone 2)
         if SETTLE_REGEX.match(clean_path):
             if method != "POST":
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on settle."})
@@ -479,6 +496,77 @@ class PaymentsAPIHandler:
             return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
         except PaymentApprovalError as e:
             return self._json_response(403, {"error": "PAYMENT_APPROVAL_BLOCKED", "message": str(e), "verdict": e.verdict.to_dict() if e.verdict else None})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_incremental_hold(
+        self,
+        headers: Dict[str, str],
+        body: Optional[bytes],
+        contract_id: Optional[str] = None
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for:
+          - POST /api/v1/contracts/{id}/incremental-hold
+          - POST /api/v1/payments/orders/incremental-hold
+        Increases escrow authorization hold for an accepted change request (Commit C46).
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(401, {"error": "UNAUTHORIZED", "message": "Authentication required. Provide valid X-Actor-Id or Authorization header."})
+
+        try:
+            data = json.loads(body.decode("utf-8")) if body else {}
+        except Exception as e:
+            return self._json_response(400, {"error": "INVALID_JSON", "message": f"Malformed JSON: {str(e)}"})
+
+        resolved_contract_id = contract_id or data.get("contract_id")
+        if not resolved_contract_id:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "contract_id is required in path or request body."})
+
+        change_request_id = data.get("change_request_id")
+        if not change_request_id:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "Missing required field 'change_request_id'."})
+
+        additional_amount = data.get("additional_amount")
+        if additional_amount is not None:
+            try:
+                additional_amount = float(additional_amount)
+                if additional_amount <= 0:
+                    return self._json_response(400, {"error": "INVALID_AMOUNT", "message": "additional_amount must be greater than zero."})
+            except (ValueError, TypeError):
+                return self._json_response(400, {"error": "INVALID_AMOUNT", "message": "additional_amount must be a valid numeric amount."})
+
+        idempotency_key = self._extract_idempotency_key(headers)
+
+        try:
+            res = self.service.apply_incremental_hold(
+                contract_id=resolved_contract_id,
+                change_request_id=change_request_id,
+                additional_amount=additional_amount,
+                actor=actor,
+                idempotency_key=idempotency_key
+            )
+            return self._json_response(200, res)
+        except ValueError as e:
+            msg = str(e)
+            if "not found" in msg.lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": msg})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": msg})
+        except ForbiddenActionError as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except UnauthorizedRoleError as e:
+            return self._json_response(403, {"error": "UNAUTHORIZED_ROLE", "message": str(e)})
+        except PaymentApprovalError as e:
+            return self._json_response(403, {
+                "error": "PAYMENT_APPROVAL_BLOCKED",
+                "message": str(e),
+                "verdict": e.verdict.to_dict() if hasattr(e, "verdict") and e.verdict else None
+            })
+        except StateValidationError as e:
+            return self._json_response(400, {"error": "INVALID_STATE", "message": str(e)})
+        except PayPalAPIError as e:
+            return self._json_response(502, {"error": "PAYPAL_API_ERROR", "message": str(e)})
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
 

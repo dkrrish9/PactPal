@@ -97,6 +97,24 @@ def assert_can_view_receipt(actor: User, contract: Dict[str, Any]) -> None:
             f"Access restricted to contract buyer, seller, admin, or AI referee."
         )
 
+def assert_can_apply_incremental_hold(actor: User, contract: Dict[str, Any]) -> None:
+    """Only participant BUYER, platform ADMIN, or AI Referee / Price Negotiator can apply incremental holds (Commit C46)."""
+    if actor.role == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "PRICE_NEGOTIATOR") or getattr(actor, "role", None) in ("AI_REFEREE", "PRICE_NEGOTIATOR"):
+        return
+    if actor.role == UserRole.BUYER:
+        if contract.get("buyer_id") != actor.id:
+            raise ForbiddenActionError(
+                f"User '{actor.id}' is not the buyer for contract '{contract.get('id')}'. Assigned buyer is '{contract.get('buyer_id')}'."
+            )
+        return
+
+    raise UnauthorizedRoleError(
+        f"User '{actor.id}' with role '{actor.role.value}' cannot apply incremental holds. Only the contract BUYER, ADMIN, or AI Negotiator can authorize additional funds."
+    )
+
+
 
 
 class ProportionalSplitResult(dict):
@@ -464,6 +482,16 @@ class PaymentApprovalService:
                 )
             else:
                 checks_passed.append("ROLE_AUTHORIZED")
+        elif norm_action in ("INCREMENTAL_HOLD", "EXPAND_HOLD", "REAUTHORIZE"):
+            is_negotiator = (actor_id_val in ("PRICE_NEGOTIATOR", "AI_REFEREE") or getattr(actor, "name", None) in ("Price Negotiator", "AI Referee"))
+            if not (is_buyer or is_admin or is_negotiator):
+                checks_failed.append("ROLE_AUTHORIZED")
+                reasons.append(
+                    f"User '{actor_id_val}' with role '{actor_role_val}' is not authorized to apply incremental holds on contract '{contract_id}'. "
+                    f"Only the contract buyer, platform admin, or negotiation agent can authorize additional funds."
+                )
+            else:
+                checks_passed.append("ROLE_AUTHORIZED")
         else:
             checks_failed.append("VALID_ACTION")
             reasons.append(f"Unrecognized payment action '{action}'.")
@@ -483,6 +511,23 @@ class PaymentApprovalService:
                 reasons.append(
                     f"Cannot execute authorization on contract in '{contract_status}' state. Contract must be 'SIGNED'."
                 )
+            else:
+                checks_passed.append("STATE_MACHINE_CONSISTENT")
+        elif norm_action in ("INCREMENTAL_HOLD", "EXPAND_HOLD", "REAUTHORIZE"):
+            unfunded_states = {
+                ContractState.DRAFT.value,
+                ContractState.REVIEW.value,
+                ContractState.SIGNED.value
+            }
+            if contract_status == ContractState.SETTLED.value:
+                checks_failed.append("STATE_MACHINE_CONSISTENT")
+                reasons.append(f"Cannot apply incremental hold on contract '{contract_id}' because it is already SETTLED.")
+            elif contract_status in unfunded_states:
+                checks_failed.append("STATE_MACHINE_CONSISTENT")
+                reasons.append(f"Cannot apply incremental hold on contract in '{contract_status}' state. Contract must be funded.")
+            elif not contract.get("paypal_auth_id"):
+                checks_failed.append("HOLD_EXISTS")
+                reasons.append(f"Contract '{contract_id}' does not have an active PayPal authorization hold to expand.")
             else:
                 checks_passed.append("STATE_MACHINE_CONSISTENT")
         elif norm_action in ("SETTLE_ESCROW", "SETTLE", "CAPTURE", "PAYOUT", "VOID", "REFUND"):
@@ -630,6 +675,39 @@ class PaymentApprovalService:
                             else:
                                 checks_passed.append("AMOUNT_ALIGNMENT")
 
+        # 5. Change Request Policy Guard (Commit C46: for incremental hold actions)
+        if norm_action in ("INCREMENTAL_HOLD", "EXPAND_HOLD", "REAUTHORIZE"):
+            change_request_id = metadata.get("change_request_id")
+            if not change_request_id:
+                checks_failed.append("CHANGE_REQUEST_REQUIRED")
+                reasons.append("Change request ID is required in metadata for incremental hold approval.")
+            else:
+                cr = self.repository.get_change_request(change_request_id) if hasattr(self.repository, "get_change_request") else None
+                if not cr:
+                    checks_failed.append("CHANGE_REQUEST_EXISTS")
+                    reasons.append(f"Change request '{change_request_id}' does not exist.")
+                else:
+                    checks_passed.append("CHANGE_REQUEST_EXISTS")
+                    if cr.get("contract_id") != contract_id:
+                        checks_failed.append("CHANGE_REQUEST_CONTRACT_MATCH")
+                        reasons.append(f"Change request '{change_request_id}' belongs to contract '{cr.get('contract_id')}', not '{contract_id}'.")
+                    else:
+                        checks_passed.append("CHANGE_REQUEST_CONTRACT_MATCH")
+
+                    cr_status = cr.get("status")
+                    if cr_status != "ACCEPTED":
+                        checks_failed.append("CHANGE_REQUEST_ACCEPTED")
+                        reasons.append(f"Change request '{change_request_id}' is in '{cr_status}' state; must be 'ACCEPTED'.")
+                    else:
+                        checks_passed.append("CHANGE_REQUEST_ACCEPTED")
+
+                    prop_price = float(cr.get("proposed_price", 0.0))
+                    if prop_price <= 0:
+                        checks_failed.append("CHANGE_REQUEST_AMOUNT_POSITIVE")
+                        reasons.append(f"Change request proposed price must be positive (got {prop_price}).")
+                    else:
+                        checks_passed.append("CHANGE_REQUEST_AMOUNT_POSITIVE")
+
         approved = (len(checks_failed) == 0)
         if approved:
             reasons.append("All policy criteria met.")
@@ -678,6 +756,30 @@ class PaymentApprovalService:
                 self.repository.conn.commit()
             except Exception:
                 pass
+
+    def check_incremental_hold_approval(
+        self,
+        contract_id: str,
+        change_request_id: str,
+        actor: User,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> ApprovalVerdict:
+        """
+        Executes pre-flight approval validation for an incremental authorization hold (Commit C46).
+        """
+        meta = {"change_request_id": change_request_id, **(metadata or {})}
+        verdict = self.validate_payment_approval(
+            contract_id=contract_id,
+            action="INCREMENTAL_HOLD",
+            actor=actor,
+            metadata=meta
+        )
+        if not verdict.approved:
+            raise PaymentApprovalError(
+                f"Incremental hold approval failed for contract '{contract_id}': {'; '.join(verdict.reasons)}",
+                verdict=verdict
+            )
+        return verdict
 
 
 class EscrowPaymentService:
@@ -839,6 +941,200 @@ class EscrowPaymentService:
             self.repository.save_idempotency_key(idempotency_key, scope=scope, response_data=updated_contract)
 
         return updated_contract
+
+    def apply_incremental_hold(
+        self,
+        contract_id: str,
+        change_request_id: str,
+        additional_amount: Optional[float] = None,
+        actor: Optional[User] = None,
+        idempotency_key: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Increases the escrow hold amount for an accepted change request (Commit C46).
+        Enforces idempotency, RBAC, change request acceptance, policy approval check,
+        and PayPal v2 reauthorization / incremental authorization.
+        """
+        scope = f"incremental_hold:{contract_id}:{change_request_id}"
+        if idempotency_key and hasattr(self.repository, "get_idempotency_key"):
+            cached = self.repository.get_idempotency_key(idempotency_key, scope=scope)
+            if cached:
+                return cached["response_data"]
+
+        contract = self.repository.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        # Default actor to AI Referee / Price Negotiator if omitted
+        actor = actor or User(id="AI_REFEREE", name="AI Referee", email="referee@pactpal.internal", role=UserRole.ADMIN)
+
+        # 1. RBAC Guard: Buyer, Admin, or AI Referee / Price Negotiator
+        assert_can_apply_incremental_hold(actor, contract)
+
+        # 2. Contract Hold & Status Guard
+        contract_status = contract.get("status")
+        unfunded_states = {
+            ContractState.DRAFT.value,
+            ContractState.REVIEW.value,
+            ContractState.SIGNED.value
+        }
+        if contract_status == ContractState.SETTLED.value:
+            raise StateValidationError(f"Cannot apply incremental hold on contract '{contract_id}' because it is already SETTLED.")
+        if contract_status in unfunded_states:
+            raise StateValidationError(f"Cannot apply incremental hold on contract in '{contract_status}' state. Contract must be funded.")
+
+        primary_auth_id = contract.get("paypal_auth_id")
+        if not primary_auth_id:
+            raise StateValidationError(f"Contract '{contract_id}' does not have an active PayPal authorization hold.")
+
+        # 3. Change Request Guard
+        if not hasattr(self.repository, "get_change_request"):
+            raise ValueError("Repository does not support change requests.")
+        cr = self.repository.get_change_request(change_request_id)
+        if not cr:
+            raise ValueError(f"Change request '{change_request_id}' not found.")
+        if cr.get("contract_id") != contract_id:
+            raise ValueError(f"Change request '{change_request_id}' belongs to contract '{cr.get('contract_id')}', not '{contract_id}'.")
+        if cr.get("status") != "ACCEPTED":
+            raise StateValidationError(f"Change request '{change_request_id}' is in '{cr.get('status')}' state; must be 'ACCEPTED' to apply incremental hold.")
+
+        # 4. Resolve Amount
+        resolved_additional = float(additional_amount if additional_amount is not None else cr.get("proposed_price", 0.0))
+        if resolved_additional <= 0:
+            raise ValueError(f"Incremental hold amount must be positive (got {resolved_additional}).")
+
+        original_total = float(contract.get("total_amount", 0.0))
+        new_total = round(original_total + resolved_additional, 2)
+        currency = contract.get("currency", "USD")
+
+        # 5. Automated Policy Approval Check (Commit C31 / C46)
+        verdict = self.approval_service.validate_payment_approval(
+            contract_id=contract_id,
+            action="INCREMENTAL_HOLD",
+            actor=actor,
+            metadata={
+                "change_request_id": change_request_id,
+                "additional_amount": resolved_additional,
+                "new_total": new_total,
+                "idempotency_key": idempotency_key
+            }
+        )
+        if not verdict.approved:
+            raise PaymentApprovalError(
+                f"Incremental hold blocked by approval policy: {'; '.join(verdict.reasons)}",
+                verdict=verdict
+            )
+
+        # 6. Execute Reauthorization on PayPal Rails
+        new_auth_id = primary_auth_id
+        now_dt = datetime.now(timezone.utc)
+        new_expires_at = (now_dt + timedelta(days=PAYPAL_HOLD_DURATION_DAYS)).isoformat()
+
+        if hasattr(self.paypal, "reauthorize_authorization"):
+            reauth_res = self.paypal.reauthorize_authorization(
+                authorization_id=primary_auth_id,
+                amount=new_total,
+                currency=currency,
+                idempotency_key=idempotency_key
+            )
+            if isinstance(reauth_res, dict):
+                new_auth_id = reauth_res.get("authorization_id") or primary_auth_id
+                if reauth_res.get("expiration_time"):
+                    new_expires_at = reauth_res["expiration_time"]
+
+        # 7. Relational Persistence & State Updates
+        if hasattr(self.repository, "update_contract_hold"):
+            self.repository.update_contract_hold(
+                contract_id=contract_id,
+                total_amount=new_total,
+                paypal_auth_id=new_auth_id,
+                auth_expires_at=new_expires_at
+            )
+        elif hasattr(self.repository, "conn") and self.repository.conn:
+            cursor = self.repository.conn.cursor()
+            cursor.execute(
+                "UPDATE contracts SET total_amount = ?, paypal_auth_id = ?, auth_expires_at = ?, updated_at = ? WHERE id = ?",
+                (new_total, new_auth_id, new_expires_at, now_iso(), contract_id)
+            )
+            self.repository.conn.commit()
+
+        # Update change_request additional_auth_id
+        if hasattr(self.repository, "update_change_request"):
+            self.repository.update_change_request(
+                change_request_id=change_request_id,
+                additional_auth_id=new_auth_id
+            )
+        elif hasattr(self.repository, "conn") and self.repository.conn:
+            cursor = self.repository.conn.cursor()
+            cursor.execute(
+                "UPDATE change_requests SET additional_auth_id = ?, updated_at = ? WHERE id = ?",
+                (new_auth_id, now_iso(), change_request_id)
+            )
+            self.repository.conn.commit()
+
+        # Record payment ledger entry in payments table
+        if hasattr(self.repository, "record_payment"):
+            self.repository.record_payment(
+                contract_id=contract_id,
+                payment_type="AUTHORIZATION",
+                paypal_reference_id=new_auth_id,
+                amount=resolved_additional,
+                currency=currency,
+                status="COMPLETED",
+                metadata=json.dumps({
+                    "action": "INCREMENTAL_HOLD",
+                    "change_request_id": change_request_id,
+                    "original_hold_amount": original_total,
+                    "new_hold_amount": new_total,
+                    "previous_authorization_id": primary_auth_id
+                })
+            )
+
+        # Record immutable audit message in messages table
+        if hasattr(self.repository, "record_message"):
+            sender_id = getattr(actor, "id", None)
+            sender_type = "BUYER" if getattr(actor, "role", None) == UserRole.BUYER else "AI_REFEREE"
+            self.repository.record_message(
+                contract_id=contract_id,
+                sender_id=sender_id if sender_id not in ("AI_REFEREE", "PRICE_NEGOTIATOR") else None,
+                sender_type=sender_type,
+                content=f"Escrow hold increased by ${resolved_additional:.2f} {currency} for accepted Change Request {change_request_id}. New contract total: ${new_total:.2f} {currency}.",
+                metadata=json.dumps({
+                    "event": "INCREMENTAL_HOLD_APPLIED",
+                    "contract_id": contract_id,
+                    "change_request_id": change_request_id,
+                    "additional_amount": resolved_additional,
+                    "original_hold_amount": original_total,
+                    "new_hold_amount": new_total,
+                    "new_authorization_id": new_auth_id,
+                    "previous_authorization_id": primary_auth_id,
+                    "expires_at": new_expires_at
+                })
+            )
+
+        response_payload = {
+            "contract_id": contract_id,
+            "change_request_id": change_request_id,
+            "original_hold_amount": f"{original_total:.2f}",
+            "additional_hold_amount": f"{resolved_additional:.2f}",
+            "new_hold_amount": f"{new_total:.2f}",
+            "currency": currency,
+            "authorization_id": new_auth_id,
+            "previous_authorization_id": primary_auth_id,
+            "expires_at": new_expires_at,
+            "status": "HOLD_EXPANDED"
+        }
+
+        # Cache idempotency key
+        if idempotency_key and hasattr(self.repository, "save_idempotency_key"):
+            self.repository.save_idempotency_key(
+                key=idempotency_key,
+                scope=scope,
+                response_data=response_payload,
+                status_code=200
+            )
+
+        return response_payload
 
     def get_contract_hold(
         self,

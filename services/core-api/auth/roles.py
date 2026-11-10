@@ -89,4 +89,31 @@ def assert_can_view_receipt(actor: User, contract: Dict[str, Any]) -> None:
             f"Access restricted to contract buyer, seller, admin, or AI referee."
         )
 
+def assert_can_apply_incremental_hold(actor: User, contract: Dict[str, Any]) -> None:
+    """
+    Enforces authorization to apply an incremental hold for an accepted change request (Commit C46).
+    Allowed actors:
+    - Contract BUYER (the buyer funding the additional scope)
+    - Platform ADMIN
+    - AI Referee / Price Negotiator agent acting on behalf of the automated platform
+    """
+    # Platform Admin is always authorized
+    if actor.role == UserRole.ADMIN:
+        return
+    # AI Referee or automated negotiation agent
+    if getattr(actor, "id", None) in ("AI_REFEREE", "PRICE_NEGOTIATOR") or getattr(actor, "role", None) in ("AI_REFEREE", "PRICE_NEGOTIATOR"):
+        return
+    # Buyer
+    if actor.role == UserRole.BUYER:
+        if contract.get("buyer_id") != actor.id:
+            raise ForbiddenActionError(
+                f"User '{actor.id}' is not the buyer for contract '{contract.get('id')}'. Assigned buyer is '{contract.get('buyer_id')}'."
+            )
+        return
+
+    raise UnauthorizedRoleError(
+        f"User '{actor.id}' with role '{actor.role.value}' cannot apply incremental holds. Only the contract BUYER, ADMIN, or AI Negotiator can authorize additional funds."
+    )
+
+
 

@@ -13,7 +13,8 @@ from .service import (
     canonicalize_proof_of_work_summary,
     generate_proof_of_work_hash,
     verify_receipt_hash,
-    assert_can_view_receipt
+    assert_can_view_receipt,
+    assert_can_apply_incremental_hold
 )
 from .api import PaymentsAPIHandler, create_payments_app
 
@@ -29,6 +30,7 @@ __all__ = [
     "generate_proof_of_work_hash",
     "verify_receipt_hash",
     "assert_can_view_receipt",
+    "assert_can_apply_incremental_hold",
     "PaymentsAPIHandler",
     "create_payments_app"
 ]

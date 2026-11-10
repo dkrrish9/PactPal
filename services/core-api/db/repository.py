@@ -127,6 +127,20 @@ class ContractRepository:
             PRIMARY KEY (key, scope)
         );
 
+        CREATE TABLE IF NOT EXISTS change_requests (
+            id TEXT PRIMARY KEY,
+            contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+            proposed_by_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+            description TEXT NOT NULL,
+            proposed_price REAL NOT NULL,
+            proposed_extra_time_hours INTEGER NOT NULL DEFAULT 0,
+            ai_reasoning TEXT,
+            status TEXT NOT NULL DEFAULT 'PROPOSED' CHECK(status IN ('PROPOSED', 'ACCEPTED', 'REJECTED', 'COUNTERED')),
+            additional_auth_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS submissions (
             id TEXT PRIMARY KEY,
             contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
@@ -695,6 +709,119 @@ class ContractRepository:
         )
         row = cursor.fetchone()
         return dict(row) if row else None
+
+    def create_change_request(
+        self,
+        contract_id: str,
+        proposed_by_id: str,
+        description: str,
+        proposed_price: float,
+        proposed_extra_time_hours: int = 0,
+        ai_reasoning: Optional[str] = None,
+        status: str = "PROPOSED",
+        additional_auth_id: Optional[str] = None,
+        change_request_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Creates a change request record in the change_requests table (Commit C46)."""
+        cr_id = change_request_id or generate_uuid()
+        timestamp = now_iso()
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO change_requests (
+                id, contract_id, proposed_by_id, description, proposed_price,
+                proposed_extra_time_hours, ai_reasoning, status, additional_auth_id,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            cr_id, contract_id, proposed_by_id, description, float(proposed_price),
+            int(proposed_extra_time_hours), ai_reasoning, status, additional_auth_id,
+            timestamp, timestamp
+        ))
+        self.conn.commit()
+        return self.get_change_request(cr_id) or {
+            "id": cr_id,
+            "contract_id": contract_id,
+            "proposed_by_id": proposed_by_id,
+            "description": description,
+            "proposed_price": float(proposed_price),
+            "proposed_extra_time_hours": int(proposed_extra_time_hours),
+            "ai_reasoning": ai_reasoning,
+            "status": status,
+            "additional_auth_id": additional_auth_id,
+            "created_at": timestamp,
+            "updated_at": timestamp
+        }
+
+    def get_change_request(self, change_request_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a change request by primary ID."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM change_requests WHERE id = ? LIMIT 1", (change_request_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_change_requests(self, contract_id: str) -> List[Dict[str, Any]]:
+        """Retrieves all change requests associated with a contract."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM change_requests WHERE contract_id = ? ORDER BY created_at ASC", (contract_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def update_change_request(
+        self,
+        change_request_id: str,
+        status: Optional[str] = None,
+        additional_auth_id: Optional[str] = None,
+        ai_reasoning: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Updates status, additional_auth_id, and/or reasoning on a change request."""
+        updates = []
+        params = []
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if additional_auth_id is not None:
+            updates.append("additional_auth_id = ?")
+            params.append(additional_auth_id)
+        if ai_reasoning is not None:
+            updates.append("ai_reasoning = ?")
+            params.append(ai_reasoning)
+
+        if not updates:
+            return self.get_change_request(change_request_id)
+
+        updates.append("updated_at = ?")
+        params.append(now_iso())
+        params.append(change_request_id)
+
+        sql = f"UPDATE change_requests SET {', '.join(updates)} WHERE id = ?"
+        cursor = self.conn.cursor()
+        cursor.execute(sql, tuple(params))
+        self.conn.commit()
+        return self.get_change_request(change_request_id)
+
+    def update_contract_hold(
+        self,
+        contract_id: str,
+        total_amount: float,
+        paypal_auth_id: Optional[str] = None,
+        auth_expires_at: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Updates total_amount, paypal_auth_id, and auth_expires_at for a contract (Commit C46)."""
+        updates = ["total_amount = ?", "updated_at = ?"]
+        params = [float(total_amount), now_iso()]
+
+        if paypal_auth_id is not None:
+            updates.append("paypal_auth_id = ?")
+            params.append(paypal_auth_id)
+        if auth_expires_at is not None:
+            updates.append("auth_expires_at = ?")
+            params.append(auth_expires_at)
+
+        params.append(contract_id)
+        sql = f"UPDATE contracts SET {', '.join(updates)} WHERE id = ?"
+        cursor = self.conn.cursor()
+        cursor.execute(sql, tuple(params))
+        self.conn.commit()
+        return self.get_contract(contract_id)
 
     def close(self):
         self.conn.close()
