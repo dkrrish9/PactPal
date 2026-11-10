@@ -54,6 +54,11 @@ class ForbiddenActionError(AuthError):
     pass
 
 
+class MissingSellerPayPalEmailError(AuthError, ValueError):
+    """Raised when seller payout disbursement is attempted without a saved PayPal email (Commit C09d)."""
+    pass
+
+
 # Permission Guards
 def assert_can_create_contract(actor: User) -> None:
     """Only a BUYER can create contracts."""
@@ -234,4 +239,43 @@ def assert_contract_participant(actor: User, contract: Dict[str, Any]) -> None:
     if actor.id != contract.get("buyer_id") and actor.id != contract.get("seller_id"):
         raise ForbiddenActionError(
             f"User '{actor.id}' is neither the assigned buyer nor seller for contract '{contract.get('id')}'."
+        )
+
+
+def assert_can_update_paypal_email(actor: User, target_user_id: str) -> None:
+    """
+    Enforces authorization to update a user's PayPal email or complete seller onboarding (Commit C09d).
+    Allowed actors:
+    - Target user themselves (actor.id == target_user_id)
+    - Platform ADMIN
+    - AI Referee
+    """
+    if actor.role == UserRole.ADMIN or str(actor.role).upper() == "ADMIN":
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or \
+       getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or \
+       getattr(actor, "role", None) in ("AI_REFEREE", UserRole.ADMIN, "ADMIN"):
+        return
+    if actor.id == target_user_id:
+        return
+    raise ForbiddenActionError(
+        f"User '{actor.id}' with role '{_role_to_str(actor.role)}' is not authorized to update PayPal email for user '{target_user_id}'. "
+        f"Users may only update their own PayPal email unless acted upon by platform ADMIN."
+    )
+
+
+def assert_seller_payout_eligible(seller: Optional[User]) -> None:
+    """
+    Validates that the seller has completed onboarding and has a valid saved PayPal payout email (Commit C09d).
+    Done When criteria: Seller can't be paid out without a saved PayPal email.
+    """
+    if seller is None:
+        raise MissingSellerPayPalEmailError(
+            "Seller cannot be paid out: seller user record not found in repository."
+        )
+    paypal_email = getattr(seller, "paypal_email", None)
+    if not paypal_email or not str(paypal_email).strip():
+        raise MissingSellerPayPalEmailError(
+            f"Seller '{seller.id}' cannot be paid out: no saved PayPal email on file. "
+            f"Seller must complete onboarding and save a valid PayPal email before payouts can be disbursed."
         )

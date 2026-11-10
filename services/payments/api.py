@@ -43,6 +43,9 @@ from .service import (
     assert_can_dispatch_notification,
     assert_can_reauthorize_hold,
     assert_can_retry_payout,
+    assert_can_update_paypal_email,
+    assert_seller_payout_eligible,
+    MissingSellerPayPalEmailError,
     ExpiredAuthorizationError,
     PayoutFailureError,
     DeadlineWatcherService,
@@ -77,6 +80,9 @@ REAUTHORIZE_AUTH_REGEX = re.compile(r"^/api/v1/payments/authorizations/([^/]+)/r
 REAUTHORIZE_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/reauthorize/?$")
 PAYOUT_RETRY_PAYMENTS_REGEX = re.compile(r"^/api/v1/payments/payouts/retry/?$")
 PAYOUT_RETRY_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/payouts/retry/?$")
+SELLER_ONBOARD_REGEX = re.compile(r"^/api/v1/(?:payments/)?(?:seller/onboard|users/onboard/seller|onboarding/seller)/?$")
+SELLER_PAYPAL_EMAIL_REGEX = re.compile(r"^/api/v1/(?:payments/)?(?:seller|users)/([^/]+)/paypal-email/?$")
+SELLER_ELIGIBILITY_REGEX = re.compile(r"^/api/v1/(?:payments/)?(?:seller|users)/([^/]+)/payout-eligibility/?$")
 
 class PaymentsAPIHandler:
     """
@@ -306,6 +312,28 @@ class PaymentsAPIHandler:
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on payout retry endpoint."})
             return self._handle_retry_payout(headers, body, contract_id=None)
 
+        # 14. POST /api/v1/payments/seller/onboard (Commit C09d)
+        if SELLER_ONBOARD_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on seller onboard endpoint."})
+            return self._handle_seller_onboard(headers, body)
+
+        # 15. POST or PUT /api/v1/payments/seller/{id}/paypal-email (Commit C09d)
+        match_pp_email = SELLER_PAYPAL_EMAIL_REGEX.match(clean_path)
+        if match_pp_email:
+            if method not in ("POST", "PUT"):
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on paypal-email endpoint."})
+            user_id = match_pp_email.group(1)
+            return self._handle_update_seller_paypal_email(user_id, headers, body)
+
+        # 16. GET /api/v1/payments/seller/{id}/payout-eligibility (Commit C09d)
+        match_eligibility = SELLER_ELIGIBILITY_REGEX.match(clean_path)
+        if match_eligibility:
+            if method != "GET":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on payout-eligibility endpoint."})
+            user_id = match_eligibility.group(1)
+            return self._handle_get_seller_eligibility(user_id, headers)
+
         return self._json_response(404, {"error": "NOT_FOUND", "message": f"Endpoint '{clean_path}' not found in Payments API."})
 
     def _handle_get_hold(self, contract_id: str, headers: Dict[str, str]) -> Tuple[int, Dict[str, str], bytes]:
@@ -356,6 +384,14 @@ class PaymentsAPIHandler:
         try:
             summary = self.service.get_settlement_summary(contract_id=contract_id, actor=actor)
             return self._json_response(200, summary)
+        except MissingSellerPayPalEmailError as e:
+            return self._json_response(422, {
+                "error": "MissingSellerPayPalEmailError",
+                "message": str(e),
+                "detail": str(e),
+                "payout_blocked": True,
+                "action_required": "SELLER_ONBOARDING_REQUIRED"
+            })
         except ValueError as e:
             if "not found" in str(e).lower():
                 return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
@@ -388,6 +424,14 @@ class PaymentsAPIHandler:
         try:
             receipt = self.service.get_contract_receipt(contract_id=contract_id, actor=actor)
             return self._json_response(200, receipt)
+        except MissingSellerPayPalEmailError as e:
+            return self._json_response(422, {
+                "error": "MissingSellerPayPalEmailError",
+                "message": str(e),
+                "detail": str(e),
+                "payout_blocked": True,
+                "action_required": "SELLER_ONBOARDING_REQUIRED"
+            })
         except ValueError as e:
             if "not found" in str(e).lower():
                 return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
@@ -725,6 +769,14 @@ class PaymentsAPIHandler:
                 metadata=meta
             )
             return self._json_response(200, res)
+        except MissingSellerPayPalEmailError as e:
+            return self._json_response(422, {
+                "error": "MissingSellerPayPalEmailError",
+                "message": str(e),
+                "detail": str(e),
+                "payout_blocked": True,
+                "action_required": "SELLER_ONBOARDING_REQUIRED"
+            })
         except ValueError as e:
             if "not found" in str(e).lower():
                 return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
@@ -1153,6 +1205,88 @@ class PaymentsAPIHandler:
             return self._json_response(502, {"error": "PAYOUT_FAILURE_ESCALATION", "message": str(e), "details": getattr(e, "details", {})})
         except PayPalAPIError as e:
             return self._json_response(502, {"error": "PAYPAL_API_ERROR", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_seller_onboard(self, headers: Dict[str, str], body: Optional[bytes]) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/seller/onboard (Commit C09d).
+        Captures and validates seller PayPal email during onboarding and marks payout eligibility.
+        """
+        actor = self._extract_actor(headers)
+        try:
+            data = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "Invalid JSON body."})
+
+        user_id = data.get("user_id")
+        if not user_id:
+            if actor:
+                user_id = actor.id
+            else:
+                return self._json_response(401, {"error": "UNAUTHORIZED", "message": "Authentication required. Provide X-Actor-Id or user_id in body."})
+
+        paypal_email = data.get("paypal_email")
+        if not paypal_email:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "paypal_email is required for seller onboarding."})
+
+        name = data.get("name")
+
+        try:
+            res = self.service.onboard_seller(user_id=user_id, paypal_email=paypal_email, name=name, actor=actor)
+            return self._json_response(200, res)
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except ValueError as e:
+            if "not found" in str(e).lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_update_seller_paypal_email(self, user_id: str, headers: Dict[str, str], body: Optional[bytes]) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST/PUT /api/v1/payments/seller/{id}/paypal-email (Commit C09d).
+        Updates saved PayPal payout email for a seller.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(401, {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."})
+
+        try:
+            data = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "Invalid JSON body."})
+
+        paypal_email = data.get("paypal_email")
+        if not paypal_email:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "paypal_email is required."})
+
+        try:
+            res = self.service.update_seller_paypal_email(user_id=user_id, paypal_email=paypal_email, actor=actor)
+            return self._json_response(200, res)
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except ValueError as e:
+            if "not found" in str(e).lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_get_seller_eligibility(self, user_id: str, headers: Dict[str, str]) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for GET /api/v1/payments/seller/{id}/payout-eligibility (Commit C09d).
+        Checks whether seller has completed onboarding and saved a PayPal email.
+        """
+        actor = self._extract_actor(headers)
+        try:
+            res = self.service.get_seller_payout_eligibility(seller_id=user_id, actor=actor)
+            return self._json_response(200, res)
+        except ValueError as e:
+            if "not found" in str(e).lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
 

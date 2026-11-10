@@ -36,6 +36,8 @@ UserRole = _roles_mod.UserRole
 ForbiddenActionError = _roles_mod.ForbiddenActionError
 UnauthorizedRoleError = getattr(_roles_mod, "UnauthorizedRoleError", ForbiddenActionError)
 assert_can_fund_contract = _roles_mod.assert_can_fund_contract
+assert_can_update_paypal_email = getattr(_roles_mod, "assert_can_update_paypal_email", None)
+assert_seller_payout_eligible = getattr(_roles_mod, "assert_seller_payout_eligible", None)
 
 _sm_mod = importlib.import_module("services.core-api.state_machine.engine")
 ContractState = _sm_mod.ContractState
@@ -489,6 +491,19 @@ class PayoutFailureError(Exception):
         self.details = details or {}
 
 
+class MissingSellerPayPalEmailError(ValueError, PaymentApprovalError):
+    """
+    Raised when seller payout disbursement is attempted without a saved PayPal email (Commit C09d).
+    Done When criteria: 'Seller can't be paid out without a saved PayPal email'.
+    Inherits from ValueError and PaymentApprovalError for backwards-compatibility.
+    """
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None, verdict: Optional[ApprovalVerdict] = None):
+        super().__init__(message)
+        self.message = message
+        self.details = details or {}
+        self.verdict = verdict
+
+
 class PaymentApprovalService:
     """
     Automated Backend Approval Policy Engine for PactPal Payment Rails (Commit C31).
@@ -824,6 +839,34 @@ class PaymentApprovalService:
                         reasons.append(f"Change request proposed price must be positive (got {prop_price}).")
                     else:
                         checks_passed.append("CHANGE_REQUEST_AMOUNT_POSITIVE")
+
+        # 6. Seller Payout Onboarding Guard (Commit C09d: Seller can't be paid out without a saved PayPal email)
+        if norm_action in ("SETTLE_ESCROW", "SETTLE", "CAPTURE", "PAYOUT", "RETRY_PAYOUT"):
+            passed_amt_val = metadata.get("passed_amount") if metadata else None
+            needs_seller_payout = False
+            if norm_action in ("PAYOUT", "RETRY_PAYOUT"):
+                needs_seller_payout = True
+            elif norm_action in ("SETTLE_ESCROW", "SETTLE", "CAPTURE"):
+                if passed_amt_val is None:
+                    needs_seller_payout = True
+                else:
+                    try:
+                        needs_seller_payout = float(passed_amt_val) > 0
+                    except (ValueError, TypeError):
+                        needs_seller_payout = True
+
+            if needs_seller_payout:
+                seller_id = contract.get("seller_id")
+                seller_user = self.repository.get_user(seller_id) if hasattr(self.repository, "get_user") else None
+                saved_seller_email = (getattr(seller_user, "paypal_email", None) or "").strip() if seller_user else ""
+                if not saved_seller_email:
+                    checks_failed.append("SELLER_PAYPAL_EMAIL_SAVED")
+                    reasons.append(
+                        f"Seller '{seller_id}' cannot be paid out: no saved PayPal email on file. "
+                        f"Seller must complete onboarding and save a valid PayPal email before payouts can be disbursed."
+                    )
+                else:
+                    checks_passed.append("SELLER_PAYPAL_EMAIL_SAVED")
 
         approved = (len(checks_failed) == 0)
         if approved:
@@ -1937,15 +1980,23 @@ class EscrowPaymentService:
                 f"{round(passed + refund, 2):.2f} does not equal contract total_amount ({total_amount:.2f})."
             )
 
-        # Validate seller PayPal email if payout is positive
-        target_email = seller_paypal_email or ""
-        if not target_email and hasattr(self.repository, "get_user"):
-            seller_user = self.repository.get_user(contract.get("seller_id"))
-            if seller_user and getattr(seller_user, "paypal_email", None):
-                target_email = seller_user.paypal_email
+        # Validate seller has a saved PayPal email in repository for payout (Commit C09d)
+        seller_id = contract.get("seller_id")
+        seller_user = self.repository.get_user(seller_id) if hasattr(self.repository, "get_user") else None
+        saved_email = (getattr(seller_user, "paypal_email", None) or "").strip() if seller_user else ""
 
-        if passed > 0 and not target_email:
-            raise ValueError("seller_paypal_email is required when passed_amount > 0.")
+        target_email = (seller_paypal_email or saved_email).strip()
+
+        # CRITICAL ACCEPTANCE CRITERIA (Commit C09d):
+        # "Seller can't be paid out without a saved PayPal email"
+        if passed > 0:
+            if not saved_email:
+                raise MissingSellerPayPalEmailError(
+                    f"Seller '{seller_id}' cannot be paid out: seller_paypal_email is required when passed_amount > 0 and seller has no saved PayPal email on file. "
+                    f"Seller must complete onboarding and save a valid PayPal email before escrow funds can be released."
+                )
+            if not target_email:
+                target_email = saved_email
 
         # 4. Automated Backend Approval Policy Check (Commit C31)
         settle_meta = {
@@ -2432,13 +2483,24 @@ class EscrowPaymentService:
                 amount = float(contract.get("total_amount", 0.0))
 
         target_email = new_receiver_email or previous_email
-        if not target_email and hasattr(self.repository, "get_user"):
-            seller_user = self.repository.get_user(contract.get("seller_id"))
-            if seller_user and getattr(seller_user, "paypal_email", None):
-                target_email = seller_user.paypal_email
+        seller_id = contract.get("seller_id")
+        seller_user = self.repository.get_user(seller_id) if hasattr(self.repository, "get_user") else None
+        saved_email = (getattr(seller_user, "paypal_email", None) or "").strip() if seller_user else ""
 
-        if not target_email:
-            raise ValueError("Recipient PayPal email is required to retry payout.")
+        # If a new email was provided, save it to the seller's user record in repository (Commit C09d)
+        if new_receiver_email and new_receiver_email.strip():
+            if hasattr(self.repository, "update_user_paypal_email"):
+                self.repository.update_user_paypal_email(seller_id, new_receiver_email.strip())
+                saved_email = new_receiver_email.strip()
+            target_email = new_receiver_email.strip()
+        elif not target_email:
+            target_email = saved_email
+
+        if not target_email or not saved_email:
+            raise MissingSellerPayPalEmailError(
+                f"Seller '{seller_id}' cannot be paid out: no saved PayPal email on file to disburse retry payout. "
+                f"Seller must complete onboarding and save a valid PayPal email."
+            )
 
         payout_batch_ref = f"pactpal_retry_payout_{contract_id[:8]}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
         payout_key = idempotency_key or f"retry_payout_{contract_id}_{int(time.time())}"
@@ -3429,6 +3491,100 @@ class EscrowPaymentService:
                     pass
 
         return f"PROCESSED_{event_type}"
+
+    # --- Seller Onboarding & PayPal Payout Rails (Commit C09d) ---
+    def onboard_seller(
+        self,
+        user_id: str,
+        paypal_email: str,
+        name: Optional[str] = None,
+        actor: Optional[User] = None
+    ) -> Dict[str, Any]:
+        """
+        Onboards a freelancer/seller by capturing and saving their verified PayPal email (Commit C09d).
+        Fulfills Task C09d Done When criteria: 'Seller can't be paid out without a saved PayPal email'.
+        """
+        if actor is not None and assert_can_update_paypal_email is not None:
+            assert_can_update_paypal_email(actor, user_id)
+
+        user = self.repository.onboard_seller(user_id=user_id, paypal_email=paypal_email, name=name)
+
+        # Notify seller if notification service exists
+        if hasattr(self.notification_service, "notify_seller_onboarded"):
+            try:
+                self.notification_service.notify_seller_onboarded(user)
+            except Exception:
+                pass
+
+        return {
+            "status": "SUCCESS",
+            "user_id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role.value if hasattr(user.role, "value") else str(user.role),
+            "paypal_email": user.paypal_email,
+            "payout_eligible": True,
+            "message": "Seller onboarded successfully with saved PayPal email."
+        }
+
+    def update_seller_paypal_email(
+        self,
+        user_id: str,
+        paypal_email: str,
+        actor: Optional[User] = None
+    ) -> Dict[str, Any]:
+        """
+        Updates an existing seller's saved PayPal email address (Commit C09d).
+        """
+        if actor is not None and assert_can_update_paypal_email is not None:
+            assert_can_update_paypal_email(actor, user_id)
+
+        user = self.repository.update_user_paypal_email(user_id=user_id, paypal_email=paypal_email)
+
+        return {
+            "status": "SUCCESS",
+            "user_id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role.value if hasattr(user.role, "value") else str(user.role),
+            "paypal_email": user.paypal_email,
+            "payout_eligible": True,
+            "message": "Seller PayPal email updated successfully."
+        }
+
+    def get_seller_payout_eligibility(
+        self,
+        seller_id: str,
+        actor: Optional[User] = None
+    ) -> Dict[str, Any]:
+        """
+        Queries whether a seller is eligible for escrow payouts based on their saved PayPal email (Commit C09d).
+        """
+        user = self.repository.get_user(seller_id)
+        if not user:
+            raise ValueError(f"User with id '{seller_id}' not found.")
+
+        saved_email = (getattr(user, "paypal_email", None) or "").strip()
+        role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+        is_seller = role_str.upper() in ("SELLER", "ADMIN")
+        has_email = bool(saved_email and "@" in saved_email)
+
+        # Mask email for privacy if requested by unrelated user
+        display_email = saved_email
+        if actor and actor.id != seller_id and getattr(actor, "role", None) != UserRole.ADMIN and str(getattr(actor, "role", "")).upper() != "ADMIN":
+            parts = saved_email.split("@")
+            if len(parts) == 2:
+                u, d = parts
+                display_email = f"{u[:2]}***@{d}" if len(u) > 2 else f"***@{d}"
+
+        return {
+            "user_id": seller_id,
+            "role": role_str,
+            "has_saved_paypal_email": has_email,
+            "paypal_email": display_email if has_email else None,
+            "payout_eligible": bool(has_email and is_seller),
+            "status": "ELIGIBLE" if (has_email and is_seller) else "ONBOARDING_REQUIRED"
+        }
 
     # --- Deadline Watcher Factory (Commit C49) ---
     def create_deadline_watcher(self, decision_engine: Optional[Any] = None):
