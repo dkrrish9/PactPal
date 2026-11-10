@@ -12,6 +12,11 @@ import json
 
 from .models import DecisionOutcome, RefereeDecision, FeatureDecision
 from .formatter import generate_conversational_explanation, generate_plain_text_summary
+from ..security.prompt_defense import (
+    detect_prompt_injection,
+    neutralize_evidence_injection,
+    sanitize_untrusted_repo_content
+)
 
 class RefereeDecisionEngine:
     """
@@ -128,6 +133,7 @@ class RefereeDecisionEngine:
         # -------------------------------------------------------------
         feature_decisions: List[FeatureDecision] = []
         contract_features = c_dict.get("features", [])
+        neutralized_injections: List[Dict[str, Any]] = []
 
         # If report has per_feature_results, map from it
         if per_feature_raw:
@@ -170,6 +176,19 @@ class RefereeDecisionEngine:
                     status = "FAILED"
                     severity = "HIGH"
                     reason = f"Failed cheat scan: {feat_cheats[0].get('description')}"
+
+                # Prompt Injection Defense: treat code/evidence strictly as passive data
+                evidence_shield = neutralize_evidence_injection(evidence, status)
+                reason_shield = neutralize_evidence_injection(reason, status)
+                if evidence_shield.get("injection_detected") or reason_shield.get("injection_detected"):
+                    neutralized_injections.append({
+                        "feature_id": feat_id,
+                        "feature_title": f_title,
+                        "patterns": evidence_shield.get("patterns") or reason_shield.get("patterns")
+                    })
+                    evidence = evidence_shield["evidence"]
+                    if reason_shield.get("injection_detected"):
+                        reason = reason_shield["evidence"]
 
                 feature_decisions.append(
                     FeatureDecision(
@@ -287,7 +306,9 @@ class RefereeDecisionEngine:
                 "build_succeeded": build_succeeded,
                 "overall_score": r_dict.get("overall_score", 0.0),
                 "visual_similarity": visual_similarity,
-                "cheat_findings_count": len(cheat_findings)
+                "cheat_findings_count": len(cheat_findings),
+                "prompt_injections_neutralized": len(neutralized_injections),
+                "injections_detail": neutralized_injections
             }
         )
 
