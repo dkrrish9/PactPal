@@ -11,10 +11,12 @@ Fulfills Done criteria for C10:
 import os
 import math
 import json
+import uuid
 import hashlib
 import importlib
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from .client import PayPalClient, PayPalAPIError
 
@@ -63,6 +65,332 @@ class WebhookVerificationError(Exception):
     pass
 
 
+@dataclass
+class ApprovalVerdict:
+    approved: bool
+    action: str
+    contract_id: str
+    reasons: List[str] = field(default_factory=list)
+    checks_passed: List[str] = field(default_factory=list)
+    checks_failed: List[str] = field(default_factory=list)
+    actor_id: Optional[str] = None
+    actor_role: Optional[str] = None
+    approval_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "approval_id": self.approval_id,
+            "contract_id": self.contract_id,
+            "action": self.action,
+            "actor_id": self.actor_id,
+            "actor_role": self.actor_role,
+            "approved": self.approved,
+            "reasons": self.reasons,
+            "checks_passed": self.checks_passed,
+            "checks_failed": self.checks_failed,
+            "timestamp": self.timestamp,
+            "metadata": self.metadata
+        }
+
+
+class PaymentApprovalError(Exception):
+    """Raised when an automated payment approval policy check fails."""
+    def __init__(self, message: str, verdict: Optional[ApprovalVerdict] = None):
+        super().__init__(message)
+        self.message = message
+        self.verdict = verdict
+
+
+class PaymentApprovalService:
+    """
+    Automated Backend Approval Policy Engine for PactPal Payment Rails (Commit C31).
+    Enforces that NO payment rail fires without satisfying:
+      1. Checklist Lock Guard: Contract checklist must be dual-confirmed and locked (is_locked=True).
+      2. Pre-Settlement Verification Guard: Verified deliverable report exists, zero unresolved
+         high-severity cheat scan findings, and amounts match feature results (or ADMIN dispute override).
+      3. State Machine Consistency: Action conforms to allowed 10-state lifecycle graph.
+      4. Role & Identity Guard: Actor is authorized (Buyer for funding, Admin/Referee for settlement).
+    Logs all verdicts immutably into the compliance messages ledger.
+    """
+
+    def __init__(self, repository: Optional[Any] = None):
+        self.repository = repository or ContractRepository()
+
+    def validate_payment_approval(
+        self,
+        contract_id: str,
+        action: str,
+        actor: User,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> ApprovalVerdict:
+        metadata = metadata or {}
+        norm_action = str(action).upper().strip()
+        checks_passed: List[str] = []
+        checks_failed: List[str] = []
+        reasons: List[str] = []
+
+        contract = self.repository.get_contract(contract_id) if hasattr(self.repository, "get_contract") else None
+        if not contract:
+            checks_failed.append("CONTRACT_EXISTS")
+            reasons.append(f"Contract '{contract_id}' does not exist.")
+            verdict = ApprovalVerdict(
+                approved=False,
+                action=norm_action,
+                contract_id=contract_id,
+                actor_id=getattr(actor, "id", None),
+                actor_role=getattr(actor.role, "value", str(actor.role)) if hasattr(actor, "role") else None,
+                reasons=reasons,
+                checks_passed=checks_passed,
+                checks_failed=checks_failed,
+                metadata=metadata
+            )
+            return verdict
+
+        actor_role_val = getattr(actor.role, "value", str(actor.role)) if hasattr(actor, "role") else "UNKNOWN"
+        actor_id_val = getattr(actor, "id", None)
+        contract_status = contract.get("status")
+
+        # 1. Role & Identity Guard
+        is_buyer = (actor.role == UserRole.BUYER and actor_id_val == contract.get("buyer_id"))
+        is_admin = (actor.role == UserRole.ADMIN)
+        is_referee = (actor_id_val == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee")
+
+        if norm_action in ("CREATE_HOLD", "INITIATE_HOLD", "AUTHORIZE_HOLD", "AUTHORIZE"):
+            if not is_buyer:
+                checks_failed.append("ROLE_AUTHORIZED")
+                reasons.append(
+                    f"User '{actor_id_val}' with role '{actor_role_val}' is not authorized to fund contract '{contract_id}'. "
+                    f"Assigned buyer is '{contract.get('buyer_id')}'."
+                )
+            else:
+                checks_passed.append("ROLE_AUTHORIZED")
+        elif norm_action in ("SETTLE_ESCROW", "SETTLE", "CAPTURE", "PAYOUT", "VOID", "REFUND"):
+            if not (is_admin or is_referee):
+                checks_failed.append("ROLE_AUTHORIZED")
+                reasons.append(
+                    f"User '{actor_id_val}' with role '{actor_role_val}' is not authorized to settle contract '{contract_id}'. "
+                    f"Only platform ADMIN or AI Referee can execute escrow settlement."
+                )
+            else:
+                checks_passed.append("ROLE_AUTHORIZED")
+        else:
+            checks_failed.append("VALID_ACTION")
+            reasons.append(f"Unrecognized payment action '{action}'.")
+
+        # 2. State Machine Consistency Guard
+        if norm_action in ("CREATE_HOLD", "INITIATE_HOLD"):
+            if contract_status != ContractState.SIGNED.value:
+                checks_failed.append("STATE_MACHINE_CONSISTENT")
+                reasons.append(
+                    f"Cannot initiate escrow hold on contract in '{contract_status}' state. Contract must be 'SIGNED'."
+                )
+            else:
+                checks_passed.append("STATE_MACHINE_CONSISTENT")
+        elif norm_action in ("AUTHORIZE_HOLD", "AUTHORIZE"):
+            if contract_status not in (ContractState.SIGNED.value, ContractState.FUNDED.value):
+                checks_failed.append("STATE_MACHINE_CONSISTENT")
+                reasons.append(
+                    f"Cannot execute authorization on contract in '{contract_status}' state. Contract must be 'SIGNED'."
+                )
+            else:
+                checks_passed.append("STATE_MACHINE_CONSISTENT")
+        elif norm_action in ("SETTLE_ESCROW", "SETTLE", "CAPTURE", "PAYOUT", "VOID", "REFUND"):
+            unfunded_states = {
+                ContractState.DRAFT.value,
+                ContractState.REVIEW.value,
+                ContractState.SIGNED.value
+            }
+            if contract_status == ContractState.SETTLED.value:
+                checks_failed.append("STATE_MACHINE_CONSISTENT")
+                reasons.append(f"Contract '{contract_id}' is already SETTLED.")
+            elif contract_status in unfunded_states:
+                checks_failed.append("STATE_MACHINE_CONSISTENT")
+                reasons.append(f"Cannot settle contract in '{contract_status}' state. Contract has not been funded.")
+            elif not contract.get("paypal_auth_id"):
+                checks_failed.append("HOLD_EXISTS")
+                reasons.append(f"Contract '{contract_id}' does not have an active PayPal authorization hold to settle.")
+            else:
+                checks_passed.append("STATE_MACHINE_CONSISTENT")
+
+        # 3. Checklist Lock Guard (Commit C19 & Gate 1 Invariant)
+        # Contract checklist must be dual-confirmed and locked (is_locked=True)
+        is_locked = bool(contract.get("is_locked"))
+        if not is_locked:
+            checks_failed.append("CHECKLIST_LOCKED")
+            reasons.append(
+                f"Contract checklist for '{contract_id}' is not locked. "
+                f"Dual-confirmation from buyer and seller is required before payment actions can proceed."
+            )
+        else:
+            checks_passed.append("CHECKLIST_LOCKED")
+
+        # 4. Pre-Settlement Verification & Invariant Guards (only for settlement actions)
+        if norm_action in ("SETTLE_ESCROW", "SETTLE", "CAPTURE", "PAYOUT", "VOID", "REFUND"):
+            # Check for explicit platform ADMIN dispute resolution override
+            admin_override = bool(
+                is_admin and (
+                    metadata.get("admin_override") or
+                    metadata.get("is_admin_override") or
+                    metadata.get("dispute_override")
+                )
+            )
+
+            # Amount Invariant Guard
+            passed_amt = metadata.get("passed_amount")
+            refund_amt = metadata.get("refund_amount")
+            if passed_amt is not None and refund_amt is not None:
+                try:
+                    p = round(float(passed_amt), 2)
+                    r = round(float(refund_amt), 2)
+                    tot = round(float(contract.get("total_amount", 0.0)), 2)
+                    if p < 0 or r < 0:
+                        checks_failed.append("NON_NEGATIVE_AMOUNTS")
+                        reasons.append("passed_amount and refund_amount must be non-negative.")
+                    elif round(p + r, 2) != tot:
+                        checks_failed.append("AMOUNT_INVARIANT")
+                        reasons.append(
+                            f"Amount invariant violation: passed_amount ({p:.2f}) + refund_amount ({r:.2f}) = "
+                            f"{round(p + r, 2):.2f} does not equal contract total_amount ({tot:.2f})."
+                        )
+                    else:
+                        checks_passed.append("AMOUNT_INVARIANT")
+                except (ValueError, TypeError):
+                    checks_failed.append("AMOUNT_INVARIANT")
+                    reasons.append("passed_amount and refund_amount must be valid numerical amounts.")
+
+            if admin_override:
+                checks_passed.append("ADMIN_OVERRIDE")
+                checks_passed.append("VERIFICATION_REPORT_EXISTS")
+                checks_passed.append("CHEAT_SCAN_CLEARED")
+            else:
+                # Pre-Settlement Verification Report Check
+                report = None
+                if hasattr(self.repository, "get_latest_verification_report"):
+                    report = self.repository.get_latest_verification_report(contract_id)
+
+                if not report:
+                    checks_failed.append("VERIFICATION_REPORT_EXISTS")
+                    reasons.append(
+                        f"Pre-settlement verification report missing for contract '{contract_id}'. "
+                        f"Settlement requires completed verification report or platform ADMIN dispute resolution override."
+                    )
+                else:
+                    checks_passed.append("VERIFICATION_REPORT_EXISTS")
+
+                    # Check build status
+                    if not report.get("build_succeeded", False) and passed_amt is not None and float(passed_amt) > 0:
+                        checks_failed.append("BUILD_SUCCEEDED")
+                        reasons.append(
+                            f"Deliverable build failed: {report.get('failure_reason', 'Unbuildable source')}. "
+                            f"Funds cannot be released to seller for unbuildable deliverable."
+                        )
+                    else:
+                        checks_passed.append("BUILD_SUCCEEDED")
+
+                    # Check cheat & loophole scan findings (no unresolved HIGH severity)
+                    findings = report.get("cheat_scan_findings") or []
+                    if isinstance(findings, str):
+                        try:
+                            findings = json.loads(findings)
+                        except Exception:
+                            findings = []
+                    high_findings = [
+                        f for f in findings
+                        if isinstance(f, dict) and str(f.get("severity", "")).upper() == "HIGH"
+                    ]
+                    if high_findings:
+                        f_names = ", ".join(f.get("title") or f.get("finding") or "High Severity Risk" for f in high_findings)
+                        checks_failed.append("CHEAT_SCAN_CLEARED")
+                        reasons.append(
+                            f"Unresolved high-severity cheat/loophole scan findings detected: [{f_names}]. "
+                            f"Settlement blocked until resolved or overridden by ADMIN."
+                        )
+                    else:
+                        checks_passed.append("CHEAT_SCAN_CLEARED")
+
+                    # Amount alignment with feature evaluation
+                    if passed_amt is not None:
+                        per_feat = report.get("per_feature_results") or {}
+                        if isinstance(per_feat, str):
+                            try:
+                                per_feat = json.loads(per_feat)
+                            except Exception:
+                                per_feat = {}
+                        if per_feat:
+                            expected_passed = round(sum(
+                                float(f_res.get("allocated_amount", 0.0))
+                                for f_res in per_feat.values()
+                                if isinstance(f_res, dict) and f_res.get("status") == "PASSED"
+                            ), 2)
+                            if expected_passed == 0.0 and any(f.get("status") == "PASSED" for f in per_feat.values() if isinstance(f, dict)):
+                                passed_weights = sum(
+                                    float(f_res.get("price_weight", 0.0))
+                                    for f_res in per_feat.values()
+                                    if isinstance(f_res, dict) and f_res.get("status") == "PASSED"
+                                )
+                                expected_passed = round(float(contract.get("total_amount", 0.0)) * (passed_weights / 100.0), 2)
+
+                            if expected_passed > 0.0 and abs(round(float(passed_amt), 2) - expected_passed) > 0.01:
+                                checks_failed.append("AMOUNT_ALIGNMENT")
+                                reasons.append(
+                                    f"Settlement passed_amount (${float(passed_amt):.2f}) does not match verified feature results "
+                                    f"(expected ${expected_passed:.2f} based on verified passed features)."
+                                )
+                            else:
+                                checks_passed.append("AMOUNT_ALIGNMENT")
+
+        approved = (len(checks_failed) == 0)
+        if approved:
+            reasons.append("All policy criteria met.")
+
+        verdict = ApprovalVerdict(
+            approved=approved,
+            action=norm_action,
+            contract_id=contract_id,
+            actor_id=actor_id_val,
+            actor_role=actor_role_val,
+            reasons=reasons,
+            checks_passed=checks_passed,
+            checks_failed=checks_failed,
+            metadata=metadata
+        )
+
+        # Log audit entry into immutable messages table
+        self._log_approval_audit(contract_id, actor, norm_action, verdict)
+
+        return verdict
+
+    def _log_approval_audit(self, contract_id: str, actor: User, action: str, verdict: ApprovalVerdict) -> None:
+        """Writes an immutable policy audit record into the messages table."""
+        if hasattr(self.repository, "conn") and self.repository.conn:
+            try:
+                cursor = self.repository.conn.cursor()
+                sender_type = "AI_REFEREE" if (getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee") else getattr(actor.role, "value", "ADMIN")
+                sender_id = getattr(actor, "id", None)
+                content = (
+                    f"Payment approval check for '{action}' on contract '{contract_id}': "
+                    f"{'APPROVED' if verdict.approved else 'REJECTED'}. "
+                    f"Reasons: {'; '.join(verdict.reasons)}"
+                )
+                cursor.execute("""
+                    INSERT INTO messages (id, contract_id, sender_id, sender_type, content, metadata, sent_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(uuid.uuid4()),
+                    contract_id,
+                    sender_id if self.repository.get_user(sender_id) else None,
+                    sender_type,
+                    content,
+                    json.dumps(verdict.to_dict()),
+                    verdict.timestamp
+                ))
+                self.repository.conn.commit()
+            except Exception:
+                pass
+
+
 class EscrowPaymentService:
     """
     Manages milestone escrow lifecycle for contracts:
@@ -72,10 +400,13 @@ class EscrowPaymentService:
     def __init__(
         self,
         repository: Optional[Any] = None,
-        paypal_client: Optional[PayPalClient] = None
+        paypal_client: Optional[PayPalClient] = None,
+        approval_service: Optional[PaymentApprovalService] = None
     ):
         self.repository = repository or ContractRepository()
         self.paypal = paypal_client or PayPalClient()
+        self.approval_service = approval_service or PaymentApprovalService(repository=self.repository)
+        self.validate_payment_approval = self.approval_service.validate_payment_approval
 
     def initiate_contract_hold(
         self,
@@ -107,6 +438,19 @@ class EscrowPaymentService:
         if contract["status"] != ContractState.SIGNED.value:
             raise StateValidationError(
                 f"Cannot initiate escrow hold on contract in '{contract['status']}' state. Contract must be 'SIGNED'."
+            )
+
+        # 3. Automated Backend Approval Policy Check (Commit C31)
+        verdict = self.approval_service.validate_payment_approval(
+            contract_id=contract_id,
+            action="CREATE_HOLD",
+            actor=actor,
+            metadata={"idempotency_key": idempotency_key}
+        )
+        if not verdict.approved:
+            raise PaymentApprovalError(
+                f"Payment action 'CREATE_HOLD' blocked by approval policy: {'; '.join(verdict.reasons)}",
+                verdict=verdict
             )
 
         total_amount = float(contract["total_amount"])
@@ -174,7 +518,20 @@ class EscrowPaymentService:
         # 1. Permission Guard
         assert_can_fund_contract(actor, contract)
 
-        # 2. Execute Authorization on PayPal Rails
+        # 2. Automated Backend Approval Policy Check (Commit C31)
+        verdict = self.approval_service.validate_payment_approval(
+            contract_id=contract_id,
+            action="AUTHORIZE_HOLD",
+            actor=actor,
+            metadata={"paypal_order_id": paypal_order_id, "idempotency_key": idempotency_key}
+        )
+        if not verdict.approved:
+            raise PaymentApprovalError(
+                f"Payment action 'AUTHORIZE_HOLD' blocked by approval policy: {'; '.join(verdict.reasons)}",
+                verdict=verdict
+            )
+
+        # 3. Execute Authorization on PayPal Rails
         auth_res = self.paypal.execute_authorization(paypal_order_id)
         auth_id = auth_res["authorization_id"]
 
@@ -318,7 +675,8 @@ class EscrowPaymentService:
         refund_amount: float,
         seller_paypal_email: str,
         actor: User,
-        idempotency_key: Optional[str] = None
+        idempotency_key: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Settles contract escrow matching Phase 7 (Partial Payouts) and SHARED_API_CONTRACT.md Section 3.4.
@@ -396,6 +754,26 @@ class EscrowPaymentService:
 
         if passed > 0 and not target_email:
             raise ValueError("seller_paypal_email is required when passed_amount > 0.")
+
+        # 4. Automated Backend Approval Policy Check (Commit C31)
+        settle_meta = {
+            "passed_amount": passed,
+            "refund_amount": refund,
+            "seller_paypal_email": target_email,
+            "idempotency_key": idempotency_key,
+            **(metadata or {})
+        }
+        verdict = self.approval_service.validate_payment_approval(
+            contract_id=contract_id,
+            action="SETTLE_ESCROW",
+            actor=actor,
+            metadata=settle_meta
+        )
+        if not verdict.approved:
+            raise PaymentApprovalError(
+                f"Payment action 'SETTLE_ESCROW' blocked by approval policy: {'; '.join(verdict.reasons)}",
+                verdict=verdict
+            )
 
         currency = contract.get("currency", "USD")
         capture_id: Optional[str] = None

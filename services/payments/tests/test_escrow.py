@@ -64,6 +64,10 @@ class TestEscrowPaymentService(unittest.TestCase):
         # Advance REVIEW -> SIGNED (by seller)
         self.repo.transition_contract(contract_id, self.seller, ContractState.SIGNED, metadata={"acceptance_confirmed": True})
 
+        # Dual confirmation to lock checklist (Gate 1 / C19 / C31 requirement)
+        self.repo.confirm_checklist(contract_id, self.buyer)
+        self.repo.confirm_checklist(contract_id, self.seller)
+
         return contract_id
 
     def test_initiate_contract_hold_success(self):
