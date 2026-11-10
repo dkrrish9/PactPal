@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -25,9 +25,14 @@ import {
   Zap,
   ChevronRight,
   Terminal as TerminalIcon,
-  Sparkles
+  Sparkles,
+  Send,
+  Bot,
+  User,
+  CheckCheck,
+  RefreshCw
 } from "lucide-react";
-import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
+import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META, ChatMessage } from "@/lib/mockApi";
 
 type TabId = "overview" | "gantt" | "chat" | "activity" | "receipt";
 
@@ -581,7 +586,7 @@ export default function ContractDashboardPage() {
             />
           )}
           {tab === "gantt"     && <GanttTab />}
-          {tab === "chat"      && <ChatTab features={features} />}
+          {tab === "chat"      && <ChatTab contract={activeContract} features={features} />}
           {tab === "activity"  && <ActivityTab submission={activeContract.submission} />}
           {tab === "receipt"   && <ReceiptTab total={activeContract.total_amount} passedAmount={passedAmount} features={features} />}
         </div>
@@ -1189,154 +1194,676 @@ function GanttTab() {
   );
 }
 
-function ChatTab({ features = [] }: { features?: Feature[] }) {
-  const displayFeatures = features.length > 0 ? features : (mockApi.getContracts()[0]?.features || []);
-  const messages = [
-    { from: "Buyer", msg: "Can you add dark mode support as well?", time: "14:20", type: "user" },
-    { from: "AI Referee", msg: "Dark mode estimated: +$120, +3 extra days. Approve to create a mini-agreement?", time: "14:21", type: "ai" },
-    { from: "Seller", msg: "I can do it for $100 and 2 days.", time: "14:23", type: "seller" },
-    { from: "AI Referee", msg: "Counter accepted. Creating mini-agreement for $100, 2 days. Awaiting buyer authorization.", time: "14:24", type: "ai" },
-    { from: "Buyer", msg: "Approved! Let's do it.", time: "14:26", type: "user" },
-  ];
+function ChatTab({ 
+  contract, 
+  features = [] 
+}: { 
+  contract?: Contract | null; 
+  features?: Feature[];
+}) {
+  const activeContract = contract || mockApi.getContracts()[0];
+  const contractId = activeContract?.id || "pct_099e77";
+  const displayFeatures = features.length > 0 ? features : (activeContract?.features || []);
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputText, setInputText] = useState("");
+  const [senderRole, setSenderRole] = useState<"BUYER" | "SELLER" | "AI_REFEREE">("BUYER");
+  const [roleFilter, setRoleFilter] = useState<"ALL" | "BUYER" | "SELLER" | "AI_REFEREE">("ALL");
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load persisted messages from mockApi
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setMessages(mockApi.getMessages(contractId));
+    }
+  }, [contractId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isAiThinking]);
+
+  const handleSendMessage = (contentToSend?: string, roleOverride?: "BUYER" | "SELLER" | "AI_REFEREE") => {
+    const text = (contentToSend || inputText).trim();
+    if (!text) return;
+
+    const role = roleOverride || senderRole;
+    let senderName = "AI Referee";
+    if (role === "BUYER") senderName = activeContract?.buyer_name || "Priya Sharma";
+    if (role === "SELLER") senderName = activeContract?.seller_name || "Alex Mercer";
+
+    mockApi.sendMessage(contractId, {
+      sender_type: role,
+      sender_name: senderName,
+      content: text,
+    });
+
+    setMessages([...mockApi.getMessages(contractId)]);
+    if (!contentToSend) setInputText("");
+
+    // Simulate smart AI Referee response if a user triggers scope, weight, or terms discussion
+    const lower = text.toLowerCase();
+    if (role !== "AI_REFEREE" && (
+      lower.includes("scope") ||
+      lower.includes("weight") ||
+      lower.includes("price") ||
+      lower.includes("counter") ||
+      lower.includes("deadline") ||
+      lower.includes("test") ||
+      lower.includes("add") ||
+      lower.includes("change")
+    )) {
+      setIsAiThinking(true);
+      setTimeout(() => {
+        mockApi.sendMessage(contractId, {
+          sender_type: "AI_REFEREE",
+          sender_name: "AI Referee",
+          content: `AI Referee Analysis: Scope alteration noted for "${activeContract?.title}". In accordance with PactPal arbitration rules, any modification to milestone weights or deadline requires dual-party confirmation before funding hold adjustment.`,
+          metadata: { action: "SCOPE_ADVISORY" },
+        });
+        setMessages([...mockApi.getMessages(contractId)]);
+        setIsAiThinking(false);
+      }, 900);
+    }
+  };
+
+  const handleResetChat = () => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(`pactpal_chat_v1_${contractId}`);
+      setMessages(mockApi.getMessages(contractId));
+    }
+  };
+
+  const filteredMessages = messages.filter((m) => {
+    if (roleFilter === "ALL") return true;
+    return m.sender_type === roleFilter;
+  });
+
+  const buyerCount = messages.filter((m) => m.sender_type === "BUYER").length;
+  const sellerCount = messages.filter((m) => m.sender_type === "SELLER").length;
+  const aiCount = messages.filter((m) => m.sender_type === "AI_REFEREE").length;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 20, minHeight: 500 }}>
-      {/* Task list panel */}
+    <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 20, minHeight: 620 }}>
+      {/* Left panel: Context & Features */}
       <div
         style={{
           background: "rgba(255,255,255,0.02)",
-          border: "1px solid rgba(255,255,255,0.07)",
+          border: "1px solid rgba(255,255,255,0.08)",
           borderRadius: 20,
+          display: "flex",
+          flexDirection: "column",
           overflow: "hidden",
         }}
         role="complementary"
-        aria-label="Contract features list"
+        aria-label="Negotiation scope overview"
       >
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.07)", fontWeight: 700, fontSize: 14, color: "white" }}>
-          Features
+        <div style={{ padding: "18px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "#60A5FA", textTransform: "uppercase" }}>
+              Negotiation Scope
+            </span>
+            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 999, background: "rgba(255,255,255,0.06)", color: "var(--color-text-muted)" }}>
+              {activeContract?.id}
+            </span>
+          </div>
+          <h4 style={{ fontSize: 15, fontWeight: 700, color: "white", margin: 0 }}>
+            {activeContract?.title}
+          </h4>
+          <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4, marginBottom: 0 }}>
+            Total Value: <strong style={{ color: "white" }}>${activeContract?.total_amount?.toLocaleString()} {activeContract?.currency || "USD"}</strong>
+          </p>
         </div>
-        {displayFeatures.map((f, i) => {
-          const title = f.title || (f as any).name;
-          const weight = f.price_weight ?? (f as any).weight;
-          const amount = f.allocated_amount ?? (f as any).amount;
-          return (
-            <div
-              key={f.id || i}
-              style={{
-                padding: "14px 20px",
-                borderBottom: "1px solid rgba(255,255,255,0.05)",
-                cursor: "pointer",
-                transition: "background 0.2s",
-              }}
-              onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(0,102,255,0.06)"))}
-              onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
-              tabIndex={0}
-              role="option"
-              aria-label={`${title}: ${f.status}`}
-            >
-              <div style={{ fontSize: 13, fontWeight: 600, color: "white", marginBottom: 4 }}>{title}</div>
-              <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{weight}% · ${amount}</div>
-            </div>
-          );
-        })}
-      </div>
 
-      {/* Chat panel */}
-      <div
-        style={{
-          background: "rgba(255,255,255,0.02)",
-          border: "1px solid rgba(255,255,255,0.07)",
-          borderRadius: 20,
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-        }}
-        role="log"
-        aria-label="Negotiation chat"
-        aria-live="polite"
-      >
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.07)", fontWeight: 700, fontSize: 14, color: "white" }}>
-          Negotiation Chat
-        </div>
-        <div style={{ flex: 1, padding: "20px", display: "flex", flexDirection: "column", gap: 16, overflowY: "auto" }}>
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: m.type === "user" ? "flex-end" : m.type === "seller" ? "flex-start" : "flex-start",
-              }}
-            >
-              <span style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4, fontWeight: 600 }}>
-                {m.from} · {m.time}
-              </span>
-              <div
-                style={{
-                  background: m.type === "ai"
-                    ? "rgba(0,102,255,0.1)"
-                    : m.type === "user"
-                    ? "rgba(255,255,255,0.08)"
-                    : "rgba(255,152,0,0.08)",
-                  border: `1px solid ${m.type === "ai" ? "rgba(0,102,255,0.3)" : m.type === "user" ? "rgba(255,255,255,0.1)" : "rgba(255,152,0,0.3)"}`,
-                  borderRadius: 14,
-                  padding: "11px 16px",
-                  maxWidth: "75%",
-                  fontSize: 14,
-                  color: m.type === "ai" ? "#60A5FA" : "var(--color-text-secondary)",
-                  lineHeight: 1.5,
-                  boxShadow: m.type === "ai" ? "0 0 20px rgba(0,102,255,0.1)" : "none",
-                }}
-              >
-                {m.msg}
-              </div>
+        {/* Parties involved */}
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.01)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", marginBottom: 8, textTransform: "uppercase" }}>
+            Parties at the Table
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3B82F6" }} />
+              <span style={{ color: "white", fontWeight: 600 }}>{activeContract?.buyer_name || "Priya Sharma"}</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Buyer)</span>
             </div>
-          ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#10B981" }} />
+              <span style={{ color: "white", fontWeight: 600 }}>{activeContract?.seller_name || "Alex Mercer"}</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Seller)</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#A855F7" }} />
+              <span style={{ color: "white", fontWeight: 600 }}>AI Referee</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Autonomous Arbiter)</span>
+            </div>
+          </div>
         </div>
-        <div
-          style={{
-            padding: "16px 20px",
-            borderTop: "1px solid rgba(255,255,255,0.07)",
-            display: "flex",
-            gap: 10,
-          }}
-        >
-          <input
-            style={{
-              flex: 1,
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 12,
-              color: "white",
-              fontSize: 14,
-              padding: "10px 16px",
-              outline: "none",
-              fontFamily: "Inter, sans-serif",
-            }}
-            placeholder="Type a message..."
-            aria-label="Type a message"
-          />
+
+        {/* Feature click-to-discuss list */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", padding: "4px 6px 8px 6px", textTransform: "uppercase" }}>
+            Contract Milestones (Click to Discuss)
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {displayFeatures.map((f, i) => {
+              const title = f.title || (f as any).name;
+              const weight = f.price_weight ?? (f as any).weight;
+              const amount = f.allocated_amount ?? (f as any).amount;
+              return (
+                <div
+                  key={f.id || i}
+                  onClick={() => {
+                    setInputText(`Regarding "${title}": `);
+                  }}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    background: "rgba(255,255,255,0.03)",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(0,102,255,0.1)";
+                    e.currentTarget.style.borderColor = "rgba(0,102,255,0.3)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.03)";
+                    e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)";
+                  }}
+                  title="Click to draft a message about this feature"
+                >
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "white", marginBottom: 4 }}>
+                    {title}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-muted)" }}>
+                    <span>{weight}% weight</span>
+                    <span style={{ color: "#10B981", fontWeight: 600 }}>${amount}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Reset button footer */}
+        <div style={{ padding: "14px 18px", borderTop: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.01)" }}>
           <button
+            onClick={handleResetChat}
             style={{
-              background: "linear-gradient(135deg, #0066FF, #00A3E0)",
-              border: "none",
-              borderRadius: 12,
-              color: "white",
-              padding: "10px 18px",
-              fontSize: 14,
-              fontWeight: 700,
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              padding: "8px 12px",
+              borderRadius: 10,
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "var(--color-text-muted)",
+              fontSize: 12,
+              fontWeight: 600,
               cursor: "pointer",
             }}
-            aria-label="Send message"
+            title="Reset messages to default seed history"
           >
-            Send
+            <RefreshCw size={13} />
+            Reset Chat to Default
           </button>
         </div>
       </div>
 
+      {/* Right panel: Full Negotiation Timeline & Active Chat */}
+      <div
+        style={{
+          background: "rgba(255,255,255,0.02)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 20,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+        role="log"
+        aria-label="Negotiation chat stream"
+        aria-live="polite"
+      >
+        {/* Chat Header & Filters */}
+        <div
+          style={{
+            padding: "16px 20px",
+            borderBottom: "1px solid rgba(255,255,255,0.08)",
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            background: "rgba(255,255,255,0.015)",
+          }}
+        >
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <MessageSquare size={17} color="#60A5FA" />
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: "white", margin: 0 }}>
+                Negotiation Chat & Audit History
+              </h3>
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: "rgba(16,185,129,0.15)",
+                  color: "#10B981",
+                  border: "1px solid rgba(16,185,129,0.3)",
+                  fontWeight: 600,
+                }}
+              >
+                ● Live & Persisted
+              </span>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "4px 0 0 0" }}>
+              Full audit trail between AI Referee, Buyer, and Seller (C40)
+            </p>
+          </div>
+
+          {/* Filter Pills */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, color: "var(--color-text-muted)", marginRight: 4 }}>Filter:</span>
+            {[
+              { id: "ALL", label: `All (${messages.length})` },
+              { id: "AI_REFEREE", label: `AI (${aiCount})` },
+              { id: "BUYER", label: `Buyer (${buyerCount})` },
+              { id: "SELLER", label: `Seller (${sellerCount})` },
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setRoleFilter(f.id as any)}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  border: roleFilter === f.id ? "1px solid #3B82F6" : "1px solid rgba(255,255,255,0.08)",
+                  background: roleFilter === f.id ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.03)",
+                  color: roleFilter === f.id ? "white" : "var(--color-text-muted)",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Message Stream */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: "20px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 18,
+            maxHeight: "460px",
+          }}
+        >
+          {filteredMessages.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--color-text-muted)", fontSize: 13 }}>
+              No messages found for this filter.
+            </div>
+          ) : (
+            filteredMessages.map((m) => {
+              const isAi = m.sender_type === "AI_REFEREE";
+              const isBuyer = m.sender_type === "BUYER";
+              const isSeller = m.sender_type === "SELLER";
+
+              const timeStr = m.sent_at
+                ? new Date(m.sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : "Just now";
+
+              return (
+                <div
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: isBuyer ? "flex-end" : "flex-start",
+                    width: "100%",
+                  }}
+                >
+                  {/* Sender Header info */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginBottom: 6,
+                      flexDirection: isBuyer ? "row-reverse" : "row",
+                    }}
+                  >
+                    {/* Avatar Icon */}
+                    <div
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: "50%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: isAi
+                          ? "linear-gradient(135deg, #7A5CFF, #0066FF)"
+                          : isBuyer
+                          ? "rgba(59,130,246,0.2)"
+                          : "rgba(16,185,129,0.2)",
+                        border: `1px solid ${
+                          isAi ? "#7A5CFF" : isBuyer ? "rgba(59,130,246,0.4)" : "rgba(16,185,129,0.4)"
+                        }`,
+                      }}
+                    >
+                      {isAi ? <Bot size={14} color="white" /> : <User size={14} color={isBuyer ? "#60A5FA" : "#34D399"} />}
+                    </div>
+
+                    {/* Sender Name */}
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "white" }}>
+                      {m.sender_name || (isAi ? "AI Referee" : isBuyer ? "Buyer" : "Seller")}
+                    </span>
+
+                    {/* Role Pill */}
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: "0.04em",
+                        padding: "1px 7px",
+                        borderRadius: 6,
+                        textTransform: "uppercase",
+                        background: isAi
+                          ? "rgba(122,92,255,0.18)"
+                          : isBuyer
+                          ? "rgba(59,130,246,0.18)"
+                          : "rgba(16,185,129,0.18)",
+                        color: isAi ? "#C084FC" : isBuyer ? "#93C5FD" : "#6EE7B7",
+                        border: `1px solid ${
+                          isAi ? "rgba(122,92,255,0.3)" : isBuyer ? "rgba(59,130,246,0.3)" : "rgba(16,185,129,0.3)"
+                        }`,
+                      }}
+                    >
+                      {isAi ? "Referee" : isBuyer ? "Buyer" : "Seller"}
+                    </span>
+
+                    {/* Timestamp */}
+                    <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                      {timeStr}
+                    </span>
+                  </div>
+
+                  {/* Message Bubble */}
+                  <div
+                    style={{
+                      maxWidth: isAi ? "86%" : "78%",
+                      padding: "14px 18px",
+                      borderRadius: isAi ? 16 : isBuyer ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
+                      background: isAi
+                        ? "linear-gradient(135deg, rgba(122,92,255,0.12) 0%, rgba(0,102,255,0.06) 100%)"
+                        : isBuyer
+                        ? "rgba(0,102,255,0.14)"
+                        : "rgba(255,255,255,0.05)",
+                      border: isAi
+                        ? "1px solid rgba(122,92,255,0.35)"
+                        : isBuyer
+                        ? "1px solid rgba(0,102,255,0.3)"
+                        : "1px solid rgba(255,255,255,0.1)",
+                      boxShadow: isAi ? "0 4px 24px rgba(122,92,255,0.1)" : "none",
+                      color: isAi ? "#E0E7FF" : "white",
+                      fontSize: 13.5,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {m.content}
+
+                    {/* Special Metadata Cards */}
+                    {m.metadata && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          padding: "10px 14px",
+                          borderRadius: 10,
+                          fontSize: 12,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          background:
+                            m.metadata.action === "COUNTER_OFFER"
+                              ? "rgba(255,152,0,0.12)"
+                              : m.metadata.action === "ACCEPT_TERMS"
+                              ? "rgba(16,185,129,0.15)"
+                              : m.metadata.action === "VERDICT_SUMMARY"
+                              ? "rgba(122,92,255,0.18)"
+                              : "rgba(0,163,224,0.12)",
+                          border: `1px solid ${
+                            m.metadata.action === "COUNTER_OFFER"
+                              ? "rgba(255,152,0,0.3)"
+                              : m.metadata.action === "ACCEPT_TERMS"
+                              ? "rgba(16,185,129,0.3)"
+                              : m.metadata.action === "VERDICT_SUMMARY"
+                              ? "rgba(122,92,255,0.35)"
+                              : "rgba(0,163,224,0.25)"
+                          }`,
+                          color:
+                            m.metadata.action === "COUNTER_OFFER"
+                              ? "#FDBA74"
+                              : m.metadata.action === "ACCEPT_TERMS"
+                              ? "#86EFAC"
+                              : m.metadata.action === "VERDICT_SUMMARY"
+                              ? "#D8B4FE"
+                              : "#93C5FD",
+                        }}
+                      >
+                        {m.metadata.action === "ACCEPT_TERMS" && <CheckCheck size={16} />}
+                        {m.metadata.action === "COUNTER_OFFER" && <Scale size={16} />}
+                        {m.metadata.action === "VERDICT_SUMMARY" && <ShieldCheck size={16} />}
+                        {m.metadata.action === "SCOPE_ADVISORY" && <Sparkles size={16} />}
+                        <div>
+                          <strong>
+                            {m.metadata.action === "COUNTER_OFFER" && "Terms Adjustment: Counter-Offer Filed"}
+                            {m.metadata.action === "ACCEPT_TERMS" && "Dual Acceptance Confirmed"}
+                            {m.metadata.action === "VERDICT_SUMMARY" && "Escrow Settlement Allocation"}
+                            {m.metadata.action === "SCOPE_ADVISORY" && "Official Scope Advisory Notice"}
+                          </strong>
+                          {m.metadata.proposed_amount && (
+                            <span style={{ marginLeft: 8, opacity: 0.9 }}>
+                              · Amount: ${m.metadata.proposed_amount.toLocaleString()} USD
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          {isAiThinking && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderRadius: 12, background: "rgba(122,92,255,0.1)", border: "1px solid rgba(122,92,255,0.25)", width: "fit-content" }}>
+              <Bot size={16} color="#C084FC" className="animate-spin" />
+              <span style={{ fontSize: 12, color: "#D8B4FE" }}>AI Referee is analyzing scope & agreement terms...</span>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Quick mediation prompt suggestions */}
+        <div
+          style={{
+            padding: "8px 20px",
+            background: "rgba(255,255,255,0.015)",
+            borderTop: "1px solid rgba(255,255,255,0.06)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            overflowX: "auto",
+          }}
+        >
+          <span style={{ fontSize: 11, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>
+            Suggested:
+          </span>
+          {[
+            { text: "Can you add dark mode support as well?", role: "BUYER" as const },
+            { text: "I can deliver dark mode for $100 and 2 extra days.", role: "SELLER" as const },
+            { text: "Ask AI Referee: Verify if milestone 2 acceptance criteria is ambiguous", role: "BUYER" as const },
+          ].map((s, idx) => (
+            <button
+              key={idx}
+              onClick={() => {
+                setSenderRole(s.role);
+                setInputText(s.text);
+              }}
+              style={{
+                whiteSpace: "nowrap",
+                fontSize: 11,
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "var(--color-text-secondary)",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "rgba(0,102,255,0.4)";
+                e.currentTarget.style.color = "white";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
+                e.currentTarget.style.color = "var(--color-text-secondary)";
+              }}
+            >
+              {s.text}
+            </button>
+          ))}
+        </div>
+
+        {/* Send Input Bar & Sender Role Switcher */}
+        <div
+          style={{
+            padding: "16px 20px",
+            borderTop: "1px solid rgba(255,255,255,0.08)",
+            background: "rgba(255,255,255,0.02)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}
+        >
+          {/* Identity switcher */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>
+                Send as:
+              </span>
+              <div
+                style={{
+                  display: "inline-flex",
+                  borderRadius: 10,
+                  background: "rgba(255,255,255,0.04)",
+                  padding: 3,
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+              >
+                {[
+                  { role: "BUYER" as const, label: `👔 ${activeContract?.buyer_name || "Buyer"}` },
+                  { role: "SELLER" as const, label: `🧑‍💻 ${activeContract?.seller_name || "Seller"}` },
+                  { role: "AI_REFEREE" as const, label: "🤖 AI Referee" },
+                ].map((item) => (
+                  <button
+                    key={item.role}
+                    type="button"
+                    onClick={() => setSenderRole(item.role)}
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: 7,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      border: "none",
+                      background: senderRole === item.role ? "#0066FF" : "transparent",
+                      color: senderRole === item.role ? "white" : "var(--color-text-muted)",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+              Escrow Key: <code style={{ color: "#60A5FA" }}>pactpal_chat_v1_{contractId}</code>
+            </span>
+          </div>
+
+          {/* Form input */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSendMessage();
+            }}
+            style={{ display: "flex", gap: 10 }}
+          >
+            <input
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder={`Type a negotiation message as ${
+                senderRole === "BUYER"
+                  ? `${activeContract?.buyer_name || "Buyer"}`
+                  : senderRole === "SELLER"
+                  ? `${activeContract?.seller_name || "Seller"}`
+                  : "AI Referee"
+              }...`}
+              style={{
+                flex: 1,
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 12,
+                color: "white",
+                fontSize: 14,
+                padding: "12px 16px",
+                outline: "none",
+                fontFamily: "Inter, sans-serif",
+              }}
+              aria-label="Negotiation chat input"
+            />
+            <button
+              type="submit"
+              disabled={!inputText.trim()}
+              style={{
+                background: inputText.trim()
+                  ? "linear-gradient(135deg, #0066FF, #00A3E0)"
+                  : "rgba(255,255,255,0.06)",
+                border: "none",
+                borderRadius: 12,
+                color: inputText.trim() ? "white" : "rgba(255,255,255,0.3)",
+                padding: "12px 22px",
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: inputText.trim() ? "pointer" : "not-allowed",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                transition: "all 0.2s ease",
+              }}
+            >
+              <span>Send</span>
+              <Send size={15} />
+            </button>
+          </form>
+        </div>
+      </div>
+
       <style>{`
-        @media (max-width: 768px) {
-          [style*="grid-template-columns: 280px 1fr"] {
+        @media (max-width: 860px) {
+          [style*="grid-template-columns: 300px 1fr"] {
             grid-template-columns: 1fr !important;
           }
         }
