@@ -125,6 +125,32 @@ def assert_can_trigger_deadline_watcher(actor: User) -> None:
         "Only platform ADMIN or AI Referee can execute deadline sweeps or simulations."
     )
 
+def assert_can_view_notifications(actor: User, contract: Dict[str, Any]) -> None:
+    """Only participant BUYER, SELLER, platform ADMIN, or AI Referee can inspect contract notifications (Commit C51)."""
+    if getattr(actor, "role", None) == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or getattr(actor, "role", None) == "AI_REFEREE":
+        return
+    if actor.id != contract.get("buyer_id") and actor.id != contract.get("seller_id"):
+        raise ForbiddenActionError(
+            f"User '{actor.id}' with role '{getattr(getattr(actor, 'role', None), 'value', str(getattr(actor, 'role', '')))}' is not authorized to view notifications for contract '{contract.get('id')}'. "
+            "Access restricted to contract buyer, seller, admin, or AI referee."
+        )
+
+def assert_can_dispatch_notification(actor: User, contract: Dict[str, Any]) -> None:
+    """Only participant BUYER, SELLER, platform ADMIN, or AI Referee can dispatch notifications (Commit C51)."""
+    if getattr(actor, "role", None) == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or getattr(actor, "role", None) == "AI_REFEREE":
+        return
+    if actor.id == contract.get("buyer_id") or actor.id == contract.get("seller_id"):
+        return
+    raise ForbiddenActionError(
+        f"User '{actor.id}' with role '{getattr(getattr(actor, 'role', None), 'value', str(getattr(actor, 'role', '')))}' is not authorized to dispatch notifications for contract '{contract.get('id')}'. "
+        "Access restricted to contract buyer, seller, admin, or AI referee."
+    )
+
+
 
 
 
@@ -818,12 +844,41 @@ class EscrowPaymentService:
         self,
         repository: Optional[Any] = None,
         paypal_client: Optional[PayPalClient] = None,
-        approval_service: Optional[PaymentApprovalService] = None
+        approval_service: Optional[PaymentApprovalService] = None,
+        notification_service: Optional[Any] = None
     ):
         self.repository = repository or ContractRepository()
         self.paypal = paypal_client or PayPalClient()
         self.approval_service = approval_service or PaymentApprovalService(repository=self.repository)
         self.validate_payment_approval = self.approval_service.validate_payment_approval
+        self.notification_service = notification_service or EmailNotificationService(repository=self.repository)
+        if hasattr(self.repository, "set_notification_service"):
+            self.repository.set_notification_service(self.notification_service)
+
+    def get_contract_notifications(
+        self,
+        contract_id: str,
+        actor: Optional[User] = None
+    ) -> List[Dict[str, Any]]:
+        """Retrieves email notification audit history for a contract (Commit C51)."""
+        return self.notification_service.get_contract_notifications(contract_id=contract_id, actor=actor)
+
+    def dispatch_notification(
+        self,
+        contract_id: str,
+        state: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        actor: Optional[User] = None,
+        force: bool = True
+    ) -> List[Dict[str, Any]]:
+        """Manually dispatches contract notifications for a state milestone (Commit C51)."""
+        return self.notification_service.notify_state_change(
+            contract_id=contract_id,
+            new_state=state,
+            metadata=metadata,
+            actor=actor,
+            force=force
+        )
 
     def initiate_contract_hold(
         self,
@@ -2724,7 +2779,16 @@ class EscrowPaymentService:
             decision_engine=decision_engine
         )
 
-# Deferred imports to avoid circular dependencies while re-exporting (Commit C49)
+# Deferred imports to avoid circular dependencies while re-exporting (Commit C49, C51)
 from .deadline_watcher import DeadlineWatcherService, SweepResult, parse_datetime
+from .notifications import (
+    EmailNotificationService,
+    InMemoryEmailProvider,
+    SMTPEmailProvider,
+    SendGridEmailProvider,
+    get_email_provider,
+    NotificationRecipient,
+    NotificationMessage
+)
 
 

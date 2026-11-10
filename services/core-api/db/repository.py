@@ -30,6 +30,7 @@ class ContractRepository:
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON;")
+        self.notification_service = None
         self._init_tables()
 
     def _init_tables(self) -> None:
@@ -402,7 +403,57 @@ class ContractRepository:
         ))
 
         self.conn.commit()
+
+        # 4. Trigger Automated Email Notifications (Commit C51)
+        if getattr(self, "notification_service", None) is not None:
+            try:
+                state_val = target_state.value if hasattr(target_state, "value") else str(target_state)
+                self.notification_service.notify_state_change(
+                    contract_id=contract_id,
+                    new_state=state_val,
+                    metadata=metadata,
+                    actor=actor
+                )
+            except Exception:
+                pass
+
         return self.get_contract(contract_id)
+
+    def set_notification_service(self, notification_service: Any) -> None:
+        """Attaches automated notification service for state transitions (Commit C51)."""
+        self.notification_service = notification_service
+
+    def get_contract_notifications(self, contract_id: str) -> List[Dict[str, Any]]:
+        """Retrieves all email notification audit events for a contract from messages table (Commit C51)."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT * FROM messages
+            WHERE contract_id = ? AND metadata LIKE '%EMAIL_NOTIFICATION_SENT%'
+            ORDER BY sent_at ASC
+        """, (contract_id,))
+        records = []
+        for row in cursor.fetchall():
+            rec = dict(row)
+            if isinstance(rec.get("metadata"), str):
+                try:
+                    rec["metadata"] = json.loads(rec["metadata"])
+                except Exception:
+                    pass
+            meta = rec.get("metadata", {})
+            records.append({
+                "id": rec["id"],
+                "contract_id": contract_id,
+                "recipient_email": meta.get("recipient_email"),
+                "recipient_name": meta.get("recipient_name"),
+                "role": meta.get("role"),
+                "state_transition": meta.get("state_transition"),
+                "subject": meta.get("subject"),
+                "delivery_status": meta.get("delivery_status"),
+                "message_id": meta.get("message_id"),
+                "provider": meta.get("provider"),
+                "sent_at": meta.get("sent_at") or rec["sent_at"]
+            })
+        return records
 
     # --- Payment Ledger Management (C24) ---
     def record_payment(
