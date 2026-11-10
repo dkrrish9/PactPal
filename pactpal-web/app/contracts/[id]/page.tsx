@@ -68,6 +68,7 @@ export default function ContractDashboardPage() {
   const [releaseModalOpen, setReleaseModalOpen] = useState(false);
   const [isReleased, setIsReleased] = useState(false);
   const [simulatedStatus, setSimulatedStatus] = useState<ContractStatus | null>(null);
+  const [deadlineAlert, setDeadlineAlert] = useState<string | null>(null);
 
   useEffect(() => {
     const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
@@ -86,6 +87,16 @@ export default function ContractDashboardPage() {
     mockApi.updateContractStatus(activeContract.id, status);
     if (contract) {
       setContract({ ...contract, status });
+    }
+  };
+
+  const handleAdminSimulateDeadline = () => {
+    const res = mockApi.simulateDeadlineWatcher(activeContract.id);
+    if (res) {
+      setSimulatedStatus("SETTLED");
+      setContract({ ...res.contract });
+      setDeadlineAlert(`⚡ [DEADLINE WATCHER FIRED (C49/C50)] Simulated deadline elapsed! Automated final verification completed. $${res.payoutAmount} USD disbursed to seller, $${res.refundAmount} USD refunded to buyer. Status transitioned to SETTLED.`);
+      setTimeout(() => setDeadlineAlert(null), 7000);
     }
   };
 
@@ -334,8 +345,53 @@ export default function ContractDashboardPage() {
                   </option>
                 ))}
               </select>
+
+              {/* Admin Simulate Deadline Button (C50) */}
+              <button
+                onClick={handleAdminSimulateDeadline}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "5px 12px",
+                  borderRadius: 10,
+                  background: "linear-gradient(135deg, rgba(245,158,11,0.2) 0%, rgba(239,68,68,0.2) 100%)",
+                  border: "1px solid rgba(245,158,11,0.5)",
+                  color: "#FBBF24",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+                title="Admin C50: Simulate deadline elapsed (triggers C49 deadline watcher, final verification & partial payout)"
+              >
+                <Zap size={13} color="#FBBF24" />
+                Simulate Deadline (Admin C50)
+              </button>
             </div>
           </div>
+
+          {/* Deadline Alert Banner (C50) */}
+          {deadlineAlert && (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: "12px 18px",
+                borderRadius: 12,
+                background: "rgba(245,158,11,0.15)",
+                border: "1px solid rgba(245,158,11,0.45)",
+                color: "#FDE68A",
+                fontSize: 13,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <Zap size={16} color="#FBBF24" />
+              <span>{deadlineAlert}</span>
+            </div>
+          )}
 
           {/* Stepper items row */}
           <div
@@ -630,7 +686,7 @@ export default function ContractDashboardPage() {
               onOpenRelease={() => setReleaseModalOpen(true)}
             />
           )}
-          {tab === "gantt"     && <GanttTab />}
+          {tab === "gantt"     && <GanttTab contract={activeContract} features={features} />}
           {tab === "chat"      && <ChatTab contract={activeContract} features={features} />}
           {tab === "activity"  && <ActivityTab submission={activeContract.submission} />}
           {tab === "receipt"   && <ReceiptTab contract={activeContract} total={activeContract.total_amount} passedAmount={passedAmount} features={features} />}
@@ -1208,32 +1264,710 @@ function OverviewTab({
   );
 }
 
-function GanttTab() {
+function GanttTab({
+  contract,
+  features = [],
+}: {
+  contract?: Contract | null;
+  features?: Feature[];
+}) {
+  const activeContract = contract || mockApi.getContracts()[0];
+  const contractId = activeContract?.id || "pct_099e77";
+
+  const [zoomLevel, setZoomLevel] = useState<"Day" | "Week" | "Month">("Week");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [tasksList, setTasksList] = useState<Feature[]>(activeContract?.features || features);
+  const [changeToast, setChangeToast] = useState<string | null>(null);
+  const [hoveredTask, setHoveredTask] = useState<string | null>(null);
+
+  useEffect(() => {
+    const updated = mockApi.getContract(contractId);
+    if (updated?.features) {
+      setTasksList(updated.features);
+    }
+  }, [contractId]);
+
+  const hasAcceptedChange = tasksList.some((f) => f.title.includes("Dark Mode"));
+
+  const handleToggleScopeChange = () => {
+    if (hasAcceptedChange) {
+      mockApi.removeScopeChange(contractId);
+      const updated = mockApi.getContract(contractId);
+      setTasksList(updated?.features || []);
+      setChangeToast("Simulated scope change removed from Gantt timeline.");
+    } else {
+      mockApi.acceptScopeChange(contractId, {
+        title: "[CR-01] Dark Mode Theme Support (Accepted Change)",
+        price_weight: 10,
+        allocated_amount: 150,
+      });
+      const updated = mockApi.getContract(contractId);
+      setTasksList(updated?.features || []);
+      setChangeToast("✓ Scope change accepted! Task '[CR-01] Dark Mode Theme Support' automatically appeared in Bryntum Gantt (C48).");
+    }
+    setTimeout(() => setChangeToast(null), 5000);
+  };
+
+  const filteredTasks = tasksList.filter((t) => {
+    if (statusFilter === "ALL") return true;
+    if (statusFilter === "PASSED") return t.status === "PASSED";
+    if (statusFilter === "FAILED") return t.status === "FAILED";
+    if (statusFilter === "PENDING") return t.status === "PENDING";
+    return true;
+  });
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "PASSED":
+        return "#4CAF50";
+      case "FAILED":
+        return "#F44336";
+      case "VERIFYING":
+      case "IN_PROGRESS":
+        return "#0066FF";
+      default:
+        return "#7C89A8";
+    }
+  };
+
+  // Schedule task widths and start offsets for Gantt rendering
+  const taskScheduleMap: Record<string, { startPct: number; widthPct: number; days: string }> = {
+    feat_01: { startPct: 4, widthPct: 24, days: "Nov 01 - Nov 07" },
+    feat_02: { startPct: 20, widthPct: 22, days: "Nov 05 - Nov 11" },
+    feat_03: { startPct: 36, widthPct: 28, days: "Nov 09 - Nov 17" },
+    feat_04: { startPct: 56, widthPct: 26, days: "Nov 14 - Nov 21" },
+  };
+
   return (
     <div
       style={{
         background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.07)",
+        border: "1px solid rgba(255,255,255,0.08)",
         borderRadius: 24,
-        padding: "24px",
-        minHeight: 500,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
-        gap: 16,
+        overflow: "hidden",
+        minHeight: 560,
+        boxShadow: "0 0 60px rgba(0,102,255,0.06)",
+        fontFamily: "Inter, sans-serif",
       }}
       id="bryntum-gantt"
       role="region"
-      aria-label="Gantt timeline — Bryntum integration point"
+      aria-label="Bryntum Gantt Chart with status colors, hold-expiry and deadline milestones"
     >
-      <div style={{ fontSize: 48, opacity: 0.3 }} aria-hidden>📊</div>
-      <div style={{ fontSize: 16, color: "var(--color-text-muted)", textAlign: "center" }}>
-        Bryntum Gantt component mounts here
-        <br />
-        <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "rgba(124,137,168,0.5)" }}>
-          #bryntum-gantt · min-height: 500px · full-width
-        </span>
+      {/* Scope Change Alert Toast */}
+      {changeToast && (
+        <div
+          style={{
+            padding: "12px 20px",
+            background: "linear-gradient(135deg, rgba(16,185,129,0.2) 0%, rgba(0,102,255,0.15) 100%)",
+            borderBottom: "1px solid rgba(16,185,129,0.35)",
+            color: "#A7F3D0",
+            fontSize: 13,
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <Sparkles size={16} color="#34D399" />
+          <span>{changeToast}</span>
+        </div>
+      )}
+
+      {/* Bryntum Gantt Toolbar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "18px 24px",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(255,255,255,0.015)",
+          flexWrap: "wrap",
+          gap: 12,
+        }}
+      >
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Clock size={16} color="#00A3E0" />
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: "white", margin: 0 }}>
+              Bryntum Gantt Timeline
+            </h3>
+            <span
+              style={{
+                fontSize: 11,
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: "rgba(0,102,255,0.15)",
+                color: "#60A5FA",
+                border: "1px solid rgba(0,102,255,0.3)",
+                fontWeight: 600,
+              }}
+            >
+              #bryntum-gantt · C48
+            </span>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "3px 0 0" }}>
+            Feature milestone tasks, 29-day hold expiry, and delivery deadline
+          </p>
+        </div>
+
+        {/* Action Controls & Change Request Simulator (C48 Done When) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {/* Zoom controls */}
+          <div
+            style={{
+              display: "inline-flex",
+              borderRadius: 8,
+              background: "rgba(255,255,255,0.04)",
+              padding: 2,
+              border: "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            {(["Day", "Week", "Month"] as const).map((z) => (
+              <button
+                key={z}
+                onClick={() => setZoomLevel(z)}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: "pointer",
+                  background: zoomLevel === z ? "#0066FF" : "transparent",
+                  color: zoomLevel === z ? "white" : "var(--color-text-muted)",
+                }}
+              >
+                {z}
+              </button>
+            ))}
+          </div>
+
+          {/* Status filter pills */}
+          <div style={{ display: "flex", gap: 5 }}>
+            {[
+              { id: "ALL", label: "All" },
+              { id: "PASSED", label: "Passed (Green)" },
+              { id: "FAILED", label: "Failed (Red)" },
+              { id: "PENDING", label: "Pending" },
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setStatusFilter(f.id)}
+                style={{
+                  padding: "4px 9px",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  border: statusFilter === f.id ? "1px solid #00A3E0" : "1px solid rgba(255,255,255,0.08)",
+                  background: statusFilter === f.id ? "rgba(0,163,224,0.18)" : "rgba(255,255,255,0.03)",
+                  color: statusFilter === f.id ? "white" : "var(--color-text-muted)",
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* C48 Requirement: Accept Change Request -> New task appears automatically */}
+          <button
+            onClick={handleToggleScopeChange}
+            style={{
+              padding: "6px 14px",
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              background: hasAcceptedChange
+                ? "rgba(16,185,129,0.18)"
+                : "linear-gradient(135deg, #FF9800, #F57C00)",
+              border: hasAcceptedChange ? "1px solid rgba(16,185,129,0.4)" : "none",
+              color: hasAcceptedChange ? "#34D399" : "white",
+              boxShadow: hasAcceptedChange ? "none" : "0 0 16px rgba(255,152,0,0.3)",
+              transition: "all 0.2s ease",
+            }}
+            title="C48: Simulate an accepted mini-agreement change request to see new task appear automatically in Gantt"
+          >
+            {hasAcceptedChange ? (
+              <>
+                <CheckCircle size={13} color="#34D399" />
+                <span>Scope Change #1 Accepted (Click to Reset)</span>
+              </>
+            ) : (
+              <>
+                <Zap size={13} />
+                <span>Accept Scope Change #1 (+10% Task)</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Gantt Dual-Pane Grid Layout (Task Table Left, Timeline Right) */}
+      <div style={{ display: "grid", gridTemplateColumns: "330px 1fr", minHeight: 440 }}>
+        {/* Left Column: Task Checklist Columns */}
+        <div style={{ borderRight: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.01)" }}>
+          {/* Table Header */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 50px 60px 70px",
+              padding: "12px 16px",
+              borderBottom: "1px solid rgba(255,255,255,0.08)",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-text-muted)",
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+            }}
+          >
+            <div>Task Name</div>
+            <div style={{ textAlign: "right" }}>Wt</div>
+            <div style={{ textAlign: "right" }}>Amt</div>
+            <div style={{ textAlign: "right" }}>Status</div>
+          </div>
+
+          {/* Task Rows */}
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {filteredTasks.map((t, idx) => {
+              const isAcceptedChange = t.title.includes("Dark Mode");
+              return (
+                <div
+                  key={t.id || idx}
+                  onMouseEnter={() => setHoveredTask(t.id)}
+                  onMouseLeave={() => setHoveredTask(null)}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 50px 60px 70px",
+                    padding: "14px 16px",
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    fontSize: 12,
+                    background: hoveredTask === t.id
+                      ? "rgba(0,102,255,0.08)"
+                      : isAcceptedChange
+                      ? "rgba(255,152,0,0.06)"
+                      : "transparent",
+                    transition: "background 0.15s ease",
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden" }}>
+                    <div
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: getStatusColor(t.status),
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontWeight: 600,
+                        color: isAcceptedChange ? "#FDBA74" : "white",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                      title={t.title}
+                    >
+                      {t.title}
+                    </span>
+                  </div>
+                  <div style={{ textAlign: "right", color: "var(--color-text-muted)", fontFamily: "JetBrains Mono, monospace" }}>
+                    {t.price_weight}%
+                  </div>
+                  <div style={{ textAlign: "right", color: "white", fontFamily: "JetBrains Mono, monospace", fontWeight: 600 }}>
+                    ${t.allocated_amount}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                        background: `${getStatusColor(t.status)}22`,
+                        color: getStatusColor(t.status),
+                        border: `1px solid ${getStatusColor(t.status)}55`,
+                      }}
+                    >
+                      {t.status}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Hold-Expiry Milestone Row in Table */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 50px 60px 70px",
+                padding: "14px 16px",
+                borderBottom: "1px solid rgba(255,255,255,0.04)",
+                fontSize: 12,
+                background: "rgba(255,152,0,0.04)",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#FBBF24", fontWeight: 700 }}>
+                <span>◆</span>
+                <span>29-Day PayPal Hold Expiry</span>
+              </div>
+              <div style={{ textAlign: "right", color: "var(--color-text-muted)" }}>-</div>
+              <div style={{ textAlign: "right", color: "#FBBF24", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>Hold</div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#FBBF24", padding: "2px 6px", borderRadius: 4, background: "rgba(255,152,0,0.15)" }}>
+                  MILESTONE
+                </span>
+              </div>
+            </div>
+
+            {/* Deadline Milestone Row in Table */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 50px 60px 70px",
+                padding: "14px 16px",
+                borderBottom: "1px solid rgba(255,255,255,0.04)",
+                fontSize: 12,
+                background: "rgba(168,85,247,0.04)",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#C084FC", fontWeight: 700 }}>
+                <span>◆</span>
+                <span>Final Deliverable Deadline</span>
+              </div>
+              <div style={{ textAlign: "right", color: "var(--color-text-muted)" }}>-</div>
+              <div style={{ textAlign: "right", color: "#C084FC", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>Due</div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#C084FC", padding: "2px 6px", borderRadius: 4, background: "rgba(168,85,247,0.15)" }}>
+                  DEADLINE
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column: Bryntum Timeline Calendar Grid */}
+        <div style={{ display: "flex", flexDirection: "column", position: "relative", overflowX: "auto" }}>
+          {/* Timeline Date Header Scale */}
+          <div
+            style={{
+              height: 40,
+              borderBottom: "1px solid rgba(255,255,255,0.08)",
+              display: "grid",
+              gridTemplateColumns: "repeat(6, 1fr)",
+              background: "rgba(255,255,255,0.02)",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-text-muted)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            {["Nov 01 - 05", "Nov 06 - 10", "Nov 11 - 15", "Nov 16 - 20", "Nov 21 - 25", "Nov 26 - 30"].map((w, i) => (
+              <div
+                key={i}
+                style={{
+                  padding: "10px 12px",
+                  borderRight: i < 5 ? "1px solid rgba(255,255,255,0.05)" : "none",
+                }}
+              >
+                {w}
+              </div>
+            ))}
+          </div>
+
+          {/* Timeline Grid Body */}
+          <div style={{ flex: 1, position: "relative", minHeight: 380 }}>
+            {/* Background vertical grid columns */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "grid",
+                gridTemplateColumns: "repeat(6, 1fr)",
+                pointerEvents: "none",
+              }}
+            >
+              {[0, 1, 2, 3, 4, 5].map((c) => (
+                <div
+                  key={c}
+                  style={{
+                    borderRight: c < 5 ? "1px dashed rgba(255,255,255,0.04)" : "none",
+                    height: "100%",
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Vertical "TODAY" Line */}
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: "42%",
+                width: 2,
+                background: "#0066FF",
+                boxShadow: "0 0 12px #0066FF",
+                zIndex: 10,
+                pointerEvents: "none",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: -20,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  background: "#0066FF",
+                  color: "white",
+                  fontSize: 9,
+                  fontWeight: 800,
+                  padding: "1px 6px",
+                  borderRadius: 999,
+                  letterSpacing: "0.05em",
+                }}
+              >
+                TODAY
+              </div>
+            </div>
+
+            {/* Task Gantt Bars */}
+            <div style={{ display: "flex", flexDirection: "column", position: "relative", zIndex: 2 }}>
+              {filteredTasks.map((t, idx) => {
+                const isAcceptedChange = t.title.includes("Dark Mode");
+                const defaultSchedule = taskScheduleMap[t.id] || {
+                  startPct: 40 + idx * 8,
+                  widthPct: 22,
+                  days: "Nov 15 - Nov 22",
+                };
+                const schedule = isAcceptedChange
+                  ? { startPct: 62, widthPct: 24, days: "Nov 18 - Nov 24" }
+                  : defaultSchedule;
+
+                return (
+                  <div
+                    key={t.id || idx}
+                    onMouseEnter={() => setHoveredTask(t.id)}
+                    onMouseLeave={() => setHoveredTask(null)}
+                    style={{
+                      height: 48,
+                      position: "relative",
+                      display: "flex",
+                      alignItems: "center",
+                      borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    }}
+                  >
+                    {/* Gantt Bar */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: `${schedule.startPct}%`,
+                        width: `${schedule.widthPct}%`,
+                        height: 28,
+                        borderRadius: 8,
+                        background: getStatusColor(t.status),
+                        boxShadow: `0 0 16px ${getStatusColor(t.status)}55`,
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "0 12px",
+                        color: "white",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        transform: hoveredTask === t.id ? "scaleY(1.08)" : "none",
+                        transition: "all 0.15s ease",
+                      }}
+                      title={`${t.title} (${t.price_weight}% · $${t.allocated_amount}) · Status: ${t.status}`}
+                    >
+                      <span style={{ marginRight: 6 }}>
+                        {t.status === "PASSED" ? "✓" : t.status === "FAILED" ? "✗" : "○"}
+                      </span>
+                      <span>{t.title}</span>
+                      <span style={{ marginLeft: "auto", opacity: 0.85, fontSize: 10 }}>
+                        {t.price_weight}%
+                      </span>
+                    </div>
+
+                    {/* Dependency line connecting preceding task to this one if accepted change */}
+                    {isAcceptedChange && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: "58%",
+                          top: 0,
+                          width: "4%",
+                          height: 24,
+                          borderLeft: "2px solid #F59E0B",
+                          borderBottom: "2px solid #F59E0B",
+                          pointerEvents: "none",
+                        }}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* 29-Day PayPal Hold Expiry Milestone Marker */}
+              <div
+                style={{
+                  height: 48,
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  background: "rgba(255,152,0,0.02)",
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "92%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transform: "translateX(-50%)",
+                    cursor: "pointer",
+                  }}
+                  title="29-Day PayPal Escrow Authorization Expiry Point (C20/C48)"
+                >
+                  <div
+                    style={{
+                      width: 18,
+                      height: 18,
+                      background: "#FF9800",
+                      transform: "rotate(45deg)",
+                      boxShadow: "0 0 16px rgba(255,152,0,0.8)",
+                      borderRadius: 3,
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 800,
+                      color: "#FBBF24",
+                      whiteSpace: "nowrap",
+                      background: "rgba(0,0,0,0.6)",
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(255,152,0,0.3)",
+                    }}
+                  >
+                    ◆ 29-Day Hold Expiry
+                  </span>
+                </div>
+              </div>
+
+              {/* Final Delivery Deadline Milestone Marker */}
+              <div
+                style={{
+                  height: 48,
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  background: "rgba(168,85,247,0.02)",
+                }}
+              >
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transform: "translateX(-50%)",
+                    cursor: "pointer",
+                  }}
+                  title="Final Deliverable Submission Deadline (C48/C50)"
+                >
+                  <div
+                    style={{
+                      width: 18,
+                      height: 18,
+                      background: "#A855F7",
+                      transform: "rotate(45deg)",
+                      boxShadow: "0 0 16px rgba(168,85,247,0.8)",
+                      borderRadius: 3,
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 800,
+                      color: "#C084FC",
+                      whiteSpace: "nowrap",
+                      background: "rgba(0,0,0,0.6)",
+                      padding: "2px 8px",
+                      borderRadius: 6,
+                      border: "1px solid rgba(168,85,247,0.3)",
+                    }}
+                  >
+                    ◆ Contract Deadline
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bryntum Gantt Status Legend & Footer Bar */}
+      <div
+        style={{
+          padding: "16px 24px",
+          borderTop: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(255,255,255,0.015)",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 12,
+          fontSize: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, color: "var(--color-text-muted)" }}>Legend:</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: "#4CAF50" }} />
+            <span style={{ color: "white" }}>Passed</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: "#F44336" }} />
+            <span style={{ color: "white" }}>Failed</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: "#0066FF" }} />
+            <span style={{ color: "white" }}>In Progress</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 3, background: "#7C89A8" }} />
+            <span style={{ color: "var(--color-text-muted)" }}>Pending</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: "#FF9800", fontWeight: 800 }}>◆</span>
+            <span style={{ color: "#FBBF24" }}>Hold Expiry (29-Day)</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ color: "#A855F7", fontWeight: 800 }}>◆</span>
+            <span style={{ color: "#C084FC" }}>Deadline</span>
+          </div>
+        </div>
+
+        <div style={{ color: "var(--color-text-muted)", fontSize: 11 }}>
+          Live Gantt state synced with contract: <code style={{ color: "#60A5FA" }}>{contractId}</code>
+        </div>
       </div>
     </div>
   );

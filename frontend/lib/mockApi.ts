@@ -1266,6 +1266,95 @@ export const mockApi = {
   },
 
   /**
+   * Accept a scope change / mini-agreement (C48: new task appears automatically in Gantt)
+   */
+  acceptScopeChange(
+    contractId: string, 
+    changeItem?: { title?: string; price_weight?: number; allocated_amount?: number }
+  ): Contract | null {
+    const contracts = loadContracts();
+    const idx = contracts.findIndex((c) => c.id === contractId);
+    if (idx === -1) return null;
+
+    const contract = contracts[idx];
+    if (!contract.features) contract.features = [];
+
+    const existingIndex = contract.features.findIndex((f) => f.title.includes("Dark Mode"));
+    if (existingIndex >= 0) {
+      return contract;
+    }
+
+    const weight = changeItem?.price_weight || 10;
+    const amount = changeItem?.allocated_amount || 150;
+    const title = changeItem?.title || "[CR-01] Dark Mode & High-Contrast Theme (Accepted Change)";
+
+    const newFeature: Feature = {
+      id: `feat_cr_${Math.random().toString(36).substring(2, 7)}`,
+      contract_id: contractId,
+      title,
+      acceptance_test: "User toggle switches between light and dark themes with localStorage persistence",
+      price_weight: weight,
+      allocated_amount: amount,
+      status: "PASSED",
+      sort_order: contract.features.length + 1,
+    };
+
+    contract.features.push(newFeature);
+    contract.total_amount += amount;
+    saveContracts(contracts);
+    return contract;
+  },
+
+  /**
+   * Remove simulated scope change (for demo reset)
+   */
+  removeScopeChange(contractId: string): Contract | null {
+    const contracts = loadContracts();
+    const idx = contracts.findIndex((c) => c.id === contractId);
+    if (idx === -1) return null;
+
+    const contract = contracts[idx];
+    if (!contract.features) return contract;
+
+    const crIndex = contract.features.findIndex((f) => f.title.includes("Dark Mode"));
+    if (crIndex >= 0) {
+      const removed = contract.features.splice(crIndex, 1)[0];
+      contract.total_amount -= (removed.allocated_amount || 150);
+      saveContracts(contracts);
+    }
+    return contract;
+  },
+
+  /**
+   * Scheduled deadline watcher simulation (C49/C50: triggers final verification & payout)
+   */
+  simulateDeadlineWatcher(contractId: string): { contract: Contract; logEntry: string; payoutAmount: number; refundAmount: number } | null {
+    const contracts = loadContracts();
+    const idx = contracts.findIndex((c) => c.id === contractId);
+    if (idx === -1) return null;
+
+    const contract = contracts[idx];
+    // Set deadline to past
+    contract.deadline = new Date(Date.now() - 3600000).toISOString();
+    contract.status = "SETTLED";
+
+    const passedFeatures = (contract.features || []).filter((f) => f.status === "PASSED");
+    const passedAmount = passedFeatures.reduce((acc, f) => acc + (f.allocated_amount || 0), 0);
+    const refundAmount = Math.max(0, contract.total_amount - passedAmount);
+
+    saveContracts(contracts);
+
+    const logEntry = `[DEADLINE WATCHER] Scheduled deadline watcher fired on ${contract.id}. Deadline expired: final verification executed. Payout: $${passedAmount} USD disbursed, $${refundAmount} USD refunded. Status -> SETTLED.`;
+
+    return {
+      contract,
+      logEntry,
+      payoutAmount: passedAmount,
+      refundAmount,
+    };
+  },
+
+  /**
    * Reset to seed data
    */
   resetToDefaults(): void {

@@ -15,6 +15,7 @@ import {
   Layers,
   ChevronRight
 } from "lucide-react";
+import { mockApi } from "@/lib/mockApi";
 
 interface MockContract {
   id: string;
@@ -102,6 +103,9 @@ export default function AdminPage() {
   });
 
   const simulateDeadline = (id: string) => {
+    // Invoke mockApi watcher flow (C49/C50)
+    mockApi.simulateDeadlineWatcher(id);
+
     setContracts((prev) =>
       prev.map((c) => {
         if (c.id === id) {
@@ -115,10 +119,10 @@ export default function AdminPage() {
         return c;
       })
     );
-    const logEntry = `[ADMIN_SIMULATION] Simulated deadline elapsed for ${id}. Auto-triggered Stage F smart settlement.`;
+    const logEntry = `[DEADLINE WATCHER C49/C50] Simulated deadline elapsed for ${id}. Auto-triggered final verification and proportional payout settlement.`;
     setLogs((prev) => [logEntry, ...prev]);
-    setBannerAlert(`Simulated deadline triggered for ${id}. Settlement executed.`);
-    setTimeout(() => setBannerAlert(null), 4000);
+    setBannerAlert(`Deadline watcher simulation executed for ${id}. Proportional payout disbursed.`);
+    setTimeout(() => setBannerAlert(null), 5000);
   };
 
   const forceAudit = (id: string) => {
