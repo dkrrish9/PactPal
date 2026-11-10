@@ -11,7 +11,10 @@ import time
 import hmac
 import hashlib
 import base64
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..db.repository import ContractRepository
 
 from .roles import (
     UserRole,
@@ -22,7 +25,7 @@ from .roles import (
     assert_can_access_contract,
     assert_contract_participant,
 )
-from ..db.repository import ContractRepository
+
 
 
 class TokenError(AuthError):
