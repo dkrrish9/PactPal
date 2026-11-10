@@ -111,6 +111,7 @@ class VerificationReport:
     security_counts: Optional[Dict[str, Any]] = None
     coverage_summary: Optional[Dict[str, Any]] = None
     container_hardening: Optional[Dict[str, Any]] = None
+    timing_compliance: Optional[Dict[str, Any]] = None
     recommendation: Optional[str] = None
     notifications: Optional[List[Dict[str, Any]]] = None
 
@@ -127,7 +128,8 @@ class VerificationReport:
         features: Optional[List[Dict[str, Any]]] = None,
         render_job_id: Optional[str] = None,
         ai_diagnostic: Optional[Dict[str, Any]] = None,
-        container_hardening: Optional[Dict[str, Any]] = None
+        container_hardening: Optional[Dict[str, Any]] = None,
+        timing_compliance: Optional[Dict[str, Any]] = None
     ) -> "VerificationReport":
         """
         Creates a fast-tracked failure report when a deliverable fails Stage B Build.
@@ -193,5 +195,6 @@ class VerificationReport:
             security_counts=default_security_counts,
             coverage_summary=default_coverage_summary,
             container_hardening=container_hardening or {"container_hardened": True, "network_isolated": True, "security_policy": "ZERO_TRUST_AIR_GAPPED"},
+            timing_compliance=timing_compliance,
             recommendation="REJECT_AND_HOLD"
         )
