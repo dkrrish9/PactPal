@@ -264,6 +264,44 @@ export default function ContractDashboardPage() {
               >
                 Fund Escrow with PayPal (C20) →
               </Link>
+            ) : activeContract.status === "DISPUTE" ? (
+              <Link
+                href={`/contracts/${activeContract.id}/dispute`}
+                style={{
+                  background: "linear-gradient(135deg, #EF4444, #DC2626)",
+                  borderRadius: 50,
+                  color: "white",
+                  padding: "12px 24px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  boxShadow: "0 0 20px rgba(239,68,68,0.4)",
+                }}
+              >
+                Dispute Room (C56) ⚖️
+              </Link>
+            ) : activeContract.status === "SETTLED" ? (
+              <Link
+                href={`/contracts/${activeContract.id}/receipt`}
+                style={{
+                  background: "linear-gradient(135deg, #10B981, #059669)",
+                  borderRadius: 50,
+                  color: "white",
+                  padding: "12px 24px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  boxShadow: "0 0 20px rgba(16,185,129,0.4)",
+                }}
+              >
+                Settlement Receipt (C45) 🧾
+              </Link>
             ) : (
               <Link
                 href={`/contracts/${activeContract.id}/review`}
@@ -584,6 +622,49 @@ export default function ContractDashboardPage() {
               }}
             >
               View Verification Results (C29) →
+            </Link>
+          </div>
+        )}
+
+        {/* C56 Dispute Notification Banner */}
+        {activeContract.status === "DISPUTE" && (
+          <div
+            style={{
+              padding: "16px 24px",
+              borderRadius: 16,
+              background: "linear-gradient(135deg, rgba(239,68,68,0.15) 0%, rgba(245,158,11,0.1) 100%)",
+              border: "1px solid rgba(239,68,68,0.4)",
+              marginBottom: 24,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 24 }}>⚖️</span>
+              <div>
+                <strong style={{ color: "white", fontSize: 15 }}>C56 Dispute Mediation Active (Funds Stay Held)</strong>
+                <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
+                  Automated AST cheat scan flagged Feature 2. Review checklist, verification report, provisional receipt, and negotiation chat.
+                </p>
+              </div>
+            </div>
+            <Link
+              href={`/contracts/${activeContract.id}/dispute`}
+              style={{
+                background: "linear-gradient(135deg, #EF4444, #F59E0B)",
+                color: "white",
+                padding: "10px 22px",
+                borderRadius: 30,
+                fontSize: 13,
+                fontWeight: 700,
+                textDecoration: "none",
+                boxShadow: "0 0 20px rgba(239,68,68,0.3)",
+              }}
+            >
+              Open Dispute Room (C56) →
             </Link>
           </div>
         )}
