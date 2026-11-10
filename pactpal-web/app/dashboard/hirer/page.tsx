@@ -1,26 +1,44 @@
 "use client";
+import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { Plus, Shield, Clock, CheckCircle, AlertCircle, Circle } from "lucide-react";
-
-const contracts = [
-  { id: "1", title: "E-commerce Platform v2", seller: "Alex M.", status: "VERIFYING", amount: 1500, daysLeft: 12 },
-  { id: "2", title: "Mobile fitness app", seller: "Chen W.", status: "IN_PROGRESS", amount: 1800, daysLeft: 20 },
-  { id: "3", title: "Brand identity kit", seller: "Sara K.", status: "SETTLED", amount: 600, daysLeft: 0 },
-  { id: "4", title: "AI chatbot integration", seller: "Mo T.", status: "FUNDED", amount: 900, daysLeft: 25 },
-];
+import { mockApi, Contract } from "@/lib/mockApi";
 
 const statusMeta: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
   DRAFT:       { color: "#7C89A8", bg: "rgba(124,137,168,0.1)", label: "Draft", icon: <Circle size={12} /> },
+  REVIEW:      { color: "#00A3E0", bg: "rgba(0,163,224,0.1)", label: "In Review", icon: <Clock size={12} /> },
+  SIGNED:      { color: "#7A5CFF", bg: "rgba(122,92,255,0.1)", label: "Signed", icon: <Circle size={12} /> },
   FUNDED:      { color: "#FF9800", bg: "rgba(255,152,0,0.1)", label: "Funded", icon: <Shield size={12} /> },
   IN_PROGRESS: { color: "#0066FF", bg: "rgba(0,102,255,0.1)", label: "In Progress", icon: <Clock size={12} /> },
+  SUBMITTED:   { color: "#00A3E0", bg: "rgba(0,163,224,0.1)", label: "Submitted", icon: <Clock size={12} /> },
   VERIFYING:   { color: "#7A5CFF", bg: "rgba(122,92,255,0.1)", label: "Verifying", icon: <Clock size={12} /> },
+  DECISION:    { color: "#FF9800", bg: "rgba(255,152,0,0.1)", label: "Decision", icon: <Clock size={12} /> },
   SETTLED:     { color: "#4CAF50", bg: "rgba(76,175,80,0.1)", label: "Settled", icon: <CheckCircle size={12} /> },
   DISPUTE:     { color: "#F44336", bg: "rgba(244,67,54,0.1)", label: "Dispute", icon: <AlertCircle size={12} /> },
 };
 
 export default function HirerDashboardPage() {
-  const totalHeld = contracts.filter((c) => c.status !== "SETTLED").reduce((s, c) => s + c.amount, 0);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [filter, setFilter] = useState("ALL");
+
+  useEffect(() => {
+    setContracts(mockApi.getContracts());
+  }, []);
+
+  const totalHeld = contracts
+    .filter((c) => c.status === "FUNDED" || c.status === "IN_PROGRESS" || c.status === "VERIFYING" || c.status === "DECISION")
+    .reduce((s, c) => s + c.total_amount, 0);
+
+  const activeCount = contracts.filter((c) => c.status !== "SETTLED" && c.status !== "DRAFT").length;
+  const settledCount = contracts.filter((c) => c.status === "SETTLED").length;
+
+  const filteredContracts = contracts.filter((c) => {
+    if (filter === "ACTIVE") return c.status !== "SETTLED";
+    if (filter === "SETTLED") return c.status === "SETTLED";
+    if (filter === "HELD") return c.status === "FUNDED" || c.status === "IN_PROGRESS";
+    return true;
+  });
 
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
@@ -110,9 +128,9 @@ export default function HirerDashboardPage() {
         >
           {[
             { label: "In escrow now", value: `$${totalHeld.toLocaleString()}`, color: "#FF9800", icon: "🔒" },
-            { label: "Active contracts", value: "3", color: "#0066FF", icon: "📋" },
-            { label: "Completed", value: "1", color: "#4CAF50", icon: "✅" },
-            { label: "Total spent", value: "$4,800", color: "#7A5CFF", icon: "💸" },
+            { label: "Active contracts", value: activeCount.toString(), color: "#0066FF", icon: "📋" },
+            { label: "Completed / Settled", value: settledCount.toString(), color: "#4CAF50", icon: "✅" },
+            { label: "Total registered", value: contracts.length.toString(), color: "#7A5CFF", icon: "💼" },
           ].map((s) => (
             <div
               key={s.label}
@@ -165,21 +183,22 @@ export default function HirerDashboardPage() {
           >
             <div style={{ fontWeight: 700, fontSize: 15, color: "white" }}>All contracts</div>
             <div style={{ display: "flex", gap: 8 }}>
-              {["All", "Active", "Verifying", "Settled"].map((f) => (
+              {["ALL", "ACTIVE", "HELD", "SETTLED"].map((f) => (
                 <button
                   key={f}
+                  onClick={() => setFilter(f)}
                   style={{
-                    background: f === "All" ? "rgba(0,102,255,0.15)" : "rgba(255,255,255,0.05)",
-                    border: `1px solid ${f === "All" ? "rgba(0,102,255,0.4)" : "rgba(255,255,255,0.08)"}`,
+                    background: filter === f ? "rgba(0,102,255,0.15)" : "rgba(255,255,255,0.05)",
+                    border: `1px solid ${filter === f ? "rgba(0,102,255,0.4)" : "rgba(255,255,255,0.08)"}`,
                     borderRadius: 50,
-                    color: f === "All" ? "#60A5FA" : "var(--color-text-muted)",
+                    color: filter === f ? "#60A5FA" : "var(--color-text-muted)",
                     padding: "5px 14px",
                     fontSize: 12,
                     cursor: "pointer",
                   }}
                   aria-label={`Filter contracts: ${f}`}
                 >
-                  {f}
+                  {f.charAt(0) + f.slice(1).toLowerCase()}
                 </button>
               ))}
             </div>
@@ -188,7 +207,7 @@ export default function HirerDashboardPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }} role="table" aria-label="Contracts list">
             <thead>
               <tr>
-                {["Project", "Seller", "Status", "Amount", "Days left", ""].map((h) => (
+                {["Project", "Seller", "Status", "Amount", "Features", ""].map((h) => (
                   <th
                     key={h}
                     scope="col"
@@ -209,7 +228,7 @@ export default function HirerDashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {contracts.map((c, i) => {
+              {filteredContracts.map((c) => {
                 const meta = statusMeta[c.status] || statusMeta["DRAFT"];
                 return (
                   <tr
@@ -222,8 +241,13 @@ export default function HirerDashboardPage() {
                       <Link href={`/contracts/${c.id}`} style={{ fontWeight: 600, fontSize: 14, color: "white", textDecoration: "none" }}>
                         {c.title}
                       </Link>
+                      <div style={{ fontSize: 11, color: "var(--color-text-muted)", fontFamily: "JetBrains Mono, monospace" }}>
+                        {c.id}
+                      </div>
                     </td>
-                    <td style={{ padding: "16px 24px", fontSize: 14, color: "var(--color-text-secondary)" }}>{c.seller}</td>
+                    <td style={{ padding: "16px 24px", fontSize: 14, color: "var(--color-text-secondary)" }}>
+                      {c.seller_name || c.seller_email}
+                    </td>
                     <td style={{ padding: "16px 24px" }}>
                       <span
                         style={{
@@ -244,10 +268,10 @@ export default function HirerDashboardPage() {
                       </span>
                     </td>
                     <td style={{ padding: "16px 24px", fontSize: 15, fontWeight: 700, color: "white", fontFamily: "JetBrains Mono, monospace" }}>
-                      ${c.amount.toLocaleString()}
+                      ${c.total_amount.toLocaleString()}
                     </td>
-                    <td style={{ padding: "16px 24px", fontSize: 14, color: c.daysLeft < 5 ? "#FF9800" : "var(--color-text-secondary)" }}>
-                      {c.daysLeft > 0 ? `${c.daysLeft}d` : "—"}
+                    <td style={{ padding: "16px 24px", fontSize: 14, color: "var(--color-text-secondary)" }}>
+                      {c.features?.length ?? 0} features
                     </td>
                     <td style={{ padding: "16px 24px" }}>
                       <Link
