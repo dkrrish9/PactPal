@@ -14,7 +14,10 @@ from .service import (
     generate_proof_of_work_hash,
     verify_receipt_hash,
     assert_can_view_receipt,
-    assert_can_apply_incremental_hold
+    assert_can_apply_incremental_hold,
+    assert_can_trigger_deadline_watcher,
+    DeadlineWatcherService,
+    SweepResult
 )
 from .api import PaymentsAPIHandler, create_payments_app
 
@@ -31,6 +34,9 @@ __all__ = [
     "verify_receipt_hash",
     "assert_can_view_receipt",
     "assert_can_apply_incremental_hold",
+    "assert_can_trigger_deadline_watcher",
+    "DeadlineWatcherService",
+    "SweepResult",
     "PaymentsAPIHandler",
     "create_payments_app"
 ]

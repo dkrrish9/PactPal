@@ -36,9 +36,9 @@ VALID_TRANSITIONS: Dict[ContractState, Set[ContractState]] = {
     ContractState.REVIEW: {ContractState.SIGNED, ContractState.DRAFT},
     ContractState.SIGNED: {ContractState.FUNDED},
     ContractState.FUNDED: {ContractState.IN_PROGRESS, ContractState.SETTLED},
-    ContractState.IN_PROGRESS: {ContractState.SUBMITTED, ContractState.IN_PROGRESS},
-    ContractState.SUBMITTED: {ContractState.VERIFYING},
-    ContractState.VERIFYING: {ContractState.DECISION},
+    ContractState.IN_PROGRESS: {ContractState.SUBMITTED, ContractState.IN_PROGRESS, ContractState.DECISION, ContractState.SETTLED},
+    ContractState.SUBMITTED: {ContractState.VERIFYING, ContractState.DECISION, ContractState.SETTLED},
+    ContractState.VERIFYING: {ContractState.DECISION, ContractState.SETTLED},
     ContractState.DECISION: {ContractState.SETTLED, ContractState.IN_PROGRESS, ContractState.DISPUTE},
     ContractState.DISPUTE: {ContractState.SETTLED},
     ContractState.SETTLED: set(),  # Terminal state

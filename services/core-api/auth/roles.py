@@ -115,5 +115,21 @@ def assert_can_apply_incremental_hold(actor: User, contract: Dict[str, Any]) -> 
         f"User '{actor.id}' with role '{actor.role.value}' cannot apply incremental holds. Only the contract BUYER, ADMIN, or AI Negotiator can authorize additional funds."
     )
 
+def assert_can_trigger_deadline_watcher(actor: User) -> None:
+    """
+    Enforces authorization to trigger or simulate deadline watcher sweeps or force triggers (Commit C49).
+    Allowed actors:
+    - Platform ADMIN
+    - AI Referee agent
+    """
+    if actor.role == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin"):
+        return
+    raise ForbiddenActionError(
+        f"User '{actor.id}' with role '{actor.role.value}' is not authorized to trigger deadline actions. "
+        f"Only platform ADMIN or AI Referee can execute deadline sweeps or simulations."
+    )
+
 
 

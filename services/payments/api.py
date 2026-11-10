@@ -37,7 +37,10 @@ from .service import (
     assert_can_view_receipt,
     assert_can_view_split_preview,
     assert_can_view_settlement_summary,
-    assert_can_apply_incremental_hold
+    assert_can_apply_incremental_hold,
+    assert_can_trigger_deadline_watcher,
+    DeadlineWatcherService,
+    SweepResult
 )
 
 HOLD_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/hold/?$")
@@ -52,6 +55,8 @@ CREATE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/create-hold/?$")
 AUTHORIZE_HOLD_REGEX = re.compile(r"^/api/v1/payments/orders/authorize/?$")
 INCREMENTAL_HOLD_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/incremental-hold/?$")
 INCREMENTAL_HOLD_PAYMENTS_REGEX = re.compile(r"^/api/v1/payments/orders/incremental-hold/?$")
+DEADLINE_SWEEP_REGEX = re.compile(r"^/api/v1/payments/deadline-watcher/sweep/?$")
+SIMULATE_DEADLINE_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/simulate-deadline/?$")
 SETTLE_REGEX = re.compile(r"^/api/v1/payments/settle/?$")
 WEBHOOK_REGEX = re.compile(r"^/api/v1/payments/webhooks(?:/paypal)?/?$")
 
@@ -61,9 +66,17 @@ class PaymentsAPIHandler:
     Provides standard JSON REST responses for frontend, webhooks, and referee services.
     """
 
-    def __init__(self, service: Optional[EscrowPaymentService] = None):
+    def __init__(
+        self,
+        service: Optional[EscrowPaymentService] = None,
+        deadline_watcher: Optional[DeadlineWatcherService] = None
+    ):
         self.service = service or EscrowPaymentService()
         self.repository = self.service.repository
+        self.deadline_watcher = deadline_watcher or DeadlineWatcherService(
+            repository=self.repository,
+            payment_service=self.service
+        )
 
     def _extract_actor(self, headers: Dict[str, str]) -> Optional[User]:
         """
@@ -198,6 +211,20 @@ class PaymentsAPIHandler:
             if method != "POST":
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on settle."})
             return self._handle_settle(headers, body)
+
+        # 7. POST /api/v1/payments/deadline-watcher/sweep (Commit C49)
+        if DEADLINE_SWEEP_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on deadline-watcher sweep endpoint."})
+            return self._handle_deadline_sweep(headers, body)
+
+        # 8. POST /api/v1/contracts/{id}/simulate-deadline (Commit C49, C50)
+        match_sim = SIMULATE_DEADLINE_REGEX.match(clean_path)
+        if match_sim:
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on simulate-deadline endpoint."})
+            contract_id = match_sim.group(1)
+            return self._handle_simulate_deadline(contract_id, headers, body)
 
         # 5. POST /api/v1/payments/webhooks (C28 Milestone 2)
         if WEBHOOK_REGEX.match(clean_path):
@@ -728,6 +755,101 @@ class PaymentsAPIHandler:
 
         return self._json_response(200, verdict.to_dict())
 
+    def _handle_deadline_sweep(
+        self,
+        headers: Dict[str, str],
+        body: Optional[bytes]
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/deadline-watcher/sweep (Commit C49).
+        Triggers scheduled or on-demand sweep across active contracts.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        try:
+            assert_can_trigger_deadline_watcher(actor)
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+
+        data = {}
+        if body:
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except Exception as e:
+                return self._json_response(400, {"error": "BAD_REQUEST", "message": f"Malformed JSON: {str(e)}"})
+
+        now = data.get("now")
+        statuses = data.get("statuses")
+
+        try:
+            sweep_result = self.deadline_watcher.sweep_expired_deadlines(now=now, statuses=statuses)
+            return self._json_response(200, sweep_result.to_dict())
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_simulate_deadline(
+        self,
+        contract_id: str,
+        headers: Dict[str, str],
+        body: Optional[bytes]
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/contracts/{id}/simulate-deadline (Commit C49, C50).
+        Forces simulation of deadline expiry and triggers settlement on PayPal rails.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        try:
+            assert_can_trigger_deadline_watcher(actor)
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+
+        data = {}
+        if body:
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except Exception as e:
+                return self._json_response(400, {"error": "BAD_REQUEST", "message": f"Malformed JSON: {str(e)}"})
+
+        now = data.get("now")
+
+        try:
+            res = self.deadline_watcher.simulate_deadline(
+                contract_id=contract_id,
+                actor=actor,
+                now=now
+            )
+            return self._json_response(200, res)
+        except ValueError as e:
+            msg = str(e)
+            if "not found" in msg.lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": msg})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": msg})
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except PaymentApprovalError as e:
+            return self._json_response(403, {
+                "error": "PAYMENT_APPROVAL_BLOCKED",
+                "message": str(e),
+                "verdict": e.verdict.to_dict() if hasattr(e, "verdict") and e.verdict else None
+            })
+        except StateValidationError as e:
+            return self._json_response(400, {"error": "INVALID_STATE", "message": str(e)})
+        except PayPalAPIError as e:
+            return self._json_response(502, {"error": "PAYPAL_API_ERROR", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
     def _handle_webhook(self, headers: Dict[str, str], body: Optional[bytes]) -> Tuple[int, Dict[str, str], bytes]:
         """
         Handler for POST /api/v1/payments/webhooks.
@@ -756,12 +878,15 @@ class PaymentsAPIHandler:
         return status_code, resp_headers, body_bytes
 
 
-def create_payments_app(service: Optional[EscrowPaymentService] = None):
+def create_payments_app(
+    service: Optional[EscrowPaymentService] = None,
+    deadline_watcher: Optional[DeadlineWatcherService] = None
+):
     """
     Creates a standard WSGI application for the Payments API.
     Compatible with gunicorn, uwsgi, or Python wsgiref.
     """
-    handler = PaymentsAPIHandler(service=service)
+    handler = PaymentsAPIHandler(service=service, deadline_watcher=deadline_watcher)
 
     def application(environ, start_response):
         method = environ.get("REQUEST_METHOD", "GET")
