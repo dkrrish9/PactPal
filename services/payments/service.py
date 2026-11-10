@@ -151,6 +151,32 @@ def assert_can_dispatch_notification(actor: User, contract: Dict[str, Any]) -> N
     )
 
 
+def assert_can_reauthorize_hold(actor: User, contract: Dict[str, Any]) -> None:
+    """Only participant BUYER, platform ADMIN, or AI Referee can re-authorize escrow holds (Commit C54)."""
+    if getattr(actor, "role", None) == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or getattr(actor, "role", None) == "AI_REFEREE":
+        return
+    if actor.id == contract.get("buyer_id"):
+        return
+    raise ForbiddenActionError(
+        f"User '{actor.id}' with role '{getattr(getattr(actor, 'role', None), 'value', str(getattr(actor, 'role', '')))}' is not authorized to re-authorize hold for contract '{contract.get('id')}'. "
+        "Access restricted to contract buyer, platform admin, or AI referee."
+    )
+
+
+def assert_can_retry_payout(actor: User, contract: Optional[Dict[str, Any]] = None) -> None:
+    """Only platform ADMIN or AI Referee can retry failed seller payouts or resolve escalation flags (Commit C54)."""
+    if getattr(actor, "role", None) == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or getattr(actor, "role", None) == "AI_REFEREE":
+        return
+    raise ForbiddenActionError(
+        f"User '{actor.id}' with role '{getattr(getattr(actor, 'role', None), 'value', str(getattr(actor, 'role', '')))}' is not authorized to retry payouts. "
+        "Only platform ADMIN or AI Referee can retry seller payouts or clear escalation flags."
+    )
+
+
 
 
 
@@ -447,6 +473,22 @@ class PaymentApprovalError(Exception):
         self.verdict = verdict
 
 
+class ExpiredAuthorizationError(Exception):
+    """Raised when a PayPal authorization has expired and re-authorization cannot be completed (Commit C54)."""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.message = message
+        self.details = details or {}
+
+
+class PayoutFailureError(Exception):
+    """Raised when seller payout disbursement encounters a terminal failure or retry exhaustion (Commit C54)."""
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.message = message
+        self.details = details or {}
+
+
 class PaymentApprovalService:
     """
     Automated Backend Approval Policy Engine for PactPal Payment Rails (Commit C31).
@@ -529,6 +571,15 @@ class PaymentApprovalService:
                 )
             else:
                 checks_passed.append("ROLE_AUTHORIZED")
+        elif norm_action in ("RETRY_PAYOUT", "PAYOUT_RETRY"):
+            if not (is_admin or is_referee):
+                checks_failed.append("ROLE_AUTHORIZED")
+                reasons.append(
+                    f"User '{actor_id_val}' with role '{actor_role_val}' is not authorized to retry payouts on contract '{contract_id}'. "
+                    f"Only platform ADMIN or AI Referee can retry seller payouts or clear escalation flags."
+                )
+            else:
+                checks_passed.append("ROLE_AUTHORIZED")
         else:
             checks_failed.append("VALID_ACTION")
             reasons.append(f"Unrecognized payment action '{action}'.")
@@ -582,6 +633,20 @@ class PaymentApprovalService:
             elif not contract.get("paypal_auth_id"):
                 checks_failed.append("HOLD_EXISTS")
                 reasons.append(f"Contract '{contract_id}' does not have an active PayPal authorization hold to settle.")
+            else:
+                checks_passed.append("STATE_MACHINE_CONSISTENT")
+        elif norm_action in ("RETRY_PAYOUT", "PAYOUT_RETRY"):
+            allowed_retry_states = {
+                ContractState.DISPUTE.value,
+                ContractState.DECISION.value,
+                ContractState.SETTLED.value,
+                ContractState.VERIFYING.value,
+                ContractState.SUBMITTED.value,
+                ContractState.IN_PROGRESS.value
+            }
+            if contract_status not in allowed_retry_states:
+                checks_failed.append("STATE_MACHINE_CONSISTENT")
+                reasons.append(f"Cannot retry payout on contract in '{contract_status}' state.")
             else:
                 checks_passed.append("STATE_MACHINE_CONSISTENT")
 
@@ -1217,6 +1282,219 @@ class EscrowPaymentService:
 
         return response_payload
 
+    def handle_expired_authorization(
+        self,
+        contract_id: str,
+        actor: Optional[User] = None,
+        idempotency_key: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        raise_on_failure: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Handles expired PayPal authorization hold recovery rails (Commit C54).
+
+        Pathway A (Automated Re-Authorization):
+          - Attempts automated re-authorization via PayPal v2 API (reauthorize_authorization).
+          - On success: updates contracts.paypal_auth_id, refreshes 29-day countdown (auth_expires_at),
+            records REAUTHORIZATION payment ledger record (COMPLETED), and logs AUTHORIZATION_REAUTHORIZED in messages.
+
+        Pathway B (Re-auth Failure / Re-funding Prompt Path):
+          - When re-authorization is declined, invalid, or fails:
+          - Cleanly transitions/flags hold state (EXPIRED) in database.
+          - Records REAUTHORIZATION payment ledger record (FAILED).
+          - Logs structured state event in messages (AUTHORIZATION_REAUTH_FAILED).
+          - Notifies the Buyer to re-fund the escrow balance via EmailNotificationService.
+          - Returns deterministic state payload (or raises ExpiredAuthorizationError if raise_on_failure=True).
+        """
+        scope = f"reauth:{contract_id}"
+        if idempotency_key and hasattr(self.repository, "get_idempotency_key"):
+            cached = self.repository.get_idempotency_key(idempotency_key, scope=scope)
+            if cached:
+                return cached["response_data"]
+
+        contract = self.repository.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        # RBAC Check
+        if actor is not None:
+            assert_can_reauthorize_hold(actor, contract)
+
+        auth_id = contract.get("paypal_auth_id")
+        if not auth_id:
+            raise StateValidationError(f"Contract '{contract_id}' does not have an active PayPal authorization hold to re-authorize.")
+
+        total_amount = float(contract.get("total_amount", 0.0))
+        currency = contract.get("currency", "USD")
+
+        # Pathway A: Attempt automated re-authorization via PayPal v2 API
+        try:
+            reauth_res = self.paypal.reauthorize_authorization(
+                authorization_id=auth_id,
+                amount=total_amount,
+                currency=currency,
+                idempotency_key=f"{idempotency_key}:reauth" if idempotency_key else None
+            )
+            new_auth_id = reauth_res.get("authorization_id") or auth_id
+
+            # Calculate refreshed 29-day expiration
+            expiration_time = reauth_res.get("expiration_time")
+            if not expiration_time:
+                now_utc = datetime.now(timezone.utc)
+                expiration_time = (now_utc + timedelta(days=PAYPAL_HOLD_DURATION_DAYS)).isoformat()
+
+            # Update contract hold in database
+            self.repository.update_contract_hold(
+                contract_id=contract_id,
+                total_amount=total_amount,
+                paypal_auth_id=new_auth_id,
+                auth_expires_at=expiration_time
+            )
+
+            # Record COMPLETED payment ledger entry
+            if hasattr(self.repository, "record_payment"):
+                reauth_meta = dict(reauth_res) if isinstance(reauth_res, dict) else {}
+                reauth_meta["action"] = "REAUTHORIZATION"
+                self.repository.record_payment(
+                    contract_id=contract_id,
+                    payment_type="AUTHORIZATION",
+                    paypal_reference_id=str(new_auth_id),
+                    amount=total_amount,
+                    currency=currency,
+                    status="COMPLETED",
+                    metadata=reauth_meta
+                )
+
+            # Immutable audit log in messages table
+            if hasattr(self.repository, "record_message"):
+                sender_id = getattr(actor, "id", None)
+                sender_type = "BUYER" if getattr(actor, "role", None) == UserRole.BUYER else "AI_REFEREE"
+                self.repository.record_message(
+                    contract_id=contract_id,
+                    content=f"Escrow authorization successfully re-authorized: {new_auth_id} (Refreshed 29-day countdown)",
+                    sender_type=sender_type,
+                    sender_id=sender_id if sender_id not in ("AI_REFEREE", "ADMIN") else None,
+                    metadata={
+                        "event": "AUTHORIZATION_REAUTHORIZED",
+                        "contract_id": contract_id,
+                        "previous_auth_id": auth_id,
+                        "new_auth_id": new_auth_id,
+                        "expires_at": expiration_time,
+                        "amount": total_amount,
+                        "currency": currency,
+                        "reauthorized_at": datetime.now(timezone.utc).isoformat()
+                    }
+                )
+
+            result = {
+                "contract_id": contract_id,
+                "status": "REAUTHORIZED",
+                "reauthorized": True,
+                "previous_authorization_id": auth_id,
+                "authorization_id": new_auth_id,
+                "expires_at": expiration_time,
+                "amount": total_amount,
+                "currency": currency,
+                "message": "Escrow hold successfully re-authorized. 29-day countdown refreshed."
+            }
+
+            if idempotency_key and hasattr(self.repository, "save_idempotency_key"):
+                self.repository.save_idempotency_key(
+                    key=idempotency_key,
+                    scope=scope,
+                    response_data=result,
+                    status_code=200
+                )
+
+            return result
+
+        except Exception as e:
+            # Pathway B: Re-authorization failed / declined
+            past_iso = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+            self.repository.update_contract_hold(
+                contract_id=contract_id,
+                total_amount=total_amount,
+                auth_expires_at=past_iso
+            )
+
+            # Record FAILED in payment ledger
+            if hasattr(self.repository, "record_payment"):
+                self.repository.record_payment(
+                    contract_id=contract_id,
+                    payment_type="AUTHORIZATION",
+                    paypal_reference_id=str(auth_id),
+                    amount=total_amount,
+                    currency=currency,
+                    status="FAILED",
+                    metadata={"action": "REAUTHORIZATION", "error": str(e), "status_code": getattr(e, "status_code", None)}
+                )
+
+            # Log structured state event in messages table
+            if hasattr(self.repository, "record_message"):
+                sender_id = getattr(actor, "id", None)
+                sender_type = "BUYER" if getattr(actor, "role", None) == UserRole.BUYER else "AI_REFEREE"
+                self.repository.record_message(
+                    contract_id=contract_id,
+                    content=f"Authorization re-authorization failed: {str(e)}. Action Required: Buyer must re-fund escrow.",
+                    sender_type=sender_type,
+                    sender_id=sender_id if sender_id not in ("AI_REFEREE", "ADMIN") else None,
+                    metadata={
+                        "event": "AUTHORIZATION_REAUTH_FAILED",
+                        "contract_id": contract_id,
+                        "authorization_id": auth_id,
+                        "amount": total_amount,
+                        "currency": currency,
+                        "error": str(e),
+                        "status_code": getattr(e, "status_code", None),
+                        "action_required": "BUYER_REFUND_REQUIRED",
+                        "failed_at": datetime.now(timezone.utc).isoformat()
+                    }
+                )
+
+            # Notify Buyer to re-fund the escrow balance
+            if hasattr(self.notification_service, "notify_reauth_failed"):
+                try:
+                    self.notification_service.notify_reauth_failed(
+                        contract_id=contract_id,
+                        metadata={
+                            "authorization_id": auth_id,
+                            "amount": total_amount,
+                            "currency": currency,
+                            "error": str(e),
+                            "action_required": "BUYER_REFUND_REQUIRED"
+                        },
+                        actor=actor
+                    )
+                except Exception:
+                    pass
+
+            fail_result = {
+                "contract_id": contract_id,
+                "status": "EXPIRED",
+                "reauthorized": False,
+                "authorization_id": auth_id,
+                "action_required": "BUYER_REFUND_REQUIRED",
+                "error": str(e),
+                "notification_sent": True,
+                "message": "Re-authorization declined/failed. Hold is EXPIRED. Buyer notified to re-fund escrow balance."
+            }
+
+            if idempotency_key and hasattr(self.repository, "save_idempotency_key"):
+                self.repository.save_idempotency_key(
+                    key=idempotency_key,
+                    scope=scope,
+                    response_data=fail_result,
+                    status_code=200
+                )
+
+            if raise_on_failure:
+                raise ExpiredAuthorizationError(
+                    f"Re-authorization failed for contract '{contract_id}': {str(e)}",
+                    details=fail_result
+                )
+
+            return fail_result
+
     def get_contract_hold(
         self,
         contract_id: str,
@@ -1730,6 +2008,26 @@ class EscrowPaymentService:
             attach_receipt_to_rails = False
 
         if passed > 0:
+            # Check if authorization hold is already expired (wall-clock > 29 days)
+            hold_info = None
+            try:
+                hold_info = self.get_contract_hold(contract_id)
+            except Exception:
+                pass
+
+            if hold_info and hold_info.get("is_expired"):
+                reauth_res = self.handle_expired_authorization(
+                    contract_id=contract_id,
+                    actor=actor,
+                    idempotency_key=f"{idempotency_key}:reauth" if idempotency_key else None
+                )
+                if not reauth_res.get("reauthorized"):
+                    raise ExpiredAuthorizationError(
+                        f"Authorization hold has expired and automated re-authorization failed for contract '{contract_id}': {reauth_res.get('error')}",
+                        details=reauth_res
+                    )
+                auth_id = reauth_res.get("authorization_id")
+
             is_final = (refund == 0.0)
             capture_kwargs = {
                 "authorization_id": auth_id,
@@ -1744,7 +2042,35 @@ class EscrowPaymentService:
 
             if idempotency_key:
                 capture_kwargs["idempotency_key"] = f"{idempotency_key}:capture"
-            capture_res = self.paypal.capture_authorization(**capture_kwargs)
+
+            try:
+                capture_res = self.paypal.capture_authorization(**capture_kwargs)
+            except PayPalAPIError as e:
+                err_str = str(e).upper()
+                is_expired_err = (
+                    e.status_code == 422 and (
+                        "AUTHORIZATION_EXPIRED" in err_str or
+                        "EXPIRED" in err_str or
+                        (isinstance(getattr(e, "details", None), dict) and e.details.get("name") == "AUTHORIZATION_EXPIRED")
+                    )
+                )
+                if is_expired_err:
+                    reauth_res = self.handle_expired_authorization(
+                        contract_id=contract_id,
+                        actor=actor,
+                        idempotency_key=f"{idempotency_key}:reauth" if idempotency_key else None
+                    )
+                    if not reauth_res.get("reauthorized"):
+                        raise ExpiredAuthorizationError(
+                            f"PayPal capture rejected: authorization expired and automated re-authorization failed for contract '{contract_id}': {reauth_res.get('error')}",
+                            details=reauth_res
+                        )
+                    auth_id = reauth_res.get("authorization_id")
+                    capture_kwargs["authorization_id"] = auth_id
+                    capture_res = self.paypal.capture_authorization(**capture_kwargs)
+                else:
+                    raise
+
             capture_id = capture_res.get("capture_id")
             if hasattr(self.repository, "record_payment"):
                 self.repository.record_payment(
@@ -1759,29 +2085,145 @@ class EscrowPaymentService:
 
             # Disburse Payout to Seller (attaching receipt reference to payout note)
             payout_note = f"PactPal Release [Receipt: {receipt_hash[:16]}]" if attach_receipt_to_rails else f"PactPal Milestone Release for '{contract.get('title')}'"
-            payout_kwargs = {
-                "receiver_email": target_email,
-                "amount": passed,
-                "currency": currency,
-                "note": payout_note
-            }
-            if attach_receipt_to_rails:
-                payout_kwargs["sender_batch_id"] = payout_batch_reference
-                payout_kwargs["receipt_hash"] = receipt_hash
+            max_payout_retries = 3
+            initial_delay = 0.01
+            if metadata:
+                if "payout_max_retries" in metadata:
+                    max_payout_retries = int(metadata["payout_max_retries"])
+                if "payout_retry_delay" in metadata:
+                    initial_delay = float(metadata["payout_retry_delay"])
 
-            if idempotency_key:
-                payout_kwargs["idempotency_key"] = f"{idempotency_key}:payout"
-            payout_res = self.paypal.create_payout(**payout_kwargs)
-            payout_batch_id = payout_res.get("payout_batch_id") or payout_batch_reference
-            if hasattr(self.repository, "record_payment"):
-                self.repository.record_payment(
-                    contract_id=contract_id,
-                    payment_type="PAYOUT",
-                    paypal_reference_id=str(payout_batch_id),
+            try:
+                payout_res = self._execute_payout_with_retry(
+                    receiver_email=target_email,
                     amount=passed,
                     currency=currency,
-                    status="COMPLETED",
-                    metadata=payout_res
+                    note=payout_note,
+                    sender_batch_id=payout_batch_reference if attach_receipt_to_rails else None,
+                    idempotency_key=f"{idempotency_key}:payout" if idempotency_key else None,
+                    receipt_hash=receipt_hash if attach_receipt_to_rails else None,
+                    max_retries=max_payout_retries,
+                    initial_delay=initial_delay,
+                    backoff_factor=2.0
+                )
+                payout_batch_id = payout_res.get("payout_batch_id") or payout_batch_reference
+                if hasattr(self.repository, "record_payment"):
+                    self.repository.record_payment(
+                        contract_id=contract_id,
+                        payment_type="PAYOUT",
+                        paypal_reference_id=str(payout_batch_id),
+                        amount=passed,
+                        currency=currency,
+                        status="COMPLETED",
+                        metadata=payout_res
+                    )
+            except Exception as payout_err:
+                failed_payment = None
+                if hasattr(self.repository, "record_payment"):
+                    failed_payment = self.repository.record_payment(
+                        contract_id=contract_id,
+                        payment_type="PAYOUT",
+                        paypal_reference_id=payout_batch_reference or "PAYOUT_FAILED",
+                        amount=passed,
+                        currency=currency,
+                        status="FAILED",
+                        metadata={
+                            "error": str(payout_err),
+                            "status_code": getattr(payout_err, "status_code", None),
+                            "details": getattr(payout_err, "details", {}),
+                            "recipient_email": target_email,
+                            "escalated": True,
+                            "failed_at": datetime.now(timezone.utc).isoformat()
+                        }
+                    )
+
+                if hasattr(self.repository, "record_message"):
+                    self.repository.record_message(
+                        contract_id=contract_id,
+                        content=f"Critical: Payout disbursement failed: {str(payout_err)}. Escalated to Platform Admin.",
+                        sender_type="AI_REFEREE",
+                        sender_id=getattr(actor, "id", None) if actor else None,
+                        metadata={
+                            "event": "PAYOUT_FAILURE_ESCALATION",
+                            "contract_id": contract_id,
+                            "recipient_email": target_email,
+                            "amount": passed,
+                            "currency": currency,
+                            "error": str(payout_err),
+                            "status_code": getattr(payout_err, "status_code", None),
+                            "failure_reason": str(payout_err),
+                            "payout_batch_reference": payout_batch_reference,
+                            "capture_id": capture_id,
+                            "escalated_at": datetime.now(timezone.utc).isoformat()
+                        }
+                    )
+
+                if hasattr(self.notification_service, "notify_payout_escalation"):
+                    try:
+                        self.notification_service.notify_payout_escalation(
+                            contract_id=contract_id,
+                            metadata={
+                                "error": str(payout_err),
+                                "recipient_email": target_email,
+                                "amount": passed,
+                                "currency": currency,
+                                "failure_reason": str(payout_err),
+                                "payout_batch_reference": payout_batch_reference,
+                                "capture_id": capture_id
+                            },
+                            actor=actor
+                        )
+                    except Exception:
+                        pass
+
+                try:
+                    self.repository.transition_contract(
+                        contract_id=contract_id,
+                        actor=actor,
+                        target_state=ContractState.DISPUTE,
+                        metadata={
+                            "escalation_reason": "PAYOUT_FAILURE_ESCALATION",
+                            "capture_id": capture_id,
+                            "payout_batch_reference": payout_batch_reference,
+                            "error": str(payout_err)
+                        }
+                    )
+                except Exception:
+                    pass
+
+                if refund > 0:
+                    try:
+                        void_kwargs = {"authorization_id": auth_id}
+                        if idempotency_key:
+                            void_kwargs["idempotency_key"] = f"{idempotency_key}:void"
+                        void_res = self.paypal.void_authorization(**void_kwargs)
+                        void_id = void_res.get("authorization_id") or auth_id
+                        if hasattr(self.repository, "record_payment"):
+                            self.repository.record_payment(
+                                contract_id=contract_id,
+                                payment_type="VOID",
+                                paypal_reference_id=str(void_id),
+                                amount=refund,
+                                currency=currency,
+                                status="COMPLETED",
+                                metadata=void_res
+                            )
+                    except Exception:
+                        pass
+
+                raise PayoutFailureError(
+                    f"Seller payout disbursement failed after retries for contract '{contract_id}': {str(payout_err)}. Escalated to Platform Admin.",
+                    details={
+                        "contract_id": contract_id,
+                        "capture_id": capture_id,
+                        "status": "FAILED",
+                        "escalated": True,
+                        "recipient_email": target_email,
+                        "amount": passed,
+                        "currency": currency,
+                        "error": str(payout_err),
+                        "payment_id": failed_payment.get("id") if failed_payment else None
+                    }
                 )
 
         # 8. Void / Refund remainder
@@ -1884,6 +2326,225 @@ class EscrowPaymentService:
             self.repository.save_idempotency_key(idempotency_key, scope=scope, response_data=response)
 
         return response
+
+    def _execute_payout_with_retry(
+        self,
+        receiver_email: str,
+        amount: float,
+        currency: str = "USD",
+        note: str = "PactPal Milestone Release",
+        sender_batch_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        receipt_hash: Optional[str] = None,
+        max_retries: int = 3,
+        initial_delay: float = 0.01,
+        backoff_factor: float = 2.0
+    ) -> Dict[str, Any]:
+        """
+        Executes PayPal Payouts API disbursement with exponential backoff retries for transient errors (Commit C54).
+        Strictly preserves idempotency keys (PayPal-Request-Id and sender_batch_id) across all retries.
+        """
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                payout_kwargs = {
+                    "receiver_email": receiver_email,
+                    "amount": amount,
+                    "currency": currency,
+                    "note": note
+                }
+                if sender_batch_id is not None:
+                    payout_kwargs["sender_batch_id"] = sender_batch_id
+                if idempotency_key is not None:
+                    payout_kwargs["idempotency_key"] = idempotency_key
+                if receipt_hash is not None:
+                    payout_kwargs["receipt_hash"] = receipt_hash
+
+                return self.paypal.create_payout(**payout_kwargs)
+            except Exception as e:
+                last_error = e
+                # Determine if error is transient
+                is_transient = False
+                status_code = getattr(e, "status_code", None)
+                if status_code in (500, 502, 503, 504, 429):
+                    is_transient = True
+                elif status_code in (400, 401, 403, 404, 422):
+                    is_transient = False
+                else:
+                    err_lower = str(e).lower()
+                    if any(term in err_lower for term in ("timeout", "timed out", "connection", "network", "reset by peer", "service unavailable", "503", "502", "500")):
+                        is_transient = True
+
+                if is_transient and attempt < max_retries:
+                    delay = initial_delay * (backoff_factor ** attempt)
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise last_error
+        raise last_error or RuntimeError("Payout failed with unknown error.")
+
+    def retry_failed_payout(
+        self,
+        contract_id: str,
+        actor: Optional[User] = None,
+        idempotency_key: Optional[str] = None,
+        new_receiver_email: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Retries a failed payout for a contract, clears escalation flags, and transitions to SETTLED (Commit C54).
+        """
+        scope = f"payout_retry:{contract_id}"
+        if idempotency_key and hasattr(self.repository, "get_idempotency_key"):
+            cached = self.repository.get_idempotency_key(idempotency_key, scope=scope)
+            if cached:
+                return cached["response_data"]
+
+        contract = self.repository.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        # RBAC: Only Admin or AI Referee can retry payouts
+        if actor is not None:
+            assert_can_retry_payout(actor, contract)
+
+        # Locate failed payout record in payments table
+        payments = self.repository.get_payments(contract_id) if hasattr(self.repository, "get_payments") else []
+        failed_payout = next(
+            (p for p in reversed(payments) if p.get("payment_type") == "PAYOUT" and p.get("status") in ("FAILED", "NEEDS_ATTENTION")),
+            None
+        )
+
+        amount = 0.0
+        currency = contract.get("currency", "USD")
+        previous_email = None
+        if failed_payout:
+            amount = float(failed_payout.get("amount", 0.0))
+            currency = failed_payout.get("currency", currency)
+            meta = failed_payout.get("metadata") or {}
+            if isinstance(meta, dict):
+                previous_email = meta.get("recipient_email")
+        else:
+            capture_rec = next((p for p in payments if p.get("payment_type") == "CAPTURE" and p.get("status") == "COMPLETED"), None)
+            if capture_rec:
+                amount = float(capture_rec.get("amount", 0.0))
+            else:
+                amount = float(contract.get("total_amount", 0.0))
+
+        target_email = new_receiver_email or previous_email
+        if not target_email and hasattr(self.repository, "get_user"):
+            seller_user = self.repository.get_user(contract.get("seller_id"))
+            if seller_user and getattr(seller_user, "paypal_email", None):
+                target_email = seller_user.paypal_email
+
+        if not target_email:
+            raise ValueError("Recipient PayPal email is required to retry payout.")
+
+        payout_batch_ref = f"pactpal_retry_payout_{contract_id[:8]}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        payout_key = idempotency_key or f"retry_payout_{contract_id}_{int(time.time())}"
+
+        # Execute payout with exponential backoff retry
+        payout_res = self._execute_payout_with_retry(
+            receiver_email=target_email,
+            amount=amount,
+            currency=currency,
+            note=f"PactPal Milestone Payout (Retry for '{contract.get('title')}')",
+            sender_batch_id=payout_batch_ref,
+            idempotency_key=payout_key,
+            max_retries=3,
+            initial_delay=0.01
+        )
+        payout_batch_id = payout_res.get("payout_batch_id") or payout_batch_ref
+
+        # Update or record payment record to COMPLETED
+        if failed_payout and hasattr(self.repository, "update_payment_status"):
+            self.repository.update_payment_status(
+                payment_id=failed_payout["id"],
+                status="COMPLETED",
+                paypal_reference_id=str(payout_batch_id),
+                metadata=payout_res
+            )
+        elif hasattr(self.repository, "record_payment"):
+            self.repository.record_payment(
+                contract_id=contract_id,
+                payment_type="PAYOUT",
+                paypal_reference_id=str(payout_batch_id),
+                amount=amount,
+                currency=currency,
+                status="COMPLETED",
+                metadata=payout_res
+            )
+
+        # Log escalation resolution in messages table
+        if hasattr(self.repository, "record_message"):
+            self.repository.record_message(
+                contract_id=contract_id,
+                content=f"Payout failure escalation resolved. Disbursed {amount:.2f} {currency} to {target_email} (Batch: {payout_batch_id}).",
+                sender_type="AI_REFEREE",
+                sender_id=getattr(actor, "id", None) if actor else None,
+                metadata={
+                    "event": "PAYOUT_ESCALATION_RESOLVED",
+                    "contract_id": contract_id,
+                    "payout_batch_id": payout_batch_id,
+                    "amount": amount,
+                    "currency": currency,
+                    "receiver_email": target_email,
+                    "resolved_by": getattr(actor, "id", None) if actor else "ADMIN",
+                    "resolved_at": datetime.now(timezone.utc).isoformat()
+                }
+            )
+
+        # Transition contract to SETTLED
+        try:
+            self.repository.transition_contract(
+                contract_id=contract_id,
+                actor=actor or User(id="ADMIN", name="Admin", role=UserRole.ADMIN),
+                target_state=ContractState.SETTLED,
+                metadata={
+                    "payout_batch_id": payout_batch_id,
+                    "escalation_resolved": True,
+                    "settled_at": datetime.now(timezone.utc).isoformat()
+                }
+            )
+        except Exception:
+            pass
+
+        # Notify Seller that payout is completed
+        if hasattr(self.notification_service, "notify_payout_complete"):
+            try:
+                self.notification_service.notify_payout_complete(
+                    contract_id=contract_id,
+                    metadata={
+                        "payout_batch_reference": payout_batch_id,
+                        "passed_amount": amount,
+                        "currency": currency
+                    },
+                    actor=actor
+                )
+            except Exception:
+                pass
+
+        result = {
+            "contract_id": contract_id,
+            "status": "SETTLED",
+            "payout_status": "COMPLETED",
+            "payout_batch_id": payout_batch_id,
+            "amount": amount,
+            "currency": currency,
+            "receiver_email": target_email,
+            "escalation_resolved": True,
+            "message": "Payout successfully disbursed and escalation resolved."
+        }
+
+        if idempotency_key and hasattr(self.repository, "save_idempotency_key"):
+            self.repository.save_idempotency_key(
+                key=idempotency_key,
+                scope=scope,
+                response_data=result,
+                status_code=200
+            )
+
+        return result
 
     def _assemble_proof_of_work_summary(
         self,

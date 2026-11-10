@@ -511,6 +511,47 @@ class ContractRepository:
             records.append(rec)
         return records
 
+    def get_payment(self, payment_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a single payment record by payment ID (Commit C54)."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM payments WHERE id = ?", (payment_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        rec = dict(row)
+        if isinstance(rec.get("metadata"), str):
+            try:
+                rec["metadata"] = json.loads(rec["metadata"])
+            except Exception:
+                pass
+        return rec
+
+    def update_payment_status(
+        self,
+        payment_id: str,
+        status: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        paypal_reference_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Updates status, metadata, and reference ID of an existing payment entry (Commit C54).
+        Used during payout failure retries and status resolution.
+        """
+        cursor = self.conn.cursor()
+        updates = ["status = ?", "processed_at = ?"]
+        params = [status, now_iso()]
+        if paypal_reference_id is not None:
+            updates.append("paypal_reference_id = ?")
+            params.append(paypal_reference_id)
+        if metadata is not None:
+            updates.append("metadata = ?")
+            params.append(json.dumps(metadata))
+        params.append(payment_id)
+        sql = f"UPDATE payments SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(sql, tuple(params))
+        self.conn.commit()
+        return self.get_payment(payment_id)
+
     # --- Message Ledger & Settlement Summary Audit (C41) ---
     def record_message(
         self,
@@ -874,14 +915,17 @@ class ContractRepository:
     def update_contract_hold(
         self,
         contract_id: str,
-        total_amount: float,
+        total_amount: Optional[float] = None,
         paypal_auth_id: Optional[str] = None,
         auth_expires_at: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """Updates total_amount, paypal_auth_id, and auth_expires_at for a contract (Commit C46)."""
-        updates = ["total_amount = ?", "updated_at = ?"]
-        params = [float(total_amount), now_iso()]
+        """Updates total_amount, paypal_auth_id, and auth_expires_at for a contract (Commit C46, C54)."""
+        updates = ["updated_at = ?"]
+        params = [now_iso()]
 
+        if total_amount is not None:
+            updates.append("total_amount = ?")
+            params.append(float(total_amount))
         if paypal_auth_id is not None:
             updates.append("paypal_auth_id = ?")
             params.append(paypal_auth_id)
