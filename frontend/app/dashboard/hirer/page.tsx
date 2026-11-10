@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { Plus, Shield, Clock, CheckCircle, AlertCircle, Circle } from "lucide-react";
-import { mockApi, Contract } from "@/lib/mockApi";
+import { mockApi, Contract, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
 
 const statusMeta: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
   DRAFT:       { color: "#7C89A8", bg: "rgba(124,137,168,0.1)", label: "Draft", icon: <Circle size={12} /> },
