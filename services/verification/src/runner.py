@@ -1,9 +1,9 @@
 """
 PactPal Verification Pipeline - Master Execution Runner
-Coordinates Stages A through F of the verification lifecycle inside isolated sandboxes.
-Enforces:
-  - Stage B build failure guard: skips downstream stages and emits report if build fails.
-  - Stage C automated testing: executes native test suites and maps per-feature pass/fail with AI checks.
+Coordinates Stages A through F of the verification lifecycle inside isolated sandboxes:
+  - Stage B: Clean sandbox build execution & failure guard
+  - Stage C: Automated tests & per-feature acceptance mapping
+  - Stage E Pre-Capture: Headless browser screenshot generation for key pages
 """
 
 import os
@@ -16,6 +16,7 @@ from .models import SubmissionRecord, VerificationReport
 from .sandbox import IsolatedWorkspace, WorkspaceExecutionResult
 from .ai_evaluator import AIIntakeEvaluator
 from .test_runner import StageCTestSuiteProcessor
+from .screenshot_capture import HeadlessScreenshotCapture, BrowserNotFoundError
 
 class VerificationPipelineRunner:
     """Executes the verification pipeline across Stages A through F."""
@@ -28,11 +29,12 @@ class VerificationPipelineRunner:
         self,
         submission: SubmissionRecord,
         features: Optional[List[Dict[str, Any]]] = None,
-        timeout_seconds: int = 60
+        timeout_seconds: int = 60,
+        capture_screenshots: bool = True
     ) -> VerificationReport:
         """
         Executes isolated sandbox build and verification for a submission.
-        Coordinates Stage B Build and Stage C Automated Tests & Feature Mapping.
+        Coordinates Stage B Build, Stage C Tests, and Stage E Browser Screenshots.
         """
         # Spawn isolated workspace with zero platform secrets
         with IsolatedWorkspace(workspace_id=submission.id, timeout_seconds=timeout_seconds, ai_evaluator=self.ai) as ws:
@@ -112,6 +114,29 @@ class VerificationPipelineRunner:
                 features=features
             )
 
+            # 5. Stage E Pre-Capture: Headless Browser Screenshots (C26 Done Criteria)
+            visual_diff_summary = {"status": "PENDING_STAGE_E"}
+            if capture_screenshots:
+                evidence_dir = ws.workspace_path / "evidence" / "screenshots"
+                try:
+                    capture_engine = HeadlessScreenshotCapture(ai_evaluator=self.ai)
+                    visual_diff_summary = capture_engine.capture_deliverable_key_pages(
+                        repo_dir=clone_dest,
+                        evidence_dir=evidence_dir
+                    )
+                except BrowserNotFoundError as bne:
+                    visual_diff_summary = {
+                        "status": "BROWSER_NOT_FOUND",
+                        "error": str(bne),
+                        "ready_for_figma_diff": False
+                    }
+                except Exception as e:
+                    visual_diff_summary = {
+                        "status": "CAPTURE_FAILED",
+                        "error": str(e),
+                        "ready_for_figma_diff": False
+                    }
+
             return VerificationReport(
                 id=str(uuid.uuid4()),
                 submission_id=submission.id,
@@ -121,7 +146,7 @@ class VerificationPipelineRunner:
                 build_logs=combined_logs,
                 test_suite_results=test_suite_results,
                 cheat_scan_findings=[],
-                visual_diff_summary={"status": "PENDING_STAGE_E"},
+                visual_diff_summary=visual_diff_summary,
                 per_feature_results=per_feature_results,
                 overall_score=overall_score,
                 completed_at=submission.submitted_at,

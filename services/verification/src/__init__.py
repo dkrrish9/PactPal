@@ -21,6 +21,12 @@ from .sandbox import (
 )
 from .runner import VerificationPipelineRunner
 from .test_runner import StageCTestSuiteProcessor
+from .screenshot_capture import (
+    HeadlessScreenshotCapture,
+    BrowserNotFoundError,
+    ScreenshotCaptureError,
+    BrowserDetector
+)
 
 __all__ = [
     "IntakeRequest",
@@ -35,5 +41,9 @@ __all__ = [
     "WorkspaceSecurityError",
     "WorkspaceExecutionResult",
     "VerificationPipelineRunner",
-    "StageCTestSuiteProcessor"
+    "StageCTestSuiteProcessor",
+    "HeadlessScreenshotCapture",
+    "BrowserNotFoundError",
+    "ScreenshotCaptureError",
+    "BrowserDetector"
 ]
