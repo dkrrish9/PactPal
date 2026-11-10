@@ -162,7 +162,7 @@ export default function FreelancerDashboardPage() {
                 return (
                   <Link
                     key={c.id}
-                    href={`/contracts/${c.id}`}
+                    href={c.status === "REVIEW" ? `/contracts/${c.id}/review` : `/contracts/${c.id}`}
                     role="listitem"
                     style={{
                       display: "flex",

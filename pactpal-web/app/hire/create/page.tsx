@@ -1,7 +1,19 @@
 "use client";
 import { useState } from "react";
 import Navbar from "@/components/Navbar";
-import { CheckCircle, Circle, ArrowRight, ArrowLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { 
+  CheckCircle, 
+  ArrowRight, 
+  ArrowLeft, 
+  Palette, 
+  Trash2, 
+  Plus, 
+  ShieldCheck, 
+  ExternalLink,
+  Loader2
+} from "lucide-react";
+import { mockApi } from "@/lib/mockApi";
 
 type Feature = { name: string; weight: number; test: string };
 
@@ -13,29 +25,67 @@ type FormState = {
   deadline: string;
   totalAmount: string;
   currency: string;
+  figmaUrl: string;
 };
 
 const STEPS = ["Basic Info", "Feature Checklist", "Escrow Settings", "Review"];
 
 export default function CreateContractPage() {
+  const router = useRouter();
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState({
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [form, setForm] = useState<FormState>({
     title: "",
     description: "",
-    buyerEmail: "",
-    sellerEmail: "",
-    deadline: "",
-    totalAmount: "",
+    buyerEmail: "priya@fintech.io",
+    sellerEmail: "alex.dev@code.io",
+    deadline: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
+    totalAmount: "1500",
     currency: "USD",
+    figmaUrl: "https://figma.com/design/sample-project-spec",
   });
+
   const [features, setFeatures] = useState<Feature[]>([
-    { name: "Landing page", weight: 25, test: "All sections render, CTA links work" },
-    { name: "Login system", weight: 20, test: "Login/logout with JWT, session persists" },
-    { name: "Dashboard", weight: 30, test: "Data loads, charts render, responsive" },
-    { name: "Payment flow", weight: 25, test: "Checkout completes, invoice sent" },
+    { name: "Landing page", weight: 25, test: "All 12 sections render, CTA links work, mobile drawer opens" },
+    { name: "Login system", weight: 20, test: "Login/logout with JWT, session persists across refresh" },
+    { name: "Dashboard", weight: 30, test: "Data loads from API, Bryntum Gantt chart renders, 100% responsive" },
+    { name: "Payment flow", weight: 25, test: "PayPal escrow webhook listeners respond with 200" },
   ]);
-  const totalWeight = features.reduce((s, f) => s + f.weight, 0);
+
+  const totalWeight = features.reduce((s, f) => s + (Number(f.weight) || 0), 0);
   const weightOk = totalWeight === 100;
+  const basicInfoOk = form.title.trim() !== "" && form.buyerEmail.trim() !== "" && form.sellerEmail.trim() !== "" && form.totalAmount.trim() !== "";
+
+  const handleSubmit = async () => {
+    if (!weightOk || !basicInfoOk) return;
+    setIsSubmitting(true);
+
+    try {
+      const created = mockApi.createContract({
+        title: form.title,
+        description: form.description,
+        buyer_email: form.buyerEmail,
+        seller_email: form.sellerEmail,
+        total_amount: parseFloat(form.totalAmount) || 1500,
+        currency: form.currency || "USD",
+        deadline: new Date(form.deadline || Date.now() + 14 * 86400000).toISOString(),
+        figma_url: form.figmaUrl,
+        features: features.map((f) => ({
+          title: f.name || "Untitled Feature",
+          acceptance_test: f.test || "Acceptance test passed",
+          price_weight: Number(f.weight) || 0,
+        })),
+      });
+
+      // Brief simulated state sync delay
+      setTimeout(() => {
+        router.push(`/contracts/${created.id}`);
+      }, 700);
+    } catch (err) {
+      console.error("Failed to create contract:", err);
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
@@ -43,7 +93,7 @@ export default function CreateContractPage() {
 
       <div
         style={{
-          maxWidth: 760,
+          maxWidth: 820,
           margin: "0 auto",
           padding: "120px 24px 80px",
         }}
@@ -129,7 +179,7 @@ export default function CreateContractPage() {
             background: "rgba(255,255,255,0.03)",
             border: "1px solid rgba(255,255,255,0.08)",
             borderRadius: 28,
-            padding: "40px 40px",
+            padding: "40px",
           }}
           role="main"
           aria-label={`Step ${step + 1}: ${STEPS[step]}`}
@@ -139,6 +189,7 @@ export default function CreateContractPage() {
           )}
           {step === 1 && (
             <StepFeatures
+              form={form}
               features={features}
               setFeatures={setFeatures}
               totalWeight={totalWeight}
@@ -164,7 +215,7 @@ export default function CreateContractPage() {
           >
             <button
               onClick={() => setStep((s) => Math.max(0, s - 1))}
-              disabled={step === 0}
+              disabled={step === 0 || isSubmitting}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -207,13 +258,14 @@ export default function CreateContractPage() {
               </button>
             ) : (
               <button
-                disabled={!weightOk}
+                onClick={handleSubmit}
+                disabled={!weightOk || isSubmitting}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
-                  background: weightOk
-                    ? "linear-gradient(135deg, #4CAF50, #81C784)"
+                  background: weightOk && !isSubmitting
+                    ? "linear-gradient(135deg, #0066FF, #00A3E0)"
                     : "rgba(255,255,255,0.1)",
                   border: "none",
                   borderRadius: 50,
@@ -221,14 +273,22 @@ export default function CreateContractPage() {
                   padding: "12px 32px",
                   fontSize: 15,
                   fontWeight: 700,
-                  cursor: weightOk ? "pointer" : "not-allowed",
-                  opacity: weightOk ? 1 : 0.5,
-                  boxShadow: weightOk ? "0 0 20px rgba(76,175,80,0.4)" : "none",
+                  cursor: weightOk && !isSubmitting ? "pointer" : "not-allowed",
+                  opacity: weightOk && !isSubmitting ? 1 : 0.5,
+                  boxShadow: weightOk && !isSubmitting ? "0 0 20px rgba(0,102,255,0.4)" : "none",
                 }}
                 aria-label="Submit contract"
-                aria-disabled={!weightOk}
+                aria-disabled={!weightOk || isSubmitting}
               >
-                🔒 Submit & Fund Escrow
+                {isSubmitting ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> Creating Contract...
+                  </>
+                ) : (
+                  <>
+                    🔒 Submit Contract (DRAFT) <ArrowRight size={16} />
+                  </>
+                )}
               </button>
             )}
           </div>
@@ -240,12 +300,17 @@ export default function CreateContractPage() {
 
 /* ---- Sub-steps ---- */
 
-function FormGroup({ label, children }: { label: string; children: React.ReactNode }) {
+function FormGroup({ label, children, optional = false }: { label: string; children: React.ReactNode; optional?: boolean }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <label style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-secondary)", letterSpacing: "0.04em" }}>
-        {label}
-      </label>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-secondary)", letterSpacing: "0.04em" }}>
+          {label}
+        </label>
+        {optional && (
+          <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Optional</span>
+        )}
+      </div>
       {children}
     </div>
   );
@@ -263,45 +328,91 @@ const inputStyle: React.CSSProperties = {
   fontFamily: "Inter, sans-serif",
 };
 
-
-function StepBasicInfo({ form, setForm }: { form: { title: string; description: string; buyerEmail: string; sellerEmail: string; deadline: string; totalAmount: string; currency: string }; setForm: React.Dispatch<React.SetStateAction<{ title: string; description: string; buyerEmail: string; sellerEmail: string; deadline: string; totalAmount: string; currency: string }>> }) {
+function StepBasicInfo({ form, setForm }: { form: FormState; setForm: React.Dispatch<React.SetStateAction<FormState>> }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <div>
-        <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Basic info</h2>
-        <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>Tell both parties what this pact is about.</p>
+        <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Basic Info &amp; Parties</h2>
+        <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>Capture project parameters, buyer/seller parties, and design references.</p>
       </div>
+
       <FormGroup label="Contract title">
         <input
           style={inputStyle}
           value={form.title}
           onChange={(e) => setForm({ ...form, title: e.target.value })}
-          placeholder="e.g. E-commerce website build"
+          placeholder="e.g. Next.js SaaS Storefront &amp; Bryntum Gantt UI"
           aria-label="Contract title"
         />
       </FormGroup>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <FormGroup label="Buyer email">
-          <input style={inputStyle} value={form.buyerEmail} onChange={(e) => setForm({ ...form, buyerEmail: e.target.value })} placeholder="buyer@email.com" aria-label="Buyer email" />
+        <FormGroup label="Buyer email (Party A)">
+          <input 
+            style={inputStyle} 
+            value={form.buyerEmail} 
+            onChange={(e) => setForm({ ...form, buyerEmail: e.target.value })} 
+            placeholder="buyer@email.com" 
+            aria-label="Buyer email" 
+          />
         </FormGroup>
-        <FormGroup label="Seller email">
-          <input style={inputStyle} value={form.sellerEmail} onChange={(e) => setForm({ ...form, sellerEmail: e.target.value })} placeholder="seller@email.com" aria-label="Seller email" />
+        <FormGroup label="Seller email (Party B)">
+          <input 
+            style={inputStyle} 
+            value={form.sellerEmail} 
+            onChange={(e) => setForm({ ...form, sellerEmail: e.target.value })} 
+            placeholder="seller@email.com" 
+            aria-label="Seller email" 
+          />
         </FormGroup>
       </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <FormGroup label="Deadline">
-          <input type="date" style={inputStyle} value={form.deadline} onChange={(e) => setForm({ ...form, deadline: e.target.value })} aria-label="Contract deadline" />
+        <FormGroup label="Milestone Deadline">
+          <input 
+            type="date" 
+            style={inputStyle} 
+            value={form.deadline} 
+            onChange={(e) => setForm({ ...form, deadline: e.target.value })} 
+            aria-label="Contract deadline" 
+          />
         </FormGroup>
-        <FormGroup label="Total amount (USD)">
-          <input style={inputStyle} value={form.totalAmount} onChange={(e) => setForm({ ...form, totalAmount: e.target.value })} placeholder="1500" aria-label="Total contract amount in USD" />
+        <FormGroup label="Total Escrow Price (USD)">
+          <input 
+            style={inputStyle} 
+            value={form.totalAmount} 
+            onChange={(e) => setForm({ ...form, totalAmount: e.target.value })} 
+            placeholder="1500" 
+            aria-label="Total contract amount in USD" 
+          />
         </FormGroup>
       </div>
-      <FormGroup label="Description">
+
+      {/* Captured Design Link (Figma/Design Reference) */}
+      <FormGroup label="Design Reference / Figma Link">
+        <div style={{ position: "relative" }}>
+          <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--color-text-muted)" }}>
+            <Palette size={16} color="#F24E1E" />
+          </div>
+          <input
+            style={{ ...inputStyle, paddingLeft: 42 }}
+            value={form.figmaUrl}
+            onChange={(e) => setForm({ ...form, figmaUrl: e.target.value })}
+            placeholder="https://figma.com/design/your-spec-link"
+            aria-label="Design reference link"
+          />
+        </div>
+        <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+          The AI Referee uses this design reference in Stage D for automated visual regression diffing.
+        </span>
+      </FormGroup>
+
+      <FormGroup label="Scope Description" optional>
         <textarea
-          style={{ ...inputStyle, minHeight: 100, resize: "vertical" }}
+          style={{ ...inputStyle, minHeight: 90, resize: "vertical" }}
           value={form.description}
           onChange={(e) => setForm({ ...form, description: e.target.value })}
-          placeholder="Brief overview of the work to be done..."
+          placeholder="Brief overview of features, responsive guidelines, or performance constraints..."
           aria-label="Contract description"
         />
       </FormGroup>
@@ -309,24 +420,34 @@ function StepBasicInfo({ form, setForm }: { form: { title: string; description: 
   );
 }
 
-function StepFeatures({ features, setFeatures, totalWeight, weightOk }: {
+function StepFeatures({ form, features, setFeatures, totalWeight, weightOk }: {
+  form: FormState;
   features: Feature[];
   setFeatures: (f: Feature[]) => void;
   totalWeight: number;
   weightOk: boolean;
 }) {
+  const totalAmountNum = parseFloat(form.totalAmount) || 0;
+
   const updateFeature = (i: number, field: keyof Feature, value: string | number) => {
     const updated = [...features];
     (updated[i] as Record<string, string | number>)[field] = value;
     setFeatures(updated);
   };
 
+  const removeFeature = (idx: number) => {
+    if (features.length <= 1) return;
+    setFeatures(features.filter((_, i) => i !== idx));
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Feature checklist</h2>
-          <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>Weights must add to exactly 100%. These define proportional payouts.</p>
+          <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Feature Checklist &amp; Weights</h2>
+          <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>
+            Each feature must have an explicit acceptance test. Weights must total exactly 100%.
+          </p>
         </div>
         <div
           style={{
@@ -352,64 +473,93 @@ function StepFeatures({ features, setFeatures, totalWeight, weightOk }: {
         </div>
       </div>
 
-      {features.map((f, i) => (
-        <div
-          key={i}
-          style={{
-            background: "rgba(255,255,255,0.03)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 16,
-            padding: "20px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-          role="group"
-          aria-label={`Feature ${i + 1}: ${f.name}`}
-        >
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 100px", gap: 12 }}>
+      {features.map((f, i) => {
+        const allocatedVal = ((totalAmountNum * (Number(f.weight) || 0)) / 100).toFixed(2);
+
+        return (
+          <div
+            key={i}
+            style={{
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 16,
+              padding: "20px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+            role="group"
+            aria-label={`Feature ${i + 1}: ${f.name}`}
+          >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 100px auto", gap: 12, alignItems: "center" }}>
+              <input
+                style={inputStyle}
+                value={f.name}
+                onChange={(e) => updateFeature(i, "name", e.target.value)}
+                placeholder="Feature title"
+                aria-label={`Feature ${i + 1} name`}
+              />
+              <div style={{ position: "relative" }}>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  style={{ ...inputStyle, paddingRight: 28 }}
+                  value={f.weight}
+                  onChange={(e) => updateFeature(i, "weight", parseInt(e.target.value) || 0)}
+                  aria-label={`Feature ${i + 1} weight percentage`}
+                />
+                <span
+                  style={{
+                    position: "absolute",
+                    right: 12,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    color: "var(--color-text-muted)",
+                    fontSize: 14,
+                    pointerEvents: "none",
+                  }}
+                  aria-hidden
+                >%</span>
+              </div>
+
+              <div style={{ textAlign: "right", fontFamily: "JetBrains Mono, monospace", fontSize: 13, color: "var(--color-secondary)", fontWeight: 700 }}>
+                ${allocatedVal}
+              </div>
+
+              {features.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeFeature(i)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--color-text-muted)",
+                    cursor: "pointer",
+                    padding: 8,
+                    borderRadius: 8,
+                  }}
+                  title="Remove feature"
+                  aria-label="Remove feature"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
+
             <input
               style={inputStyle}
-              value={f.name}
-              onChange={(e) => updateFeature(i, "name", e.target.value)}
-              placeholder="Feature name"
-              aria-label={`Feature ${i + 1} name`}
+              value={f.test}
+              onChange={(e) => updateFeature(i, "test", e.target.value)}
+              placeholder="Plain-language acceptance test (what objective condition proves this passes?)"
+              aria-label={`Feature ${i + 1} acceptance test`}
             />
-            <div style={{ position: "relative" }}>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                style={{ ...inputStyle, paddingRight: 28 }}
-                value={f.weight}
-                onChange={(e) => updateFeature(i, "weight", parseInt(e.target.value) || 0)}
-                aria-label={`Feature ${i + 1} weight percentage`}
-              />
-              <span
-                style={{
-                  position: "absolute",
-                  right: 12,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  color: "var(--color-text-muted)",
-                  fontSize: 14,
-                  pointerEvents: "none",
-                }}
-                aria-hidden
-              >%</span>
-            </div>
           </div>
-          <input
-            style={inputStyle}
-            value={f.test}
-            onChange={(e) => updateFeature(i, "test", e.target.value)}
-            placeholder="Acceptance test (what must be true for this to pass?)"
-            aria-label={`Feature ${i + 1} acceptance test`}
-          />
-        </div>
-      ))}
+        );
+      })}
 
       <button
+        type="button"
         onClick={() => setFeatures([...features, { name: "", weight: 0, test: "" }])}
         style={{
           background: "rgba(255,255,255,0.05)",
@@ -421,21 +571,25 @@ function StepFeatures({ features, setFeatures, totalWeight, weightOk }: {
           fontWeight: 600,
           cursor: "pointer",
           width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
         }}
         aria-label="Add feature"
       >
-        + Add feature
+        <Plus size={16} /> Add feature milestone
       </button>
     </div>
   );
 }
 
-function StepEscrow({ form, setForm }: { form: { title: string; description: string; buyerEmail: string; sellerEmail: string; deadline: string; totalAmount: string; currency: string }; setForm: React.Dispatch<React.SetStateAction<{ title: string; description: string; buyerEmail: string; sellerEmail: string; deadline: string; totalAmount: string; currency: string }>> }) {
+function StepEscrow({ form, setForm }: { form: FormState; setForm: React.Dispatch<React.SetStateAction<FormState>> }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <div>
-        <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Escrow settings</h2>
-        <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>PayPal authorization holds the funds — no premature charges.</p>
+        <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Escrow Authorization Terms</h2>
+        <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>PayPal authorization holds funds securely — no premature transfers.</p>
       </div>
 
       <div
@@ -470,11 +624,11 @@ function StepEscrow({ form, setForm }: { form: { title: string; description: str
         </div>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: "white", marginBottom: 6 }}>
-            PayPal 29-day authorization
+            PayPal 29-day authorization hold
           </div>
-          <div style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.6, maxWidth: 400 }}>
+          <div style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.6, maxWidth: 440 }}>
             Funds are authorized (not captured) for 29 days. The money is reserved in the
-            buyer's PayPal account but not transferred until features are verified.
+            buyer&apos;s PayPal account but not transferred until delivered features pass AI Referee verification.
           </div>
         </div>
       </div>
@@ -491,10 +645,10 @@ function StepEscrow({ form, setForm }: { form: { title: string; description: str
         }}
       >
         {[
-          ["Amount to authorize", form.totalAmount ? `$${form.totalAmount}` : "$0.00"],
+          ["Amount to authorize", form.totalAmount ? `$${form.totalAmount} USD` : "$0.00 USD"],
           ["Authorization method", "PayPal Orders API (AUTHORIZE intent)"],
           ["Hold duration", "29 days"],
-          ["Release trigger", "AI Referee verification complete"],
+          ["Release trigger", "AI Referee verification report complete"],
         ].map(([k, v]) => (
           <div
             key={k}
@@ -520,82 +674,120 @@ function StepEscrow({ form, setForm }: { form: { title: string; description: str
           padding: "14px 18px",
           fontSize: 13,
           color: "#4CAF50",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
         }}
         role="note"
       >
-        🔐 PactPal never stores your PayPal credentials. Authorization happens via PayPal&apos;s secure OAuth flow.
+        <ShieldCheck size={18} />
+        PactPal never stores your PayPal credentials. Authorization happens via PayPal&apos;s secure sandbox authorization protocol.
       </div>
     </div>
   );
 }
 
 function StepReview({ form, features, totalWeight, weightOk }: {
-  form: Record<string, string>;
+  form: FormState;
   features: Feature[];
   totalWeight: number;
   weightOk: boolean;
 }) {
+  const totalAmountNum = parseFloat(form.totalAmount) || 0;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <div>
-        <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Review & submit</h2>
-        <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>Once submitted, both parties must sign before escrow is funded.</p>
+        <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Review &amp; Create Contract</h2>
+        <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>
+          Contract will be registered in <strong style={{ color: "var(--color-text-secondary)" }}>DRAFT</strong> status and made available to the seller for acceptance.
+        </p>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {[
-          ["Title", form.title || "—"],
-          ["Buyer", form.buyerEmail || "—"],
-          ["Seller", form.sellerEmail || "—"],
-          ["Deadline", form.deadline || "—"],
-          ["Total amount", form.totalAmount ? `$${form.totalAmount} USD` : "—"],
+          ["Contract Title", form.title || "—"],
+          ["Buyer (Party A)", form.buyerEmail || "—"],
+          ["Seller (Party B)", form.sellerEmail || "—"],
+          ["Milestone Deadline", form.deadline || "—"],
+          ["Total Escrow Price", form.totalAmount ? `$${form.totalAmount} USD` : "—"],
+          ["Design Reference", form.figmaUrl || "—"],
         ].map(([k, v]) => (
           <div
             key={k}
             style={{
               display: "flex",
               justifyContent: "space-between",
+              alignItems: "center",
               fontSize: 14,
               paddingBottom: 12,
               borderBottom: "1px solid rgba(255,255,255,0.06)",
             }}
           >
             <span style={{ color: "var(--color-text-muted)" }}>{k}</span>
-            <span style={{ fontWeight: 600, color: "white" }}>{v}</span>
+            <span style={{ fontWeight: 600, color: "white", textAlign: "right", maxWidth: 360, wordBreak: "break-all" }}>
+              {k === "Design Reference" && v !== "—" ? (
+                <a href={v} target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-primary)", display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none" }}>
+                  {v} <ExternalLink size={12} />
+                </a>
+              ) : (
+                v
+              )}
+            </span>
           </div>
         ))}
       </div>
 
       <div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 10, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-          Feature breakdown
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 12, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          Priced Features &amp; Acceptance Tests
         </div>
-        {features.map((f, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "10px 0",
-              borderBottom: "1px solid rgba(255,255,255,0.05)",
-              fontSize: 14,
-            }}
-          >
-            <span style={{ color: "var(--color-text-secondary)" }}>{f.name || `Feature ${i + 1}`}</span>
-            <span style={{ fontWeight: 700, color: "white", fontFamily: "JetBrains Mono, monospace" }}>{f.weight}%</span>
-          </div>
-        ))}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {features.map((f, i) => {
+            const allocatedVal = ((totalAmountNum * (Number(f.weight) || 0)) / 100).toFixed(2);
+
+            return (
+              <div
+                key={i}
+                style={{
+                  padding: "12px 16px",
+                  borderRadius: 10,
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, color: "white", fontSize: 14 }}>{f.name || `Feature ${i + 1}`}</span>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                    <span style={{ fontWeight: 700, color: "var(--color-secondary)", fontFamily: "JetBrains Mono, monospace", fontSize: 13 }}>
+                      ${allocatedVal}
+                    </span>
+                    <span style={{ fontWeight: 700, color: "white", fontFamily: "JetBrains Mono, monospace", fontSize: 13 }}>
+                      {f.weight}%
+                    </span>
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--color-text-muted)", fontStyle: "italic" }}>
+                  Test: &ldquo;{f.test || "No acceptance test specified"}&rdquo;
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
         <div
           style={{
             display: "flex",
             justifyContent: "flex-end",
-            paddingTop: 12,
+            paddingTop: 14,
             gap: 8,
             alignItems: "center",
           }}
         >
-          <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>Total:</span>
+          <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>Total Checklist Weight:</span>
           <span
             style={{
               fontSize: 20,
