@@ -9,6 +9,25 @@ from .roles import (
     assert_can_sign_contract,
     assert_can_request_revision,
     assert_can_fund_contract,
+    assert_can_view_receipt,
+    assert_can_apply_incremental_hold,
+    assert_can_trigger_deadline_watcher,
+    assert_can_view_notifications,
+    assert_can_dispatch_notification,
+    assert_can_access_contract,
+    assert_contract_participant,
+)
+from .supabase_auth import (
+    TokenError,
+    TokenExpiredError,
+    InvalidTokenError,
+    MalformedTokenError,
+    b64url_encode,
+    b64url_decode,
+    create_supabase_jwt,
+    verify_supabase_jwt,
+    generate_mock_supabase_token,
+    SupabaseAuthService,
 )
 
 __all__ = [
@@ -22,5 +41,21 @@ __all__ = [
     "assert_can_sign_contract",
     "assert_can_request_revision",
     "assert_can_fund_contract",
+    "assert_can_view_receipt",
+    "assert_can_apply_incremental_hold",
+    "assert_can_trigger_deadline_watcher",
+    "assert_can_view_notifications",
+    "assert_can_dispatch_notification",
+    "assert_can_access_contract",
+    "assert_contract_participant",
+    "TokenError",
+    "TokenExpiredError",
+    "InvalidTokenError",
+    "MalformedTokenError",
+    "b64url_encode",
+    "b64url_decode",
+    "create_supabase_jwt",
+    "verify_supabase_jwt",
+    "generate_mock_supabase_token",
+    "SupabaseAuthService",
 ]
-
