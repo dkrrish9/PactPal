@@ -1398,6 +1398,47 @@ class EmailNotificationService:
         """Notifies Platform Admin, Seller, and Buyer of a failed payout disbursement escalation (Commit C54)."""
         return self.notify_state_change(contract_id, "PAYOUT_FAILURE_ESCALATION", metadata, actor, force=True)
 
+    def notify_seller_onboarded(self, user: Any) -> Optional[Dict[str, Any]]:
+        """
+        Dispatches confirmation email to seller upon onboarding with saved PayPal payout email (Commit C09d).
+        """
+        paypal_email = getattr(user, "paypal_email", None) or "Not specified"
+        subject = "[PactPal] Freelancer Onboarding Complete: Payout Rails Connected"
+        html_body = f"""
+        <h2>Freelancer Payout Rails Connected</h2>
+        <p>Hello {getattr(user, 'name', 'Freelancer')},</p>
+        <p>Your PayPal payout email <strong>{paypal_email}</strong> has been saved to your PactPal profile.</p>
+        <p>You are now cleared to receive automated milestone releases and escrow disbursements.</p>
+        """
+        text_body = f"Hello {getattr(user, 'name', 'Freelancer')},\nYour PayPal payout email {paypal_email} has been saved. You are eligible for disbursements."
+        return self.provider.send_email(
+            to_email=getattr(user, "email", ""),
+            subject=subject,
+            body_text=text_body,
+            body_html=html_body,
+            metadata={"event": "SELLER_ONBOARDED", "user_id": getattr(user, "id", ""), "paypal_email": paypal_email, "role": "SELLER"}
+        )
+
+    def notify_missing_seller_paypal_email(self, contract_id: str, seller_user: Any) -> Optional[Dict[str, Any]]:
+        """
+        Alerts seller that escrow settlement is blocked because no saved PayPal email is on file (Commit C09d).
+        """
+        subject = f"[PactPal Action Required] Payout Blocked: Saved PayPal Email Missing for Contract {contract_id[:8]}"
+        html_body = f"""
+        <h2>Payout Blocked: Saved PayPal Email Required</h2>
+        <p>Hello {getattr(seller_user, 'name', 'Freelancer')},</p>
+        <p>Milestone verification for contract <strong>{contract_id}</strong> is ready for settlement, but funds cannot be released without a saved PayPal email.</p>
+        <p>Please complete seller onboarding to save your PayPal email address.</p>
+        """
+        text_body = f"Hello {getattr(seller_user, 'name', 'Freelancer')},\nMilestone payout for contract {contract_id} is blocked because you have no saved PayPal email. Please onboard and save your PayPal email."
+        return self.provider.send_email(
+            to_email=getattr(seller_user, "email", ""),
+            subject=subject,
+            body_text=text_body,
+            body_html=html_body,
+            metadata={"event": "SELLER_PAYPAL_EMAIL_MISSING", "contract_id": contract_id, "user_id": getattr(seller_user, "id", ""), "role": "SELLER"}
+        )
+
     # --- Inspection & Audit Retrieval ---
     def get_contract_notifications(
         self,

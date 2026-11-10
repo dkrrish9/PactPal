@@ -7,6 +7,7 @@ Linked Tasks: C09 / C19 / A2 / A5
 import sqlite3
 import uuid
 import json
+import re
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
@@ -243,6 +244,78 @@ class ContractRepository:
             raise ValueError(f"User with id '{user_id}' not found.")
         self.conn.commit()
         return self.get_user(user_id)
+
+    def update_user_paypal_email(self, user_id: str, paypal_email: str) -> User:
+        """
+        Updates a user's saved PayPal email address (Task C09d).
+        Fulfills Task C09d: 'capture seller PayPal email at onboarding'.
+        Validates email format and ensures user exists.
+        """
+        if not paypal_email or not isinstance(paypal_email, str):
+            raise ValueError("PayPal email is required and must be a non-empty string.")
+        cleaned = paypal_email.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", cleaned):
+            raise ValueError(f"Invalid PayPal email address format: '{paypal_email}'.")
+
+        user = self.get_user(user_id)
+        if not user:
+            raise ValueError(f"User with id '{user_id}' not found.")
+
+        timestamp = now_iso()
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE users SET paypal_email = ?, updated_at = ? WHERE id = ?",
+            (cleaned, timestamp, user_id)
+        )
+        self.conn.commit()
+        return self.get_user(user_id)
+
+    def onboard_seller(
+        self,
+        user_id: str,
+        paypal_email: str,
+        name: Optional[str] = None
+    ) -> User:
+        """
+        Onboards a user as a SELLER with their saved PayPal payout email (Task C09d).
+        Fulfills Task C09d Done When: 'Seller can't be paid out without a saved PayPal email'.
+        Sets user role to SELLER and stores validated paypal_email.
+        """
+        if not paypal_email or not isinstance(paypal_email, str):
+            raise ValueError("PayPal email is required for seller onboarding.")
+        cleaned = paypal_email.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", cleaned):
+            raise ValueError(f"Invalid PayPal email address format: '{paypal_email}'.")
+
+        user = self.get_user(user_id)
+        if not user:
+            raise ValueError(f"User with id '{user_id}' not found.")
+
+        timestamp = now_iso()
+        cursor = self.conn.cursor()
+        if name and name.strip():
+            cursor.execute(
+                "UPDATE users SET role = ?, paypal_email = ?, name = ?, updated_at = ? WHERE id = ?",
+                (UserRole.SELLER.value, cleaned, name.strip(), timestamp, user_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE users SET role = ?, paypal_email = ?, updated_at = ? WHERE id = ?",
+                (UserRole.SELLER.value, cleaned, timestamp, user_id)
+            )
+        self.conn.commit()
+        return self.get_user(user_id)
+
+    def get_seller_payout_email(self, seller_id: str) -> Optional[str]:
+        """
+        Retrieves the saved PayPal payout email for a seller (Task C09d).
+        Returns None if user does not exist or has no saved PayPal email.
+        """
+        user = self.get_user(seller_id)
+        if not user or not user.paypal_email:
+            return None
+        cleaned = user.paypal_email.strip()
+        return cleaned if cleaned else None
 
     def get_contracts_for_user(self, user: User) -> List[Dict[str, Any]]:
         """

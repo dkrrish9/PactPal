@@ -22,8 +22,11 @@ from .roles import (
     AuthError,
     UnauthorizedRoleError,
     ForbiddenActionError,
+    MissingSellerPayPalEmailError,
     assert_can_access_contract,
     assert_contract_participant,
+    assert_can_update_paypal_email,
+    assert_seller_payout_eligible,
 )
 
 
@@ -296,6 +299,35 @@ class SupabaseAuthService:
         Fulfills Task C09b: 'role selection and role-based route protection'.
         """
         return self.repo.update_user_role(user_id=user_id, role=new_role)
+
+    def onboard_seller(
+        self,
+        user_id: str,
+        paypal_email: str,
+        actor: Optional[User] = None,
+        name: Optional[str] = None
+    ) -> User:
+        """
+        Onboards a user as a seller by capturing and saving their PayPal payout email (Task C09d).
+        Fulfills Task C09d: 'capture seller PayPal email at onboarding'.
+        Enforces Done When criteria: 'Seller can't be paid out without a saved PayPal email'.
+        """
+        if actor is not None:
+            assert_can_update_paypal_email(actor, user_id)
+        return self.repo.onboard_seller(user_id=user_id, paypal_email=paypal_email, name=name)
+
+    def update_seller_paypal_email(
+        self,
+        user_id: str,
+        paypal_email: str,
+        actor: Optional[User] = None
+    ) -> User:
+        """
+        Updates an existing seller's saved PayPal email (Task C09d).
+        """
+        if actor is not None:
+            assert_can_update_paypal_email(actor, user_id)
+        return self.repo.update_user_paypal_email(user_id=user_id, paypal_email=paypal_email)
 
     def get_contracts_for_user(self, user: User) -> List[Dict[str, Any]]:
         """

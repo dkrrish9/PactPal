@@ -319,6 +319,66 @@ class TestSupabaseAuth(unittest.TestCase):
             self.auth_service.get_contract(user=buyer_charlie, contract_id=contract_alice["id"])
         self.assertIn("not authorized to access contract", str(ctx.exception))
 
+    # =========================================================================
+    # Task C09d: Seller Onboarding & PayPal Email Capture
+    # =========================================================================
+
+    def test_c09d_onboard_seller_saves_paypal_email(self):
+        """Task C09d: Captures seller PayPal email at onboarding and sets role to SELLER."""
+        token = generate_mock_supabase_token(
+            sub="user-seller-first-time",
+            email="seller@example.com",
+            name="Sam Seller",
+            secret=self.jwt_secret
+        )
+        user = self.auth_service.authenticate_token(token)
+        self.assertEqual(user.role, UserRole.BUYER)
+        self.assertIsNone(user.paypal_email)
+
+        # Onboard as seller with PayPal email
+        onboarded_user = self.auth_service.onboard_seller(
+            user_id=user.id,
+            paypal_email="sam.seller.paypal@example.com",
+            actor=user
+        )
+        self.assertEqual(onboarded_user.role, UserRole.SELLER)
+        self.assertEqual(onboarded_user.paypal_email, "sam.seller.paypal@example.com")
+
+        # Verify persisted in database
+        db_user = self.repo.get_user(user.id)
+        self.assertEqual(db_user.role, UserRole.SELLER)
+        self.assertEqual(db_user.paypal_email, "sam.seller.paypal@example.com")
+
+    def test_c09d_seller_paypal_email_rbac(self):
+        """User can update own PayPal email; Admin can update; other user is rejected."""
+        user = self.repo.create_user(name="Dave", email="dave@example.com", role=UserRole.SELLER)
+        admin = self.repo.create_user(name="Admin", email="admin@example.com", role=UserRole.ADMIN)
+        stranger = self.repo.create_user(name="Eve", email="eve@example.com", role=UserRole.BUYER)
+
+        # Self update
+        u1 = self.auth_service.update_seller_paypal_email(
+            user_id=user.id,
+            paypal_email="dave.payout@example.com",
+            actor=user
+        )
+        self.assertEqual(u1.paypal_email, "dave.payout@example.com")
+
+        # Admin update
+        u2 = self.auth_service.update_seller_paypal_email(
+            user_id=user.id,
+            paypal_email="dave.admin.override@example.com",
+            actor=admin
+        )
+        self.assertEqual(u2.paypal_email, "dave.admin.override@example.com")
+
+        # Stranger forbidden
+        with self.assertRaises(ForbiddenActionError):
+            self.auth_service.update_seller_paypal_email(
+                user_id=user.id,
+                paypal_email="eve.hacked@example.com",
+                actor=stranger
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
