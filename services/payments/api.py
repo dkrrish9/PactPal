@@ -30,12 +30,19 @@ from .service import (
     WebhookVerificationError,
     ProportionalSplitResult,
     SettlementSummary,
+    ProofOfWorkReceipt,
+    canonicalize_proof_of_work_summary,
+    generate_proof_of_work_hash,
+    verify_receipt_hash,
+    assert_can_view_receipt,
     assert_can_view_split_preview,
     assert_can_view_settlement_summary
 )
 
 HOLD_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/hold/?$")
 SETTLEMENT_SUMMARY_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/settlement-summary/?$")
+RECEIPT_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/receipt/?$")
+VERIFY_RECEIPT_REGEX = re.compile(r"^/api/v1/payments/(?:receipts/verify|verify-receipt)/?$")
 SPLIT_PREVIEW_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/split-preview/?$")
 SPLIT_PREVIEW_PAYMENTS_REGEX = re.compile(r"^/api/v1/payments/split-preview/?$")
 APPROVAL_CHECK_REGEX = re.compile(r"^/api/v1/payments/approval-check/?$")
@@ -114,6 +121,20 @@ class PaymentsAPIHandler:
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on settlement-summary endpoint."})
             contract_id = match_settlement_summary.group(1)
             return self._handle_get_settlement_summary(contract_id, headers)
+
+        # 3. GET /api/v1/contracts/{id}/receipt (C44 Milestone 3)
+        match_receipt = RECEIPT_ENDPOINT_REGEX.match(clean_path)
+        if match_receipt:
+            if method != "GET":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on receipt endpoint."})
+            contract_id = match_receipt.group(1)
+            return self._handle_get_receipt(contract_id, headers)
+
+        # 4. POST /api/v1/payments/receipts/verify (C44 Milestone 3)
+        if VERIFY_RECEIPT_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on verify-receipt endpoint."})
+            return self._handle_verify_receipt(headers, body)
 
         # 2. GET or POST /api/v1/contracts/{id}/split-preview (C37 Milestone 3)
         match_split_preview = SPLIT_PREVIEW_CONTRACT_REGEX.match(clean_path)
@@ -227,6 +248,78 @@ class PaymentsAPIHandler:
             return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_get_receipt(
+        self,
+        contract_id: str,
+        headers: Dict[str, str]
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for GET /api/v1/contracts/{id}/receipt (Commit C44).
+        Retrieves the cryptographic proof-of-work quality receipt, verification metrics,
+        and validation status (is_valid: bool).
+        RBAC: Contract Buyer, Seller, Platform Admin, or AI Referee.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        try:
+            receipt = self.service.get_contract_receipt(contract_id=contract_id, actor=actor)
+            return self._json_response(200, receipt)
+        except ValueError as e:
+            if "not found" in str(e).lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except StateValidationError as e:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_verify_receipt(
+        self,
+        headers: Dict[str, str],
+        body: Optional[bytes]
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/receipts/verify (Commit C44).
+        Verifies if a proof-of-work receipt payload matches the claimed SHA-256 digest.
+        """
+        if not body:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "Missing request body."})
+
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except Exception as e:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": f"Malformed JSON body: {str(e)}"})
+
+        receipt_payload = payload.get("receipt_payload") or payload.get("summary") or payload.get("evidence_payload")
+        receipt_hash = payload.get("receipt_hash")
+
+        if not receipt_payload or not receipt_hash:
+            return self._json_response(
+                400,
+                {"error": "BAD_REQUEST", "message": "Fields 'receipt_payload' (or 'summary') and 'receipt_hash' are required."}
+            )
+
+        is_valid = self.service.verify_receipt_hash(receipt_payload, receipt_hash)
+        try:
+            norm_payload = receipt_payload if isinstance(receipt_payload, dict) else json.loads(receipt_payload)
+            recomputed = generate_proof_of_work_hash(norm_payload)
+        except Exception:
+            recomputed = ""
+
+        return self._json_response(200, {
+            "is_valid": is_valid,
+            "status": "VERIFIED" if is_valid else "TAMPERED",
+            "receipt_hash": receipt_hash,
+            "recomputed_hash": recomputed
+        })
 
     def _handle_contract_split_preview(
         self,

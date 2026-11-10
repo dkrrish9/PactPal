@@ -258,13 +258,30 @@ class PayPalClient:
         amount: float,
         currency: str = "USD",
         is_final_capture: bool = True,
-        idempotency_key: Optional[str] = None
+        idempotency_key: Optional[str] = None,
+        note_to_payer: Optional[str] = None,
+        custom_id: Optional[str] = None,
+        invoice_id: Optional[str] = None,
+        receipt_hash: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Captures an authorized payment by authorization ID.
+        Captures an authorized payment by authorization ID (C24, C44).
         Endpoint: POST /v2/payments/authorizations/{authorization_id}/capture
+        Attaches cryptographic receipt reference in note_to_payer and custom_id.
         """
         url = f"{self.base_url}/v2/payments/authorizations/{authorization_id}/capture"
+
+        resolved_note = note_to_payer
+        if not resolved_note:
+            if receipt_hash:
+                resolved_note = f"PactPal Release [Receipt: {receipt_hash[:16]}]"
+            else:
+                resolved_note = "PactPal Milestone Release"
+
+        resolved_custom_id = custom_id
+        if not resolved_custom_id and receipt_hash:
+            resolved_custom_id = receipt_hash[:127]
+
         payload = {
             "amount": {
                 "currency_code": currency,
@@ -272,8 +289,13 @@ class PayPalClient:
             },
             "is_final_capture": is_final_capture,
             "final_capture": is_final_capture,
-            "note_to_payer": "PactPal Milestone Release"
+            "note_to_payer": resolved_note
         }
+        if resolved_custom_id:
+            payload["custom_id"] = resolved_custom_id
+        if invoice_id:
+            payload["invoice_id"] = invoice_id
+
         data = self._send_authorized_request(
             url,
             data=json.dumps(payload).encode(),
@@ -287,6 +309,8 @@ class PayPalClient:
             "amount": data.get("amount", {}).get("value", f"{amount:.2f}"),
             "currency": data.get("amount", {}).get("currency_code", currency),
             "final_capture": data.get("final_capture", is_final_capture),
+            "note_to_payer": resolved_note,
+            "custom_id": resolved_custom_id,
             "raw_response": data
         }
 
@@ -322,15 +346,25 @@ class PayPalClient:
         currency: str = "USD",
         note: str = "PactPal Milestone Release",
         sender_batch_id: Optional[str] = None,
-        idempotency_key: Optional[str] = None
+        idempotency_key: Optional[str] = None,
+        receipt_hash: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Disburses funds to the seller's PayPal account via PayPal Payouts API.
+        Disburses funds to the seller's PayPal account via PayPal Payouts API (C24, C44).
         Endpoint: POST /v1/payments/payouts
+        Attaches cryptographic receipt reference in payout item note and sender_item_id.
         """
         url = f"{self.base_url}/v1/payments/payouts"
         batch_id = sender_batch_id or f"pactpal_payout_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-        item_id = f"pactpal_item_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+
+        resolved_note = note
+        if receipt_hash and f"[Receipt: {receipt_hash[:16]}]" not in resolved_note:
+            if resolved_note == "PactPal Milestone Release":
+                resolved_note = f"PactPal Release [Receipt: {receipt_hash[:16]}]"
+            else:
+                resolved_note = f"{resolved_note} [Receipt: {receipt_hash[:16]}]"
+
+        item_id = f"pactpal_item_{receipt_hash[:8] if receipt_hash else int(time.time())}_{uuid.uuid4().hex[:6]}"
         payload = {
             "sender_batch_header": {
                 "sender_batch_id": batch_id,
@@ -344,7 +378,7 @@ class PayPalClient:
                     "currency": currency
                 },
                 "receiver": receiver_email,
-                "note": note,
+                "note": resolved_note,
                 "sender_item_id": item_id
             }]
         }
@@ -363,6 +397,8 @@ class PayPalClient:
             "amount": f"{amount:.2f}",
             "currency": currency,
             "receiver": receiver_email,
+            "note": resolved_note,
+            "receipt_hash": receipt_hash,
             "raw_response": data
         }
 

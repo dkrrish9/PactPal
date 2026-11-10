@@ -545,6 +545,21 @@ class ContractRepository:
                 pass
         return rec
 
+    def get_receipt_by_hash(self, receipt_hash: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a receipt record by its unique cryptographic receipt hash."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM receipts WHERE receipt_hash = ? LIMIT 1", (receipt_hash,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        rec = dict(row)
+        if isinstance(rec.get("evidence_payload"), str):
+            try:
+                rec["evidence_payload"] = json.loads(rec["evidence_payload"])
+            except Exception:
+                pass
+        return rec
+
     # --- Idempotency Key Storage (C28) ---
     def get_idempotency_key(self, key: str, scope: str = "default") -> Optional[Dict[str, Any]]:
         """Retrieves a previously cached response by idempotency key and scope."""
@@ -663,6 +678,23 @@ class ContractRepository:
                     rec[field_name] = {} if field_name != "cheat_scan_findings" else []
 
         return rec
+
+    def get_submission(self, submission_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a deliverable submission by primary ID."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM submissions WHERE id = ? LIMIT 1", (submission_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_latest_submission(self, contract_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves the latest deliverable submission for a contract."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM submissions WHERE contract_id = ? ORDER BY submitted_at DESC LIMIT 1",
+            (contract_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
     def close(self):
         self.conn.close()

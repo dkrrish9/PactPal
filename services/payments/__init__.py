@@ -8,7 +8,12 @@ from .service import (
     EscrowPaymentService,
     PaymentApprovalService,
     PaymentApprovalError,
-    ApprovalVerdict
+    ApprovalVerdict,
+    ProofOfWorkReceipt,
+    canonicalize_proof_of_work_summary,
+    generate_proof_of_work_hash,
+    verify_receipt_hash,
+    assert_can_view_receipt
 )
 from .api import PaymentsAPIHandler, create_payments_app
 
@@ -19,6 +24,11 @@ __all__ = [
     "PaymentApprovalService",
     "PaymentApprovalError",
     "ApprovalVerdict",
+    "ProofOfWorkReceipt",
+    "canonicalize_proof_of_work_summary",
+    "generate_proof_of_work_hash",
+    "verify_receipt_hash",
+    "assert_can_view_receipt",
     "PaymentsAPIHandler",
     "create_payments_app"
 ]

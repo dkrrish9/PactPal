@@ -77,3 +77,16 @@ def assert_can_fund_contract(actor: User, contract: Dict[str, Any]) -> None:
             f"User '{actor.id}' is not the buyer for contract '{contract.get('id')}'. Assigned buyer is '{contract.get('buyer_id')}'."
         )
 
+def assert_can_view_receipt(actor: User, contract: Dict[str, Any]) -> None:
+    """Only participant BUYER, SELLER, platform ADMIN, or AI Referee can inspect contract receipt (Commit C44)."""
+    if actor.role == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee" or getattr(actor, "role", None) == "AI_REFEREE":
+        return
+    if actor.id != contract.get("buyer_id") and actor.id != contract.get("seller_id"):
+        raise ForbiddenActionError(
+            f"User '{actor.id}' with role '{actor.role.value}' is not authorized to view receipt for contract '{contract.get('id')}'. "
+            f"Access restricted to contract buyer, seller, admin, or AI referee."
+        )
+
+
