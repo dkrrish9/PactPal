@@ -162,7 +162,8 @@ class VerificationPipelineRunner:
                     build_logs=combined_logs,
                     failure_reason=failure_reason,
                     features=features,
-                    ai_diagnostic=diagnostic
+                    ai_diagnostic=diagnostic,
+                    container_hardening=ws.get_hardening_profile()
                 )
 
             # 4. Stage C: Automated Tests & Per-Feature Mapping (C23 Done Criteria)
@@ -211,7 +212,7 @@ class VerificationPipelineRunner:
                         "ready_for_figma_diff": False
                     }
 
-            # 7. Merge all stages into unified multi-modal report (C32 Done Criteria)
+            # 7. Merge all stages into unified multi-modal report (C32 & C43 Done Criteria)
             report = self.report_assembler.assemble_report(
                 submission=submission,
                 repo_dir=clone_dest,
@@ -221,7 +222,8 @@ class VerificationPipelineRunner:
                 cheat_scan_report=cheat_scan_report,
                 visual_diff_summary=visual_diff_summary,
                 features=features,
-                render_job_id=f"job_{submission.id[:8]}"
+                render_job_id=f"job_{submission.id[:8]}",
+                container_hardening=ws.get_hardening_profile()
             )
 
             # 8. Post GitHub Comment / Feedback Notification to Seller on Repo (C36 Done Criteria)
