@@ -78,6 +78,8 @@ class TestHoldExpiryAndCountdown(unittest.TestCase):
         # Advance DRAFT -> REVIEW -> SIGNED -> FUNDED
         self.repo.transition_contract(cid, self.buyer, ContractState.REVIEW)
         self.repo.transition_contract(cid, self.seller, ContractState.SIGNED, metadata={"acceptance_confirmed": True})
+        self.repo.confirm_checklist(cid, self.buyer)
+        self.repo.confirm_checklist(cid, self.seller)
 
         auth_meta = {
             "paypal_order_id": "ORDER_PP_123456",
@@ -430,6 +432,8 @@ class TestHoldExpiryAndCountdown(unittest.TestCase):
         cid = contract["id"]
         self.repo.transition_contract(cid, self.buyer, ContractState.REVIEW)
         self.repo.transition_contract(cid, self.seller, ContractState.SIGNED, metadata={"acceptance_confirmed": True})
+        self.repo.confirm_checklist(cid, self.buyer)
+        self.repo.confirm_checklist(cid, self.seller)
 
         try:
             import os

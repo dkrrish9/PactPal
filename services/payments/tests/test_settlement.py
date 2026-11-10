@@ -82,14 +82,28 @@ class TestEscrowSettlement(unittest.TestCase):
             deadline=(datetime.now(timezone.utc) + timedelta(days=21)).isoformat()
         )
         cid = contract["id"]
+        # Dual confirmation to lock checklist
+        self.repo.confirm_checklist(cid, self.buyer)
+        self.repo.confirm_checklist(cid, self.seller)
+
         self.repo.transition_contract(cid, self.buyer, ContractState.REVIEW)
         self.repo.transition_contract(cid, self.seller, ContractState.SIGNED, metadata={"acceptance_confirmed": True})
-        return self.repo.transition_contract(
+        funded = self.repo.transition_contract(
             cid,
             self.buyer,
             ContractState.FUNDED,
             metadata={"paypal_order_id": "ORDER_PP_112233", "paypal_auth_id": auth_id}
         )
+        # Attach verified deliverable report (Commit C31 gate)
+        self.repo.save_verification_report(
+            contract_id=cid,
+            build_succeeded=True,
+            test_suite_results={"passed": True},
+            cheat_scan_findings=[],
+            per_feature_results={},
+            overall_score=1.0
+        )
+        return funded
 
     # -------------------------------------------------------------------------
     # Scenario A: 100% Full Payout

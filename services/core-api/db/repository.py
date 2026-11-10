@@ -116,6 +116,33 @@ class ContractRepository:
             created_at TEXT NOT NULL,
             PRIMARY KEY (key, scope)
         );
+
+        CREATE TABLE IF NOT EXISTS submissions (
+            id TEXT PRIMARY KEY,
+            contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+            seller_id TEXT REFERENCES users(id) ON DELETE RESTRICT,
+            repo_url TEXT NOT NULL DEFAULT '',
+            commit_sha TEXT NOT NULL DEFAULT '',
+            build_notes TEXT,
+            submission_number INTEGER NOT NULL DEFAULT 1 CHECK(submission_number BETWEEN 1 AND 3),
+            is_late INTEGER NOT NULL DEFAULT 0,
+            submitted_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS verification_reports (
+            id TEXT PRIMARY KEY,
+            submission_id TEXT UNIQUE REFERENCES submissions(id) ON DELETE CASCADE,
+            contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+            render_job_id TEXT,
+            build_succeeded INTEGER NOT NULL DEFAULT 0,
+            build_logs TEXT,
+            test_suite_results TEXT NOT NULL,
+            cheat_scan_findings TEXT NOT NULL,
+            visual_diff_summary TEXT NOT NULL,
+            per_feature_results TEXT NOT NULL,
+            overall_score REAL,
+            completed_at TEXT NOT NULL
+        );
         """)
         self.conn.commit()
 
@@ -440,6 +467,93 @@ class ContractRepository:
             VALUES (?, ?, ?, ?, ?)
         """, (key, scope, meta_str, status_code, timestamp))
         self.conn.commit()
+
+    # --- Verification Reports & Deliverable Evidence (C31) ---
+    def save_verification_report(
+        self,
+        contract_id: str,
+        submission_id: Optional[str] = None,
+        report_id: Optional[str] = None,
+        render_job_id: Optional[str] = None,
+        build_succeeded: bool = True,
+        build_logs: str = "",
+        test_suite_results: Optional[Any] = None,
+        cheat_scan_findings: Optional[Any] = None,
+        visual_diff_summary: Optional[Any] = None,
+        per_feature_results: Optional[Any] = None,
+        overall_score: Optional[float] = 1.0,
+        completed_at: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Persists a multi-modal verification report matching core schema.
+        Ensures foreign key relations with submissions and contracts.
+        """
+        contract = self.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        cursor = self.conn.cursor()
+        sub_id = submission_id
+        timestamp = completed_at or now_iso()
+
+        # Ensure submission parent record exists
+        if not sub_id:
+            sub_id = generate_uuid()
+            cursor.execute("""
+                INSERT INTO submissions (id, contract_id, seller_id, repo_url, commit_sha, build_notes, submitted_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (sub_id, contract_id, contract.get("seller_id"), contract.get("repo_url") or "", "head", "Automated intake", timestamp))
+
+        rep_id = report_id or generate_uuid()
+        tests_json = json.dumps(test_suite_results or {}) if not isinstance(test_suite_results, str) else test_suite_results
+        cheat_json = json.dumps(cheat_scan_findings or []) if not isinstance(cheat_scan_findings, str) else cheat_scan_findings
+        vision_json = json.dumps(visual_diff_summary or {}) if not isinstance(visual_diff_summary, str) else visual_diff_summary
+        features_json = json.dumps(per_feature_results or {}) if not isinstance(per_feature_results, str) else per_feature_results
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO verification_reports (
+                id, submission_id, contract_id, render_job_id, build_succeeded,
+                build_logs, test_suite_results, cheat_scan_findings, visual_diff_summary,
+                per_feature_results, overall_score, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            rep_id, sub_id, contract_id, render_job_id or f"job_{rep_id[:8]}",
+            1 if build_succeeded else 0, build_logs, tests_json, cheat_json,
+            vision_json, features_json, overall_score, timestamp
+        ))
+        self.conn.commit()
+
+        return self.get_latest_verification_report(contract_id) or {
+            "id": rep_id,
+            "contract_id": contract_id,
+            "submission_id": sub_id,
+            "build_succeeded": bool(build_succeeded),
+            "completed_at": timestamp
+        }
+
+    def get_latest_verification_report(self, contract_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves the latest completed verification report for a contract."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM verification_reports WHERE contract_id = ? ORDER BY completed_at DESC LIMIT 1",
+            (contract_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        rec = dict(row)
+        rec["build_succeeded"] = bool(rec.get("build_succeeded", 0))
+
+        # Parse JSON fields
+        for field_name in ("test_suite_results", "cheat_scan_findings", "visual_diff_summary", "per_feature_results"):
+            raw_val = rec.get(field_name)
+            if isinstance(raw_val, str):
+                try:
+                    rec[field_name] = json.loads(raw_val)
+                except Exception:
+                    rec[field_name] = {} if field_name != "cheat_scan_findings" else []
+
+        return rec
 
     def close(self):
         self.conn.close()
