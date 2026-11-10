@@ -16,8 +16,17 @@ from .service import (
     assert_can_view_receipt,
     assert_can_apply_incremental_hold,
     assert_can_trigger_deadline_watcher,
+    assert_can_view_notifications,
+    assert_can_dispatch_notification,
     DeadlineWatcherService,
-    SweepResult
+    SweepResult,
+    EmailNotificationService,
+    InMemoryEmailProvider,
+    SMTPEmailProvider,
+    SendGridEmailProvider,
+    get_email_provider,
+    NotificationRecipient,
+    NotificationMessage
 )
 from .api import PaymentsAPIHandler, create_payments_app
 
@@ -35,8 +44,17 @@ __all__ = [
     "assert_can_view_receipt",
     "assert_can_apply_incremental_hold",
     "assert_can_trigger_deadline_watcher",
+    "assert_can_view_notifications",
+    "assert_can_dispatch_notification",
     "DeadlineWatcherService",
     "SweepResult",
+    "EmailNotificationService",
+    "InMemoryEmailProvider",
+    "SMTPEmailProvider",
+    "SendGridEmailProvider",
+    "get_email_provider",
+    "NotificationRecipient",
+    "NotificationMessage",
     "PaymentsAPIHandler",
     "create_payments_app"
 ]

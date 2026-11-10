@@ -39,8 +39,15 @@ from .service import (
     assert_can_view_settlement_summary,
     assert_can_apply_incremental_hold,
     assert_can_trigger_deadline_watcher,
+    assert_can_view_notifications,
+    assert_can_dispatch_notification,
     DeadlineWatcherService,
-    SweepResult
+    SweepResult,
+    EmailNotificationService,
+    InMemoryEmailProvider,
+    SMTPEmailProvider,
+    SendGridEmailProvider,
+    get_email_provider
 )
 
 HOLD_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/hold/?$")
@@ -59,6 +66,9 @@ DEADLINE_SWEEP_REGEX = re.compile(r"^/api/v1/payments/deadline-watcher/sweep/?$"
 SIMULATE_DEADLINE_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/simulate-deadline/?$")
 SETTLE_REGEX = re.compile(r"^/api/v1/payments/settle/?$")
 WEBHOOK_REGEX = re.compile(r"^/api/v1/payments/webhooks(?:/paypal)?/?$")
+NOTIFICATIONS_DISPATCH_REGEX = re.compile(r"^/api/v1/payments/notifications/dispatch/?$")
+CONTRACT_NOTIFICATIONS_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/notifications/?$")
+CONTRACT_NOTIFICATIONS_DISPATCH_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/notifications/dispatch/?$")
 
 class PaymentsAPIHandler:
     """
@@ -69,10 +79,20 @@ class PaymentsAPIHandler:
     def __init__(
         self,
         service: Optional[EscrowPaymentService] = None,
-        deadline_watcher: Optional[DeadlineWatcherService] = None
+        deadline_watcher: Optional[DeadlineWatcherService] = None,
+        notification_service: Optional[EmailNotificationService] = None
     ):
         self.service = service or EscrowPaymentService()
         self.repository = self.service.repository
+        self.deadline_watcher = deadline_watcher or DeadlineWatcherService(
+            repository=self.repository,
+            payment_service=self.service
+        )
+        self.notification_service = (
+            notification_service
+            or getattr(self.service, "notification_service", None)
+            or EmailNotificationService(repository=self.repository)
+        )
         self.deadline_watcher = deadline_watcher or DeadlineWatcherService(
             repository=self.repository,
             payment_service=self.service
@@ -231,6 +251,31 @@ class PaymentsAPIHandler:
             if method != "POST":
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on webhooks."})
             return self._handle_webhook(headers, body)
+
+        # 9. POST /api/v1/payments/notifications/dispatch (Commit C51)
+        if NOTIFICATIONS_DISPATCH_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on notifications dispatch endpoint."})
+            return self._handle_dispatch_notification(headers, body)
+
+        # 10. POST /api/v1/contracts/{id}/notifications/dispatch (Commit C51)
+        match_notif_disp = CONTRACT_NOTIFICATIONS_DISPATCH_REGEX.match(clean_path)
+        if match_notif_disp:
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on contract notifications dispatch endpoint."})
+            contract_id = match_notif_disp.group(1)
+            return self._handle_dispatch_notification(headers, body, contract_id=contract_id)
+
+        # 11. GET or POST /api/v1/contracts/{id}/notifications (Commit C51)
+        match_notif = CONTRACT_NOTIFICATIONS_REGEX.match(clean_path)
+        if match_notif:
+            contract_id = match_notif.group(1)
+            if method == "GET":
+                return self._handle_get_contract_notifications(contract_id, headers)
+            elif method == "POST":
+                return self._handle_dispatch_notification(headers, body, contract_id=contract_id)
+            else:
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on contract notifications endpoint."})
 
         return self._json_response(404, {"error": "NOT_FOUND", "message": f"Endpoint '{clean_path}' not found in Payments API."})
 
@@ -866,6 +911,105 @@ class PaymentsAPIHandler:
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
 
+    def _handle_dispatch_notification(
+        self,
+        headers: Dict[str, str],
+        body: Optional[bytes],
+        contract_id: Optional[str] = None
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/notifications/dispatch (Commit C51).
+        Dispatches role-tailored email notifications for contract milestone transitions.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        data = {}
+        if body:
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except Exception as e:
+                return self._json_response(400, {"error": "BAD_REQUEST", "message": f"Malformed JSON: {str(e)}"})
+
+        cid = contract_id or data.get("contract_id")
+        if not cid:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "Missing required field 'contract_id'."})
+
+        state = data.get("state") or data.get("state_transition") or data.get("status")
+        if not state:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "Missing required field 'state'."})
+
+        contract = self.repository.get_contract(cid)
+        if not contract:
+            return self._json_response(404, {"error": "NOT_FOUND", "message": f"Contract '{cid}' not found."})
+
+        try:
+            assert_can_dispatch_notification(actor, contract)
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+
+        metadata = data.get("metadata") or {}
+
+        try:
+            dispatched = self.notification_service.notify_state_change(
+                contract_id=cid,
+                new_state=state,
+                metadata=metadata,
+                actor=actor,
+                force=True
+            )
+            canonical = self.notification_service.normalize_state(state) or state
+            return self._json_response(200, {
+                "status": "SUCCESS",
+                "contract_id": cid,
+                "state": canonical,
+                "notifications_sent": len(dispatched),
+                "dispatched": dispatched
+            })
+        except ValueError as e:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_get_contract_notifications(
+        self,
+        contract_id: str,
+        headers: Dict[str, str]
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for GET /api/v1/contracts/{id}/notifications (Commit C51).
+        Retrieves notification audit logs for a contract.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        contract = self.repository.get_contract(contract_id)
+        if not contract:
+            return self._json_response(404, {"error": "NOT_FOUND", "message": f"Contract '{contract_id}' not found."})
+
+        try:
+            assert_can_view_notifications(actor, contract)
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+
+        try:
+            notifications = self.notification_service.get_contract_notifications(contract_id, actor=actor)
+            return self._json_response(200, {
+                "contract_id": contract_id,
+                "total_notifications": len(notifications),
+                "notifications": notifications
+            })
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
     def _json_response(self, status_code: int, data: Dict[str, Any]) -> Tuple[int, Dict[str, str], bytes]:
         body_bytes = json.dumps(data, indent=2).encode("utf-8")
         resp_headers = {
@@ -880,13 +1024,18 @@ class PaymentsAPIHandler:
 
 def create_payments_app(
     service: Optional[EscrowPaymentService] = None,
-    deadline_watcher: Optional[DeadlineWatcherService] = None
+    deadline_watcher: Optional[DeadlineWatcherService] = None,
+    notification_service: Optional[EmailNotificationService] = None
 ):
     """
     Creates a standard WSGI application for the Payments API.
     Compatible with gunicorn, uwsgi, or Python wsgiref.
     """
-    handler = PaymentsAPIHandler(service=service, deadline_watcher=deadline_watcher)
+    handler = PaymentsAPIHandler(
+        service=service,
+        deadline_watcher=deadline_watcher,
+        notification_service=notification_service
+    )
 
     def application(environ, start_response):
         method = environ.get("REQUEST_METHOD", "GET")

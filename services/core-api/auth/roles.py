@@ -132,4 +132,41 @@ def assert_can_trigger_deadline_watcher(actor: User) -> None:
     )
 
 
+def assert_can_view_notifications(actor: User, contract: Dict[str, Any]) -> None:
+    """
+    Only participant BUYER, SELLER, platform ADMIN, or AI Referee can inspect contract notifications (Commit C51).
+    """
+    if actor.role == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or getattr(actor, "role", None) == "AI_REFEREE":
+        return
+    if actor.id != contract.get("buyer_id") and actor.id != contract.get("seller_id"):
+        raise ForbiddenActionError(
+            f"User '{actor.id}' with role '{actor.role.value}' is not authorized to view notifications for contract '{contract.get('id')}'. "
+            f"Access restricted to contract buyer, seller, admin, or AI referee."
+        )
+
+
+def assert_can_dispatch_notification(actor: User, contract: Dict[str, Any]) -> None:
+    """
+    Enforces permission to manually dispatch contract email notifications (Commit C51).
+    Allowed actors:
+    - Contract BUYER
+    - Contract SELLER
+    - Platform ADMIN
+    - AI Referee agent
+    """
+    if actor.role == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or getattr(actor, "role", None) == "AI_REFEREE":
+        return
+    if actor.id == contract.get("buyer_id") or actor.id == contract.get("seller_id"):
+        return
+    raise ForbiddenActionError(
+        f"User '{actor.id}' with role '{actor.role.value}' is not authorized to dispatch notifications for contract '{contract.get('id')}'. "
+        f"Access restricted to contract buyer, seller, admin, or AI referee."
+    )
+
+
+
 
