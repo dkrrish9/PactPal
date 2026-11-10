@@ -18,6 +18,7 @@ from .ai_evaluator import AIIntakeEvaluator
 from .test_runner import StageCTestSuiteProcessor
 from .screenshot_capture import HeadlessScreenshotCapture, BrowserNotFoundError
 from .visual_diff import VisualDiffEngine, DEFAULT_SIMILARITY_THRESHOLD
+from .cheat_scanner import CheatScanner
 
 class VerificationPipelineRunner:
     """Executes the verification pipeline across Stages A through F."""
@@ -26,10 +27,12 @@ class VerificationPipelineRunner:
         self,
         ai_evaluator: Optional[AIIntakeEvaluator] = None,
         figma_reference_dir: Optional[Path] = None,
-        visual_diff_threshold: float = DEFAULT_SIMILARITY_THRESHOLD
+        visual_diff_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+        cheat_scanner: Optional[CheatScanner] = None
     ):
         self.ai = ai_evaluator or AIIntakeEvaluator()
         self.stage_c = StageCTestSuiteProcessor(ai_evaluator=self.ai)
+        self.cheat_scanner = cheat_scanner or CheatScanner(ai_evaluator=self.ai)
         self.visual_diff_engine = VisualDiffEngine(similarity_threshold=visual_diff_threshold, ai_evaluator=self.ai)
         self.figma_dir = figma_reference_dir or (Path(__file__).resolve().parents[3] / "demo-assets" / "figma")
 
@@ -122,7 +125,11 @@ class VerificationPipelineRunner:
                 features=features
             )
 
-            # 5. Stage E: Headless Screenshots & Visual Diff against Figma (C26 & C30 Done Criteria)
+            # 5. Stage D: Cheat & Loophole Scan (C27 Done Criteria)
+            cheat_scan_report = self.cheat_scanner.scan_repository(clone_dest)
+            cheat_scan_findings = cheat_scan_report.get("findings", [])
+
+            # 6. Stage E: Headless Screenshots & Visual Diff against Figma (C26 & C30 Done Criteria)
             visual_diff_summary = {"status": "PENDING_STAGE_E"}
             if capture_screenshots:
                 evidence_dir = ws.workspace_path / "evidence" / "screenshots"
@@ -165,7 +172,7 @@ class VerificationPipelineRunner:
                 build_succeeded=True,
                 build_logs=combined_logs,
                 test_suite_results=test_suite_results,
-                cheat_scan_findings=[],
+                cheat_scan_findings=cheat_scan_findings,
                 visual_diff_summary=visual_diff_summary,
                 per_feature_results=per_feature_results,
                 overall_score=overall_score,
