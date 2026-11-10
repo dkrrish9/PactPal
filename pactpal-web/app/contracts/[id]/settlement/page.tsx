@@ -118,7 +118,8 @@ export default function SettlementSummaryPage() {
               <Share2 size={15} />
               {copied ? "Copied Hash!" : "Share Receipt"}
             </button>
-            <button
+            <Link
+              href={`/contracts/${contractId}/receipt`}
               className="btn-gradient"
               style={{
                 padding: "10px 18px",
@@ -126,11 +127,14 @@ export default function SettlementSummaryPage() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 8,
+                textDecoration: "none",
+                color: "white",
+                fontWeight: 700,
               }}
             >
-              <Download size={15} />
-              Export PDF
-            </button>
+              <FileText size={15} />
+              Official Receipt (C45) →
+            </Link>
           </div>
         </div>
 
