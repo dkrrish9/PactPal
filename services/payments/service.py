@@ -59,6 +59,140 @@ def assert_can_settle_contract(actor: User, contract: Dict[str, Any]) -> None:
             f"Only platform ADMIN or AI Referee can execute escrow settlement."
         )
 
+def assert_can_view_split_preview(actor: User, contract: Dict[str, Any]) -> None:
+    """Only participant BUYER, SELLER, platform ADMIN, or AI Referee can inspect split preview."""
+    if actor.role == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee":
+        return
+    if actor.id != contract.get("buyer_id") and actor.id != contract.get("seller_id"):
+        raise ForbiddenActionError(
+            f"User '{actor.id}' with role '{actor.role.value}' is not authorized to view split preview for contract '{contract.get('id')}'. "
+            f"Access restricted to contract buyer, seller, admin, or AI referee."
+        )
+
+def assert_can_view_settlement_summary(actor: User, contract: Dict[str, Any]) -> None:
+    """Only participant BUYER, SELLER, platform ADMIN, or AI Referee can inspect settlement summary (Commit C41)."""
+    if actor.role == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee" or getattr(actor, "role", None) == "AI_REFEREE":
+        return
+    if actor.id != contract.get("buyer_id") and actor.id != contract.get("seller_id"):
+        raise ForbiddenActionError(
+            f"User '{actor.id}' with role '{actor.role.value}' is not authorized to view settlement summary for contract '{contract.get('id')}'. "
+            f"Access restricted to contract buyer, seller, admin, or AI referee."
+        )
+
+
+class ProportionalSplitResult(dict):
+    """
+    Structured result of proportional split calculation (Commit C37).
+    Inherits from dict for 100% dict compatibility (JSON serialization, dict unpacking),
+    while also providing property/attribute access.
+    """
+    def __init__(
+        self,
+        contract_id: str,
+        total_amount: float,
+        passed_amount: float,
+        refund_amount: float,
+        passed_weight: float,
+        failed_weight: float,
+        currency: str,
+        itemized_features: List[Dict[str, Any]],
+        rounding_adjustment_cents: int,
+        rule_applied: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        **extra
+    ):
+        data = {
+            "contract_id": contract_id,
+            "total_amount": round(float(total_amount), 2),
+            "passed_amount": round(float(passed_amount), 2),
+            "refund_amount": round(float(refund_amount), 2),
+            "passed_weight": round(float(passed_weight), 2),
+            "failed_weight": round(float(failed_weight), 2),
+            "currency": currency,
+            "itemized_features": itemized_features,
+            "rounding_adjustment_cents": int(rounding_adjustment_cents),
+            "rule_applied": rule_applied,
+            "metadata": metadata or {},
+            **extra
+        }
+        super().__init__(data)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(f"'ProportionalSplitResult' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = value
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self)
+
+
+class SettlementSummary(dict):
+    """
+    Structured dual-perspective settlement summary for both parties (Commit C41).
+    Inherits from dict for 100% dict compatibility (JSON serialization, dict unpacking),
+    while also providing property/attribute access.
+    """
+    def __init__(
+        self,
+        contract_id: str,
+        contract_title: str,
+        currency: str,
+        status: str,
+        settled_at: str,
+        receipt_hash: str,
+        rule_applied: str,
+        total_amount: float,
+        passed_amount: float,
+        refund_amount: float,
+        buyer_summary: Dict[str, Any],
+        seller_summary: Dict[str, Any],
+        capture_id: Optional[str] = None,
+        payout_batch_id: Optional[str] = None,
+        refund_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **extra
+    ):
+        data = {
+            "contract_id": contract_id,
+            "contract_title": contract_title,
+            "currency": currency,
+            "status": status,
+            "settled_at": settled_at,
+            "receipt_hash": receipt_hash,
+            "rule_applied": rule_applied,
+            "total_amount": round(float(total_amount), 2),
+            "passed_amount": round(float(passed_amount), 2),
+            "refund_amount": round(float(refund_amount), 2),
+            "capture_id": capture_id,
+            "payout_batch_id": payout_batch_id,
+            "refund_id": refund_id,
+            "buyer_summary": buyer_summary,
+            "seller_summary": seller_summary,
+            "metadata": metadata or {},
+            **extra
+        }
+        super().__init__(data)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(f"'SettlementSummary' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = value
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self)
+
 
 class WebhookVerificationError(Exception):
     """Raised when incoming PayPal webhook transmission signature verification fails."""
@@ -668,13 +802,247 @@ class EscrowPaymentService:
     # Alias for flexibility
     get_hold_expiry = get_contract_hold
 
+    def _resolve_feature_status(
+        self,
+        feature: Dict[str, Any],
+        feature_results: Optional[Any],
+        verification_report: Optional[Dict[str, Any]]
+    ) -> str:
+        """
+        Resolves whether a feature is PASSED or FAILED using:
+          1. Explicit feature_results parameter (if provided).
+          2. Latest verification report per_feature_results (if report exists).
+          3. Underlying feature record status in repository.
+        Any status other than PASSED (e.g. FAILED, PENDING, DISPUTED) is treated as unpassed (FAILED).
+        """
+        feat_id = str(feature.get("id", ""))
+        feat_title = str(feature.get("title", ""))
+
+        # 1. Check explicit feature_results
+        if feature_results is not None:
+            if isinstance(feature_results, dict):
+                # Handle wrapped "per_feature_results"
+                if "per_feature_results" in feature_results and isinstance(feature_results["per_feature_results"], dict):
+                    feature_results = feature_results["per_feature_results"]
+
+                # Handle passed/failed lists
+                if "passed" in feature_results and isinstance(feature_results["passed"], (list, set, tuple)):
+                    passed_ids = {str(x) for x in feature_results["passed"]}
+                    if feat_id in passed_ids or (feat_title and feat_title in passed_ids):
+                        return "PASSED"
+                    return "FAILED"
+
+                target = feature_results.get(feat_id)
+                if target is None and feat_title:
+                    target = feature_results.get(feat_title)
+
+                if target is not None:
+                    if isinstance(target, dict):
+                        st = target.get("status")
+                        return "PASSED" if str(st).upper() == "PASSED" else "FAILED"
+                    elif isinstance(target, bool):
+                        return "PASSED" if target else "FAILED"
+                    return "PASSED" if str(target).upper() == "PASSED" else "FAILED"
+
+            elif isinstance(feature_results, (list, tuple, set)):
+                for item in feature_results:
+                    if isinstance(item, dict):
+                        item_id = str(item.get("id") or item.get("feature_id") or "")
+                        item_title = str(item.get("title") or item.get("feature_title") or "")
+                        if (item_id and item_id == feat_id) or (item_title and item_title == feat_title):
+                            st = item.get("status")
+                            return "PASSED" if str(st).upper() == "PASSED" else "FAILED"
+                    elif isinstance(item, str):
+                        if item == feat_id or (feat_title and item == feat_title):
+                            return "PASSED"
+                return "FAILED"
+
+        # 2. Check verification report if present
+        if verification_report:
+            per_feat = verification_report.get("per_feature_results") or {}
+            if isinstance(per_feat, str):
+                try:
+                    per_feat = json.loads(per_feat)
+                except Exception:
+                    per_feat = {}
+            if isinstance(per_feat, dict):
+                rep_feat = per_feat.get(feat_id)
+                if rep_feat is None and feat_title:
+                    rep_feat = per_feat.get(feat_title)
+                if rep_feat is not None:
+                    if isinstance(rep_feat, dict):
+                        st = rep_feat.get("status")
+                        return "PASSED" if str(st).upper() == "PASSED" else "FAILED"
+                    return "PASSED" if str(rep_feat).upper() == "PASSED" else "FAILED"
+
+        # 3. Fallback to feature database status
+        curr_st = feature.get("status")
+        return "PASSED" if str(curr_st).upper() == "PASSED" else "FAILED"
+
+    def calculate_proportional_split(
+        self,
+        contract_id: str,
+        feature_results: Optional[Any] = None,
+        actor: Optional[User] = None
+    ) -> ProportionalSplitResult:
+        """
+        Calculates proportional escrow split math matching Phase 7 & Commit C37:
+          - Sums weights of features marked PASSED vs FAILED.
+          - Calculates itemized feature allocations based on price_weights.
+          - Deterministic Remainder Rule: Dynamically allocates the rounding delta (+- 0.01)
+            to the last feature (by sort_order / last index) so that sum(allocated_amount) == total_amount
+            exactly to the cent.
+          - Guarantees mathematical invariant: round(passed_amount + refund_amount, 2) == round(total_amount, 2)
+            with zero lost cents under any combination of weights and prices.
+        """
+        contract = self.repository.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        # Permission check if actor is provided
+        if actor is not None:
+            assert_can_view_split_preview(actor, contract)
+
+        total_amount = round(float(contract.get("total_amount", 0.0)), 2)
+        currency = contract.get("currency", "USD")
+
+        features = None
+        if hasattr(self.repository, "get_features"):
+            features = self.repository.get_features(contract_id)
+        if not features and "features" in contract:
+            features = contract["features"]
+        features = features or []
+
+        # Sort features deterministically by sort_order ASC, then by feature ID
+        sorted_features = sorted(
+            features,
+            key=lambda f: (int(f.get("sort_order", 0) if f.get("sort_order") is not None else 0), str(f.get("id", "")))
+        )
+        N = len(sorted_features)
+
+        if N == 0:
+            return ProportionalSplitResult(
+                contract_id=contract_id,
+                total_amount=total_amount,
+                passed_amount=0.0,
+                refund_amount=total_amount,
+                passed_weight=0.0,
+                failed_weight=0.0,
+                currency=currency,
+                itemized_features=[],
+                rounding_adjustment_cents=0,
+                rule_applied="NO_FEATURES_FULL_REFUND",
+                metadata={"contract_title": contract.get("title")}
+            )
+
+        # Resolve verification report if available and feature_results is None
+        verification_report = None
+        if feature_results is None and hasattr(self.repository, "get_latest_verification_report"):
+            verification_report = self.repository.get_latest_verification_report(contract_id)
+
+        # 1. Weights extraction
+        raw_weights = [float(f.get("price_weight", 0.0) or 0.0) for f in sorted_features]
+        sum_weights = sum(raw_weights)
+
+        # 2. Compute unadjusted allocation for each feature
+        unadjusted_amounts: List[float] = []
+        for i, w in enumerate(raw_weights):
+            if sum_weights > 0:
+                # If weights sum close to 100% (e.g. 99.99% from 33.33 x 3) and not exactly 100.0,
+                # normalize against sum_weights so recurring decimals (e.g. 1/3) divide cleanly.
+                if abs(sum_weights - 100.0) < 0.05 and sum_weights != 100.0:
+                    fraction = w / sum_weights
+                elif sum_weights == 100.0:
+                    fraction = w / 100.0
+                else:
+                    fraction = w / sum_weights
+            else:
+                fraction = 1.0 / N
+            unadjusted_amounts.append(round(total_amount * fraction, 2))
+
+        sum_unadjusted = round(sum(unadjusted_amounts), 2)
+        delta = round(total_amount - sum_unadjusted, 2)
+        rounding_adjustment_cents = int(round(delta * 100))
+
+        # 3. Deterministic Remainder Rule: allocate rounding delta (+- 0.01) to the last feature
+        allocated_amounts = list(unadjusted_amounts)
+        allocated_amounts[-1] = round(allocated_amounts[-1] + delta, 2)
+
+        # 4. Resolve feature statuses and build itemized features
+        itemized_features: List[Dict[str, Any]] = []
+        for i, feat in enumerate(sorted_features):
+            st = self._resolve_feature_status(feat, feature_results, verification_report)
+            is_last = (i == N - 1)
+            adj = delta if is_last else 0.0
+            feat_id = feat.get("id") or f"feat_{i+1}"
+            feat_title = feat.get("title") or f"Feature {i+1}"
+
+            itemized_features.append({
+                "id": feat_id,
+                "feature_id": feat_id,
+                "title": feat_title,
+                "feature_title": feat_title,
+                "price_weight": round(raw_weights[i], 4),
+                "unadjusted_amount": unadjusted_amounts[i],
+                "allocated_amount": allocated_amounts[i],
+                "status": st,
+                "sort_order": feat.get("sort_order", i),
+                "is_last_feature": is_last,
+                "adjustment_applied": round(adj, 2)
+            })
+
+        # 5. Calculate totals
+        passed_features = [f for f in itemized_features if f["status"] == "PASSED"]
+        failed_features = [f for f in itemized_features if f["status"] == "FAILED"]
+
+        passed_weight = round(sum(f["price_weight"] for f in passed_features), 2)
+        failed_weight = round(sum(f["price_weight"] for f in failed_features), 2)
+
+        if len(passed_features) == N:
+            passed_amount = total_amount
+            refund_amount = 0.0
+            rule_applied = "FULL_RELEASE_100_PERCENT"
+        elif len(passed_features) == 0:
+            passed_amount = 0.0
+            refund_amount = total_amount
+            rule_applied = "FULL_REFUND_0_PERCENT"
+        else:
+            passed_amount = round(sum(f["allocated_amount"] for f in passed_features), 2)
+            refund_amount = round(total_amount - passed_amount, 2)
+            rule_applied = "PROPORTIONAL_PARTIAL_SPLIT"
+
+        # Verify mathematical invariant
+        assert round(passed_amount + refund_amount, 2) == round(total_amount, 2), (
+            f"Invariant violation: passed ({passed_amount}) + refund ({refund_amount}) != total ({total_amount})"
+        )
+
+        return ProportionalSplitResult(
+            contract_id=contract_id,
+            total_amount=total_amount,
+            passed_amount=passed_amount,
+            refund_amount=refund_amount,
+            passed_weight=passed_weight,
+            failed_weight=failed_weight,
+            currency=currency,
+            itemized_features=itemized_features,
+            rounding_adjustment_cents=rounding_adjustment_cents,
+            rule_applied=rule_applied,
+            metadata={
+                "contract_title": contract.get("title"),
+                "features_total": N,
+                "features_passed": len(passed_features),
+                "features_failed": len(failed_features),
+                "rounding_adjustment_amount": round(delta, 2)
+            }
+        )
+
     def settle_contract_escrow(
         self,
         contract_id: str,
-        passed_amount: float,
-        refund_amount: float,
-        seller_paypal_email: str,
-        actor: User,
+        passed_amount: Optional[float] = None,
+        refund_amount: Optional[float] = None,
+        seller_paypal_email: Optional[str] = None,
+        actor: Optional[User] = None,
         idempotency_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
@@ -728,7 +1096,21 @@ class EscrowPaymentService:
                 f"Contract '{contract_id}' does not have an active PayPal authorization hold to settle."
             )
 
-        # 3. Amount Invariant Guard
+        # 3. Amount Invariant Guard & Split Math Integration
+        split_calc = None
+        try:
+            split_calc = self.calculate_proportional_split(
+                contract_id=contract_id,
+                feature_results=metadata.get("feature_results") if metadata else None
+            )
+        except Exception:
+            split_calc = None
+
+        if passed_amount is None and split_calc:
+            passed_amount = split_calc.passed_amount
+        if refund_amount is None and split_calc:
+            refund_amount = split_calc.refund_amount
+
         try:
             passed = round(float(passed_amount), 2)
             refund = round(float(refund_amount), 2)
@@ -761,6 +1143,7 @@ class EscrowPaymentService:
             "refund_amount": refund,
             "seller_paypal_email": target_email,
             "idempotency_key": idempotency_key,
+            "split_breakdown": split_calc.to_dict() if split_calc else None,
             **(metadata or {})
         }
         verdict = self.approval_service.validate_payment_approval(
@@ -874,6 +1257,27 @@ class EscrowPaymentService:
         }
         receipt_hash = hashlib.sha256(json.dumps(receipt_payload, sort_keys=True).encode()).hexdigest()
 
+        # 8. Dual Settlement Summary Generation & Audit Persistence (Commit C41)
+        settlement_summary = self._generate_settlement_summary(
+            contract=contract,
+            passed_amount=passed,
+            refund_amount=refund,
+            currency=currency,
+            seller_paypal_email=target_email,
+            payout_batch_id=payout_batch_id,
+            capture_id=capture_id,
+            void_id=void_id,
+            receipt_hash=receipt_hash,
+            split_calc=split_calc,
+            settled_at=settle_meta["settled_at"]
+        )
+
+        self._log_settlement_summary_to_messages(
+            contract_id=contract_id,
+            actor=actor,
+            summary=settlement_summary
+        )
+
         response = {
             "contract_id": contract_id,
             "status": "SETTLED",
@@ -883,13 +1287,543 @@ class EscrowPaymentService:
             "passed_amount": passed,
             "refund_amount": refund,
             "currency": currency,
-            "receipt_hash": receipt_hash
+            "receipt_hash": receipt_hash,
+            "split_breakdown": split_calc.to_dict() if split_calc else None,
+            "settlement_summary": settlement_summary.to_dict(),
+            "buyer_summary": settlement_summary["buyer_summary"],
+            "seller_summary": settlement_summary["seller_summary"]
         }
 
         if idempotency_key and hasattr(self.repository, "save_idempotency_key"):
             self.repository.save_idempotency_key(idempotency_key, scope=scope, response_data=response)
 
         return response
+
+    def _generate_settlement_summary(
+        self,
+        contract: Dict[str, Any],
+        passed_amount: float,
+        refund_amount: float,
+        currency: str,
+        seller_paypal_email: str,
+        payout_batch_id: Optional[str],
+        capture_id: Optional[str],
+        void_id: Optional[str],
+        receipt_hash: str,
+        split_calc: Optional[ProportionalSplitResult] = None,
+        settled_at: Optional[str] = None
+    ) -> SettlementSummary:
+        """
+        Constructs the structured dual-perspective settlement summary for both parties (Commit C41):
+          - Buyer Summary: total funded, amount returned, amount released, features breakdown, and why.
+          - Seller Summary: contract price, amount paid, payout batch ref, unreleased amount, itemized payouts, and why.
+        """
+        contract_id = str(contract.get("id", ""))
+        contract_title = str(contract.get("title", ""))
+        total_amount = round(float(contract.get("total_amount", passed_amount + refund_amount)), 2)
+        settled_at = settled_at or datetime.now(timezone.utc).isoformat()
+
+        # 1. Extract feature breakdown
+        itemized_features: List[Dict[str, Any]] = []
+        if split_calc and getattr(split_calc, "itemized_features", None):
+            itemized_features = list(split_calc.itemized_features)
+        else:
+            raw_feats = None
+            if hasattr(self.repository, "get_features"):
+                raw_feats = self.repository.get_features(contract_id)
+            if not raw_feats and "features" in contract:
+                raw_feats = contract["features"]
+            raw_feats = raw_feats or []
+
+            for i, feat in enumerate(raw_feats):
+                feat_id = feat.get("id") or f"feat_{i+1}"
+                feat_title = feat.get("title") or f"Feature {i+1}"
+                pw = float(feat.get("price_weight", 0.0) or 0.0)
+                alloc = float(feat.get("allocated_amount", 0.0) or 0.0)
+                st = feat.get("status", "PASSED" if refund_amount == 0 else "FAILED")
+                itemized_features.append({
+                    "id": feat_id,
+                    "feature_id": feat_id,
+                    "title": feat_title,
+                    "feature_title": feat_title,
+                    "price_weight": pw,
+                    "unadjusted_amount": alloc,
+                    "allocated_amount": alloc,
+                    "status": st,
+                    "sort_order": feat.get("sort_order", i),
+                    "is_last_feature": (i == len(raw_feats) - 1),
+                    "adjustment_applied": 0.0
+                })
+
+        N = len(itemized_features)
+        passed_features = [f for f in itemized_features if f.get("status") == "PASSED"]
+        failed_features = [f for f in itemized_features if f.get("status") == "FAILED"]
+        passed_count = len(passed_features)
+        failed_count = len(failed_features)
+
+        passed_titles = [f.get("title") or f.get("feature_title") or f"Feature {i+1}" for i, f in enumerate(passed_features)]
+        failed_titles = [f.get("title") or f.get("feature_title") or f"Feature {i+1}" for i, f in enumerate(failed_features)]
+
+        p_names = ", ".join(f"'{t}'" for t in passed_titles) if passed_titles else ""
+        f_names = ", ".join(f"'{t}'" for t in failed_titles) if failed_titles else ""
+
+        # 2. Determine applied rule
+        if refund_amount == 0.0 and passed_amount > 0.0:
+            rule_applied = "FULL_RELEASE_100_PERCENT"
+        elif passed_amount == 0.0 and refund_amount > 0.0:
+            rule_applied = "FULL_REFUND_0_PERCENT"
+        elif N == 0:
+            rule_applied = "NO_FEATURES_FULL_REFUND" if passed_amount == 0 else "MANUAL_SETTLEMENT"
+        else:
+            rule_applied = "PROPORTIONAL_PARTIAL_SPLIT"
+
+        # 3. Build itemized views for buyer and seller
+        buyer_breakdown: List[Dict[str, Any]] = []
+        seller_itemized: List[Dict[str, Any]] = []
+
+        for f in itemized_features:
+            st = f.get("status", "PENDING")
+            is_p = (st == "PASSED")
+            f_id = f.get("id") or f.get("feature_id")
+            f_title = f.get("title") or f.get("feature_title")
+            alloc = round(float(f.get("allocated_amount", 0.0)), 2)
+            unadj = round(float(f.get("unadjusted_amount", alloc)), 2)
+            adj = round(float(f.get("adjustment_applied", 0.0)), 2)
+            is_last = bool(f.get("is_last_feature", False))
+            pw = round(float(f.get("price_weight", 0.0)), 2)
+
+            buyer_rationale = (
+                f"Passed automated verification ({pw:.1f}% weight, {alloc:.2f} {currency} released)."
+                if is_p else
+                f"Failed acceptance criteria or unverified ({pw:.1f}% weight, {alloc:.2f} {currency} refunded)."
+            )
+            buyer_breakdown.append({
+                "id": f_id,
+                "feature_id": f_id,
+                "title": f_title,
+                "feature_title": f_title,
+                "status": st,
+                "price_weight": pw,
+                "allocated_amount": alloc,
+                "released_amount": alloc if is_p else 0.0,
+                "refund_amount": 0.0 if is_p else alloc,
+                "rationale": buyer_rationale,
+                "why": buyer_rationale
+            })
+
+            adj_clause = f" (Includes {adj:+.2f} {currency} remainder adjustment)" if adj != 0 else ""
+            seller_rationale = (
+                f"Verified and approved for payout ({alloc:.2f} {currency}{adj_clause})."
+                if is_p else
+                f"Failed acceptance criteria ({alloc:.2f} {currency} deducted)."
+            )
+            seller_itemized.append({
+                "id": f_id,
+                "feature_id": f_id,
+                "title": f_title,
+                "feature_title": f_title,
+                "status": st,
+                "price_weight": pw,
+                "unadjusted_amount": unadj,
+                "allocated_amount": alloc,
+                "adjustment_applied": adj,
+                "is_last_feature": is_last,
+                "paid_out": is_p,
+                "payout_amount": alloc if is_p else 0.0,
+                "deducted_amount": 0.0 if is_p else alloc,
+                "rationale": seller_rationale,
+                "why": seller_rationale
+            })
+
+        # 4. Synthesize human-readable rationale ("why")
+        rounding_adj_cents = int(split_calc.get("rounding_adjustment_cents", 0)) if split_calc else 0
+
+        if rule_applied == "FULL_RELEASE_100_PERCENT":
+            buyer_why = (
+                f"All {N} checklist features met all verification criteria. "
+                f"Full escrow amount of {passed_amount:.2f} {currency} has been released to the seller with 0.00 {currency} returned."
+            )
+            batch_str = f" via PayPal Payouts (Batch: {payout_batch_id})" if payout_batch_id else ""
+            email_str = f" to {seller_paypal_email}" if seller_paypal_email else ""
+            seller_why = (
+                f"All {N} checklist features verified successfully! "
+                f"Full contract price of {passed_amount:.2f} {currency} has been disbursed{email_str}{batch_str}."
+            )
+        elif rule_applied == "FULL_REFUND_0_PERCENT":
+            failed_clause = f": {f_names}" if f_names else ""
+            buyer_why = (
+                f"No checklist features met acceptance criteria ({failed_count} features failed{failed_clause}). "
+                f"Full escrow amount of {refund_amount:.2f} {currency} has been refunded to your account."
+            )
+            seller_why = (
+                f"Deliverable did not meet verification criteria ({failed_count} features failed{failed_clause}). "
+                f"No funds were disbursed ({refund_amount:.2f} {currency} deducted and refunded to buyer)."
+            )
+        elif N == 0:
+            buyer_why = (
+                f"No checklist features were configured for contract '{contract_title}'. "
+                f"Escrow amount of {refund_amount:.2f} {currency} has been refunded to your account."
+            )
+            seller_why = (
+                f"No checklist features were configured for contract '{contract_title}'. "
+                f"Contract amount of {refund_amount:.2f} {currency} has been refunded to buyer."
+            )
+        else:  # PROPORTIONAL_PARTIAL_SPLIT
+            buyer_why = (
+                f"{passed_count} of {N} checklist features passed verification ({p_names}). "
+                f"{passed_amount:.2f} {currency} was released to the seller for completed work. "
+                f"{refund_amount:.2f} {currency} was refunded to your account for unverified/failed features ({f_names})."
+            )
+            batch_str = f" (Batch: {payout_batch_id})" if payout_batch_id else ""
+            email_str = f" to {seller_paypal_email}" if seller_paypal_email else ""
+            adj_note = ""
+            if rounding_adj_cents != 0:
+                adj_val = rounding_adj_cents / 100.0
+                adj_note = f" Remainder adjustment of {adj_val:+.2f} {currency} applied to last feature."
+            seller_why = (
+                f"{passed_count} of {N} features verified. "
+                f"Payout of {passed_amount:.2f} {currency} disbursed{email_str}{batch_str} for completed features ({p_names}). "
+                f"{refund_amount:.2f} {currency} deducted for failed features ({f_names}).{adj_note}"
+            )
+
+        buyer_summary = {
+            "contract_id": contract_id,
+            "contract_title": contract_title,
+            "currency": currency,
+            "total_funded_amount": total_amount,
+            "funded_amount": total_amount,
+            "amount_returned": refund_amount,
+            "refund_amount": refund_amount,
+            "amount_released": passed_amount,
+            "released_amount": passed_amount,
+            "features_total": N,
+            "features_passed": passed_count,
+            "features_failed": failed_count,
+            "features_breakdown": buyer_breakdown,
+            "why": buyer_why,
+            "receipt_hash": receipt_hash,
+            "settled_at": settled_at
+        }
+
+        seller_summary = {
+            "contract_id": contract_id,
+            "contract_title": contract_title,
+            "currency": currency,
+            "contract_price": total_amount,
+            "total_amount": total_amount,
+            "amount_paid": passed_amount,
+            "payout_amount": passed_amount,
+            "payout_batch_id": payout_batch_id,
+            "seller_paypal_email": seller_paypal_email,
+            "unreleased_amount": refund_amount,
+            "deducted_amount": refund_amount,
+            "features_total": N,
+            "features_passed": passed_count,
+            "features_failed": failed_count,
+            "itemized_payouts": seller_itemized,
+            "features_breakdown": seller_itemized,
+            "rounding_adjustment_cents": rounding_adj_cents,
+            "why": seller_why,
+            "receipt_hash": receipt_hash,
+            "settled_at": settled_at
+        }
+
+        return SettlementSummary(
+            contract_id=contract_id,
+            contract_title=contract_title,
+            currency=currency,
+            status="SETTLED",
+            settled_at=settled_at,
+            receipt_hash=receipt_hash,
+            rule_applied=rule_applied,
+            total_amount=total_amount,
+            passed_amount=passed_amount,
+            refund_amount=refund_amount,
+            capture_id=capture_id,
+            payout_batch_id=payout_batch_id,
+            refund_id=void_id,
+            buyer_summary=buyer_summary,
+            seller_summary=seller_summary,
+            metadata={
+                "features_total": N,
+                "features_passed": passed_count,
+                "features_failed": failed_count,
+                "rounding_adjustment_cents": rounding_adj_cents
+            }
+        )
+
+    def _log_settlement_summary_to_messages(
+        self,
+        contract_id: str,
+        actor: Optional[User],
+        summary: SettlementSummary
+    ) -> None:
+        """
+        Immutably logs the dual settlement summary into the relational messages table (Commit C41)
+        for both buyer and seller view, including cryptographic receipt fingerprint.
+        """
+        sender_type = "AI_REFEREE"
+        sender_id = None
+        if actor:
+            is_ref = (getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee")
+            sender_type = "AI_REFEREE" if is_ref else getattr(actor.role, "value", "ADMIN")
+            sender_id = getattr(actor, "id", None)
+
+        buyer_sum = summary.get("buyer_summary", {})
+        seller_sum = summary.get("seller_summary", {})
+        content = (
+            f"Settlement finalized for contract '{summary.get('contract_title', contract_id)}'. "
+            f"Released to seller: {summary.get('passed_amount', 0.0):.2f} {summary.get('currency', 'USD')}. "
+            f"Refunded to buyer: {summary.get('refund_amount', 0.0):.2f} {summary.get('currency', 'USD')}. "
+            f"Receipt Hash: {summary.get('receipt_hash')}. "
+            f"Buyer Summary: {buyer_sum.get('why')}. "
+            f"Seller Summary: {seller_sum.get('why')}."
+        )
+        meta = {
+            "event": "SETTLEMENT_SUMMARY",
+            "receipt_hash": summary.get("receipt_hash"),
+            "contract_id": contract_id,
+            "passed_amount": summary.get("passed_amount"),
+            "refund_amount": summary.get("refund_amount"),
+            "currency": summary.get("currency"),
+            "rule_applied": summary.get("rule_applied"),
+            "buyer_summary": buyer_sum,
+            "seller_summary": seller_sum,
+            "settlement_summary": summary.to_dict(),
+            "settled_at": summary.get("settled_at")
+        }
+
+        if hasattr(self.repository, "record_message"):
+            try:
+                self.repository.record_message(
+                    contract_id=contract_id,
+                    content=content,
+                    sender_type=sender_type,
+                    sender_id=sender_id,
+                    metadata=meta
+                )
+            except Exception:
+                pass
+        elif hasattr(self.repository, "conn") and self.repository.conn:
+            try:
+                cursor = self.repository.conn.cursor()
+                cursor.execute("""
+                    INSERT INTO messages (id, contract_id, sender_id, sender_type, content, metadata, sent_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(uuid.uuid4()),
+                    contract_id,
+                    sender_id if (sender_id and hasattr(self.repository, "get_user") and self.repository.get_user(sender_id)) else None,
+                    sender_type,
+                    content,
+                    json.dumps(meta),
+                    summary.get("settled_at", datetime.now(timezone.utc).isoformat())
+                ))
+                self.repository.conn.commit()
+            except Exception:
+                pass
+
+        if hasattr(self.repository, "record_receipt"):
+            try:
+                self.repository.record_receipt(
+                    contract_id=contract_id,
+                    receipt_hash=summary.get("receipt_hash"),
+                    evidence_payload={
+                        "settlement_summary": summary.to_dict(),
+                        "passed_amount": summary.get("passed_amount"),
+                        "refund_amount": summary.get("refund_amount"),
+                        "currency": summary.get("currency")
+                    }
+                )
+            except Exception:
+                pass
+
+    def get_settlement_summary(
+        self,
+        contract_id: str,
+        actor: Optional[User] = None
+    ) -> Dict[str, Any]:
+        """
+        Retrieves the structured settlement summary for a settled contract (Commit C41).
+        
+        1. Validates contract existence (raises ValueError if not found).
+        2. Validates RBAC permissions: Buyer, Seller, Platform Admin, or AI Referee (raises ForbiddenActionError).
+        3. Validates contract status is SETTLED (raises StateValidationError if not settled).
+        4. Retrieves stored settlement summary from messages or reconstructs it from payments & split math.
+        5. Returns perspective-tailored view based on actor:
+           - Buyer: sees buyer-centric summary (funded, returned, released, breakdown, why).
+           - Seller: sees seller-centric summary (price, amount paid, payout batch id, unreleased, itemized payouts with remainder adjustments, why).
+           - Admin / AI Referee / None: sees dual summary with both buyer and seller perspectives.
+        """
+        contract = self.repository.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        if actor is not None:
+            assert_can_view_settlement_summary(actor, contract)
+
+        if contract.get("status") != ContractState.SETTLED.value:
+            raise StateValidationError(
+                f"Contract '{contract_id}' is in status '{contract.get('status')}', not SETTLED. "
+                "Settlement summary is only available after contract settlement."
+            )
+
+        # 1. Attempt lookup from immutable messages ledger
+        summary_data: Optional[Dict[str, Any]] = None
+        if hasattr(self.repository, "get_messages"):
+            try:
+                msgs = self.repository.get_messages(contract_id)
+                for m in reversed(msgs):
+                    meta = m.get("metadata")
+                    if isinstance(meta, dict) and meta.get("event") == "SETTLEMENT_SUMMARY":
+                        summary_data = meta.get("settlement_summary") or meta
+                        break
+            except Exception:
+                summary_data = None
+
+        if summary_data is None and hasattr(self.repository, "conn") and self.repository.conn:
+            try:
+                cursor = self.repository.conn.cursor()
+                cursor.execute("""
+                    SELECT metadata FROM messages
+                    WHERE contract_id = ? AND metadata LIKE '%SETTLEMENT_SUMMARY%'
+                    ORDER BY sent_at DESC LIMIT 1
+                """, (contract_id,))
+                row = cursor.fetchone()
+                if row and row["metadata"]:
+                    meta = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+                    summary_data = meta.get("settlement_summary") or meta
+            except Exception:
+                summary_data = None
+
+        # 2. If not found in messages, reconstruct from contract, payments, and split math
+        if not summary_data:
+            payments = self.repository.get_payments(contract_id) if hasattr(self.repository, "get_payments") else []
+            capture_id = None
+            payout_batch_id = None
+            void_id = None
+            passed_amount = 0.0
+            refund_amount = 0.0
+
+            for p in payments:
+                ptype = p.get("payment_type")
+                amt = float(p.get("amount", 0.0))
+                ref = p.get("paypal_reference_id")
+                if ptype == "CAPTURE":
+                    capture_id = ref
+                    passed_amount = amt
+                elif ptype == "PAYOUT":
+                    payout_batch_id = ref
+                    passed_amount = amt
+                elif ptype == "VOID":
+                    void_id = ref
+                    refund_amount = amt
+
+            total = float(contract.get("total_amount", 0.0))
+            if passed_amount == 0.0 and refund_amount == 0.0:
+                refund_amount = total
+
+            split_calc = None
+            try:
+                split_calc = self.calculate_proportional_split(contract_id)
+            except Exception:
+                split_calc = None
+
+            currency = contract.get("currency", "USD")
+            seller_paypal_email = ""
+            if hasattr(self.repository, "get_user"):
+                seller_user = self.repository.get_user(contract.get("seller_id"))
+                if seller_user:
+                    seller_paypal_email = getattr(seller_user, "paypal_email", "") or ""
+
+            receipt_payload = {
+                "contract_id": str(contract_id),
+                "passed_amount": f"{passed_amount:.2f}",
+                "refund_amount": f"{refund_amount:.2f}",
+                "currency": currency,
+                "seller_paypal_email": str(seller_paypal_email),
+                "capture_id": str(capture_id or ""),
+                "payout_batch_id": str(payout_batch_id or ""),
+                "refund_id": str(void_id or "")
+            }
+            receipt_hash = hashlib.sha256(json.dumps(receipt_payload, sort_keys=True).encode()).hexdigest()
+
+            gen_summary = self._generate_settlement_summary(
+                contract=contract,
+                passed_amount=passed_amount,
+                refund_amount=refund_amount,
+                currency=currency,
+                seller_paypal_email=seller_paypal_email,
+                payout_batch_id=payout_batch_id,
+                capture_id=capture_id,
+                void_id=void_id,
+                receipt_hash=receipt_hash,
+                split_calc=split_calc
+            )
+            summary_data = gen_summary.to_dict()
+
+        buyer_summary = summary_data.get("buyer_summary", {})
+        seller_summary = summary_data.get("seller_summary", {})
+        receipt_hash = summary_data.get("receipt_hash") or ""
+        currency = summary_data.get("currency") or contract.get("currency", "USD")
+        status = "SETTLED"
+        settled_at = summary_data.get("settled_at") or datetime.now(timezone.utc).isoformat()
+
+        # 3. Format perspective-tailored payload based on actor
+        is_buyer = (actor and actor.id == contract.get("buyer_id") and actor.role != UserRole.ADMIN)
+        is_seller = (actor and actor.id == contract.get("seller_id") and actor.role != UserRole.ADMIN)
+
+        if is_buyer:
+            res = dict(buyer_summary)
+            res["perspective"] = "BUYER"
+            res["status"] = status
+            res["contract_title"] = contract.get("title", "")
+            res["currency"] = currency
+            res["receipt_hash"] = receipt_hash
+            res["settled_at"] = settled_at
+            res["buyer_summary"] = buyer_summary
+            res["seller_summary"] = seller_summary
+            return res
+
+        if is_seller:
+            res = dict(seller_summary)
+            res["perspective"] = "SELLER"
+            res["status"] = status
+            res["contract_title"] = contract.get("title", "")
+            res["currency"] = currency
+            res["receipt_hash"] = receipt_hash
+            res["settled_at"] = settled_at
+            res["buyer_summary"] = buyer_summary
+            res["seller_summary"] = seller_summary
+            return res
+
+        # Admin, AI Referee, or Unspecified System Caller
+        is_ref = bool(actor and (getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee" or getattr(actor, "role", None) == "AI_REFEREE"))
+        if is_ref:
+            perspective = "AI_REFEREE"
+        elif actor and actor.role == UserRole.ADMIN:
+            perspective = "ADMIN"
+        else:
+            perspective = "SYSTEM"
+        return {
+            "contract_id": contract_id,
+            "contract_title": contract.get("title", ""),
+            "status": status,
+            "perspective": perspective,
+            "settled_at": settled_at,
+            "receipt_hash": receipt_hash,
+            "currency": currency,
+            "rule_applied": summary_data.get("rule_applied", "PROPORTIONAL_PARTIAL_SPLIT"),
+            "total_amount": float(contract.get("total_amount", 0.0)),
+            "passed_amount": float(summary_data.get("passed_amount", 0.0)),
+            "refund_amount": float(summary_data.get("refund_amount", 0.0)),
+            "capture_id": summary_data.get("capture_id"),
+            "payout_batch_id": summary_data.get("payout_batch_id"),
+            "refund_id": summary_data.get("refund_id"),
+            "why": f"Buyer: {buyer_summary.get('why')} | Seller: {seller_summary.get('why')}",
+            "buyer_summary": buyer_summary,
+            "seller_summary": seller_summary
+        }
 
     def process_paypal_webhook(
         self,

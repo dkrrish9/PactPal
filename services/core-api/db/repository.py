@@ -108,6 +108,16 @@ class ContractRepository:
             processed_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS receipts (
+            id TEXT PRIMARY KEY,
+            contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+            submission_id TEXT,
+            verification_report_id TEXT,
+            receipt_hash TEXT UNIQUE NOT NULL,
+            evidence_payload TEXT NOT NULL,
+            generated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS idempotency_keys (
             key TEXT NOT NULL,
             scope TEXT NOT NULL,
@@ -435,6 +445,105 @@ class ContractRepository:
                     pass
             records.append(rec)
         return records
+
+    # --- Message Ledger & Settlement Summary Audit (C41) ---
+    def record_message(
+        self,
+        contract_id: str,
+        content: str,
+        sender_type: str,
+        sender_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Inserts an immutable message / audit record into the relational messages table.
+        """
+        msg_id = generate_uuid()
+        timestamp = now_iso()
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO messages (id, contract_id, sender_id, sender_type, content, metadata, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            msg_id,
+            contract_id,
+            sender_id if (sender_id and self.get_user(sender_id)) else None,
+            sender_type,
+            content,
+            json.dumps(metadata or {}),
+            timestamp
+        ))
+        self.conn.commit()
+        return {
+            "id": msg_id,
+            "contract_id": contract_id,
+            "sender_id": sender_id,
+            "sender_type": sender_type,
+            "content": content,
+            "metadata": metadata or {},
+            "sent_at": timestamp
+        }
+
+    def get_messages(self, contract_id: str) -> List[Dict[str, Any]]:
+        """Retrieves all messages/audit logs for a contract in chronological order."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM messages WHERE contract_id = ? ORDER BY sent_at ASC", (contract_id,))
+        records = []
+        for row in cursor.fetchall():
+            rec = dict(row)
+            if isinstance(rec.get("metadata"), str):
+                try:
+                    rec["metadata"] = json.loads(rec["metadata"])
+                except Exception:
+                    pass
+            records.append(rec)
+        return records
+
+    # --- Receipt Ledger Management (C41 / C44) ---
+    def record_receipt(
+        self,
+        contract_id: str,
+        receipt_hash: str,
+        evidence_payload: Dict[str, Any],
+        submission_id: Optional[str] = None,
+        verification_report_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Records a cryptographic receipt fingerprint linking to proof-of-work evidence."""
+        receipt_id = generate_uuid()
+        timestamp = now_iso()
+        cursor = self.conn.cursor()
+        payload_str = json.dumps(evidence_payload) if not isinstance(evidence_payload, str) else evidence_payload
+        cursor.execute("""
+            INSERT OR REPLACE INTO receipts (id, contract_id, submission_id, verification_report_id, receipt_hash, evidence_payload, generated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            receipt_id, contract_id, submission_id, verification_report_id, receipt_hash, payload_str, timestamp
+        ))
+        self.conn.commit()
+        return {
+            "id": receipt_id,
+            "contract_id": contract_id,
+            "receipt_hash": receipt_hash,
+            "submission_id": submission_id,
+            "verification_report_id": verification_report_id,
+            "evidence_payload": evidence_payload,
+            "generated_at": timestamp
+        }
+
+    def get_receipt(self, contract_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves the latest receipt record for a given contract."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM receipts WHERE contract_id = ? ORDER BY generated_at DESC LIMIT 1", (contract_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        rec = dict(row)
+        if isinstance(rec.get("evidence_payload"), str):
+            try:
+                rec["evidence_payload"] = json.loads(rec["evidence_payload"])
+            except Exception:
+                pass
+        return rec
 
     # --- Idempotency Key Storage (C28) ---
     def get_idempotency_key(self, key: str, scope: str = "default") -> Optional[Dict[str, Any]]:

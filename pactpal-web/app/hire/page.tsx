@@ -98,7 +98,7 @@ export default function HirePage() {
             meets your acceptance tests.
           </p>
 
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
             <Link
               href="/hire/create"
               style={{
@@ -115,27 +115,44 @@ export default function HirePage() {
                 boxShadow: "0 0 30px rgba(0,102,255,0.4)",
                 transition: "all 0.3s ease",
               }}
-              aria-label="Post a project"
+              aria-label="Create a contract with the wizard"
             >
-              Post a Project <ArrowRight size={18} aria-hidden />
+              Create Contract Wizard <ArrowRight size={18} aria-hidden />
             </Link>
+
+            <Link
+              href="/dashboard/hirer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                background: "rgba(0,102,255,0.12)",
+                border: "1px solid rgba(0,102,255,0.3)",
+                color: "#60A5FA",
+                borderRadius: 50,
+                padding: "16px 28px",
+                fontSize: 15,
+                fontWeight: 600,
+                textDecoration: "none",
+                transition: "all 0.2s",
+              }}
+            >
+              Hirer Dashboard (Active Contracts) 📋
+            </Link>
+
             <Link
               href="#how"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: 8,
-                background: "rgba(255,255,255,0.05)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                color: "white",
-                borderRadius: 50,
-                padding: "16px 32px",
-                fontSize: 16,
-                fontWeight: 600,
+                gap: 6,
+                color: "var(--color-text-secondary)",
+                fontSize: 14,
                 textDecoration: "none",
+                padding: "8px 12px",
               }}
             >
-              See how it works
+              See how it works ↓
             </Link>
           </div>
         </div>
