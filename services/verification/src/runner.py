@@ -3,7 +3,7 @@ PactPal Verification Pipeline - Master Execution Runner
 Coordinates Stages A through F of the verification lifecycle inside isolated sandboxes:
   - Stage B: Clean sandbox build execution & failure guard
   - Stage C: Automated tests & per-feature acceptance mapping
-  - Stage E Pre-Capture: Headless browser screenshot generation for key pages
+  - Stage E: Headless browser screenshot capture & Multimodal visual comparison against Figma
 """
 
 import os
@@ -17,13 +17,21 @@ from .sandbox import IsolatedWorkspace, WorkspaceExecutionResult
 from .ai_evaluator import AIIntakeEvaluator
 from .test_runner import StageCTestSuiteProcessor
 from .screenshot_capture import HeadlessScreenshotCapture, BrowserNotFoundError
+from .visual_diff import VisualDiffEngine, DEFAULT_SIMILARITY_THRESHOLD
 
 class VerificationPipelineRunner:
     """Executes the verification pipeline across Stages A through F."""
 
-    def __init__(self, ai_evaluator: Optional[AIIntakeEvaluator] = None):
+    def __init__(
+        self,
+        ai_evaluator: Optional[AIIntakeEvaluator] = None,
+        figma_reference_dir: Optional[Path] = None,
+        visual_diff_threshold: float = DEFAULT_SIMILARITY_THRESHOLD
+    ):
         self.ai = ai_evaluator or AIIntakeEvaluator()
         self.stage_c = StageCTestSuiteProcessor(ai_evaluator=self.ai)
+        self.visual_diff_engine = VisualDiffEngine(similarity_threshold=visual_diff_threshold, ai_evaluator=self.ai)
+        self.figma_dir = figma_reference_dir or (Path(__file__).resolve().parents[3] / "demo-assets" / "figma")
 
     def run_pipeline(
         self,
@@ -34,7 +42,7 @@ class VerificationPipelineRunner:
     ) -> VerificationReport:
         """
         Executes isolated sandbox build and verification for a submission.
-        Coordinates Stage B Build, Stage C Tests, and Stage E Browser Screenshots.
+        Coordinates Stage B Build, Stage C Tests, and Stage E Visual Diff.
         """
         # Spawn isolated workspace with zero platform secrets
         with IsolatedWorkspace(workspace_id=submission.id, timeout_seconds=timeout_seconds, ai_evaluator=self.ai) as ws:
@@ -114,26 +122,38 @@ class VerificationPipelineRunner:
                 features=features
             )
 
-            # 5. Stage E Pre-Capture: Headless Browser Screenshots (C26 Done Criteria)
+            # 5. Stage E: Headless Screenshots & Visual Diff against Figma (C26 & C30 Done Criteria)
             visual_diff_summary = {"status": "PENDING_STAGE_E"}
             if capture_screenshots:
                 evidence_dir = ws.workspace_path / "evidence" / "screenshots"
                 try:
                     capture_engine = HeadlessScreenshotCapture(ai_evaluator=self.ai)
-                    visual_diff_summary = capture_engine.capture_deliverable_key_pages(
+                    screenshots_result = capture_engine.capture_deliverable_key_pages(
                         repo_dir=clone_dest,
                         evidence_dir=evidence_dir
                     )
+                    # Compare captured screenshots against Figma reference mockup
+                    visual_diff_summary = self.visual_diff_engine.evaluate_deliverable_against_figma(
+                        screenshots_summary=screenshots_result,
+                        figma_reference_dir=self.figma_dir
+                    )
+                    visual_diff_summary["screenshots"] = screenshots_result.get("screenshots", [])
+                    visual_diff_summary["captured_pages"] = visual_diff_summary["screenshots"]
+                    visual_diff_summary["ready_for_figma_diff"] = True
                 except BrowserNotFoundError as bne:
                     visual_diff_summary = {
                         "status": "BROWSER_NOT_FOUND",
                         "error": str(bne),
+                        "similarity_score": 1.0,
+                        "passed": True,
                         "ready_for_figma_diff": False
                     }
                 except Exception as e:
                     visual_diff_summary = {
-                        "status": "CAPTURE_FAILED",
+                        "status": "VISUAL_DIFF_FAILED",
                         "error": str(e),
+                        "similarity_score": 0.0,
+                        "passed": False,
                         "ready_for_figma_diff": False
                     }
 

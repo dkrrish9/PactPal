@@ -1,0 +1,10 @@
+{
+  "name": "pactpal-bad-repo",
+  "version": "1.0.0",
+  "description": "Benchmark flawed deliverable with deliberate visual mismatch and defective features",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node test/runner.js"
+  }
+}
