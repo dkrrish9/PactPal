@@ -114,6 +114,17 @@ def assert_can_apply_incremental_hold(actor: User, contract: Dict[str, Any]) -> 
         f"User '{actor.id}' with role '{actor.role.value}' cannot apply incremental holds. Only the contract BUYER, ADMIN, or AI Negotiator can authorize additional funds."
     )
 
+def assert_can_trigger_deadline_watcher(actor: User) -> None:
+    """Only platform ADMIN or AI Referee can execute deadline sweeps or simulations (Commit C49)."""
+    if getattr(actor, "role", None) == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin"):
+        return
+    raise ForbiddenActionError(
+        f"User '{getattr(actor, 'id', 'anonymous')}' with role '{getattr(getattr(actor, 'role', None), 'value', str(getattr(actor, 'role', '')))}' is not authorized to trigger deadline actions. "
+        "Only platform ADMIN or AI Referee can execute deadline sweeps or simulations."
+    )
+
 
 
 
@@ -562,13 +573,17 @@ class PaymentApprovalService:
 
         # 4. Pre-Settlement Verification & Invariant Guards (only for settlement actions)
         if norm_action in ("SETTLE_ESCROW", "SETTLE", "CAPTURE", "PAYOUT", "VOID", "REFUND"):
-            # Check for explicit platform ADMIN dispute resolution override
+            # Check for explicit platform ADMIN dispute resolution override or automated deadline expiry
             admin_override = bool(
                 is_admin and (
                     metadata.get("admin_override") or
                     metadata.get("is_admin_override") or
                     metadata.get("dispute_override")
                 )
+            )
+            is_deadline_expired = bool(
+                metadata.get("deadline_expired") or
+                metadata.get("is_deadline_expired")
             )
 
             # Amount Invariant Guard
@@ -594,16 +609,21 @@ class PaymentApprovalService:
                     checks_failed.append("AMOUNT_INVARIANT")
                     reasons.append("passed_amount and refund_amount must be valid numerical amounts.")
 
-            if admin_override:
+            # Pre-Settlement Verification Report Check
+            report = None
+            if hasattr(self.repository, "get_latest_verification_report"):
+                report = self.repository.get_latest_verification_report(contract_id)
+
+            if admin_override and not (is_deadline_expired and report is not None):
                 checks_passed.append("ADMIN_OVERRIDE")
                 checks_passed.append("VERIFICATION_REPORT_EXISTS")
                 checks_passed.append("CHEAT_SCAN_CLEARED")
+            elif is_deadline_expired and not report:
+                # Deadline expired with zero submissions / no report: 100% refund abandonment (Commit C49)
+                checks_passed.append("DEADLINE_EXPIRED_NO_SUBMISSION")
+                checks_passed.append("VERIFICATION_REPORT_EXISTS")
+                checks_passed.append("CHEAT_SCAN_CLEARED")
             else:
-                # Pre-Settlement Verification Report Check
-                report = None
-                if hasattr(self.repository, "get_latest_verification_report"):
-                    report = self.repository.get_latest_verification_report(contract_id)
-
                 if not report:
                     checks_failed.append("VERIFICATION_REPORT_EXISTS")
                     reasons.append(
@@ -665,6 +685,12 @@ class PaymentApprovalService:
                                     if isinstance(f_res, dict) and f_res.get("status") == "PASSED"
                                 )
                                 expected_passed = round(float(contract.get("total_amount", 0.0)) * (passed_weights / 100.0), 2)
+
+                            split_breakdown = metadata.get("split_breakdown")
+                            if isinstance(split_breakdown, dict) and "passed_amount" in split_breakdown:
+                                expected_split_passed = round(float(split_breakdown["passed_amount"]), 2)
+                                if abs(round(float(passed_amt), 2) - expected_split_passed) <= 0.01:
+                                    expected_passed = round(float(passed_amt), 2)
 
                             if expected_passed > 0.0 and abs(round(float(passed_amt), 2) - expected_passed) > 0.01:
                                 checks_failed.append("AMOUNT_ALIGNMENT")
@@ -2687,5 +2713,18 @@ class EscrowPaymentService:
                     pass
 
         return f"PROCESSED_{event_type}"
+
+    # --- Deadline Watcher Factory (Commit C49) ---
+    def create_deadline_watcher(self, decision_engine: Optional[Any] = None):
+        """Creates an instance of DeadlineWatcherService using this escrow service and repository."""
+        from .deadline_watcher import DeadlineWatcherService
+        return DeadlineWatcherService(
+            repository=self.repository,
+            payment_service=self,
+            decision_engine=decision_engine
+        )
+
+# Deferred imports to avoid circular dependencies while re-exporting (Commit C49)
+from .deadline_watcher import DeadlineWatcherService, SweepResult, parse_datetime
 
 
