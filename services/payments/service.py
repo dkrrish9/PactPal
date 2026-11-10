@@ -59,6 +59,68 @@ def assert_can_settle_contract(actor: User, contract: Dict[str, Any]) -> None:
             f"Only platform ADMIN or AI Referee can execute escrow settlement."
         )
 
+def assert_can_view_split_preview(actor: User, contract: Dict[str, Any]) -> None:
+    """Only participant BUYER, SELLER, platform ADMIN, or AI Referee can inspect split preview."""
+    if actor.role == UserRole.ADMIN:
+        return
+    if getattr(actor, "id", None) == "AI_REFEREE" or getattr(actor, "name", None) == "AI Referee":
+        return
+    if actor.id != contract.get("buyer_id") and actor.id != contract.get("seller_id"):
+        raise ForbiddenActionError(
+            f"User '{actor.id}' with role '{actor.role.value}' is not authorized to view split preview for contract '{contract.get('id')}'. "
+            f"Access restricted to contract buyer, seller, admin, or AI referee."
+        )
+
+
+class ProportionalSplitResult(dict):
+    """
+    Structured result of proportional split calculation (Commit C37).
+    Inherits from dict for 100% dict compatibility (JSON serialization, dict unpacking),
+    while also providing property/attribute access.
+    """
+    def __init__(
+        self,
+        contract_id: str,
+        total_amount: float,
+        passed_amount: float,
+        refund_amount: float,
+        passed_weight: float,
+        failed_weight: float,
+        currency: str,
+        itemized_features: List[Dict[str, Any]],
+        rounding_adjustment_cents: int,
+        rule_applied: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        **extra
+    ):
+        data = {
+            "contract_id": contract_id,
+            "total_amount": round(float(total_amount), 2),
+            "passed_amount": round(float(passed_amount), 2),
+            "refund_amount": round(float(refund_amount), 2),
+            "passed_weight": round(float(passed_weight), 2),
+            "failed_weight": round(float(failed_weight), 2),
+            "currency": currency,
+            "itemized_features": itemized_features,
+            "rounding_adjustment_cents": int(rounding_adjustment_cents),
+            "rule_applied": rule_applied,
+            "metadata": metadata or {},
+            **extra
+        }
+        super().__init__(data)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(f"'ProportionalSplitResult' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = value
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self)
+
 
 class WebhookVerificationError(Exception):
     """Raised when incoming PayPal webhook transmission signature verification fails."""
@@ -668,13 +730,247 @@ class EscrowPaymentService:
     # Alias for flexibility
     get_hold_expiry = get_contract_hold
 
+    def _resolve_feature_status(
+        self,
+        feature: Dict[str, Any],
+        feature_results: Optional[Any],
+        verification_report: Optional[Dict[str, Any]]
+    ) -> str:
+        """
+        Resolves whether a feature is PASSED or FAILED using:
+          1. Explicit feature_results parameter (if provided).
+          2. Latest verification report per_feature_results (if report exists).
+          3. Underlying feature record status in repository.
+        Any status other than PASSED (e.g. FAILED, PENDING, DISPUTED) is treated as unpassed (FAILED).
+        """
+        feat_id = str(feature.get("id", ""))
+        feat_title = str(feature.get("title", ""))
+
+        # 1. Check explicit feature_results
+        if feature_results is not None:
+            if isinstance(feature_results, dict):
+                # Handle wrapped "per_feature_results"
+                if "per_feature_results" in feature_results and isinstance(feature_results["per_feature_results"], dict):
+                    feature_results = feature_results["per_feature_results"]
+
+                # Handle passed/failed lists
+                if "passed" in feature_results and isinstance(feature_results["passed"], (list, set, tuple)):
+                    passed_ids = {str(x) for x in feature_results["passed"]}
+                    if feat_id in passed_ids or (feat_title and feat_title in passed_ids):
+                        return "PASSED"
+                    return "FAILED"
+
+                target = feature_results.get(feat_id)
+                if target is None and feat_title:
+                    target = feature_results.get(feat_title)
+
+                if target is not None:
+                    if isinstance(target, dict):
+                        st = target.get("status")
+                        return "PASSED" if str(st).upper() == "PASSED" else "FAILED"
+                    elif isinstance(target, bool):
+                        return "PASSED" if target else "FAILED"
+                    return "PASSED" if str(target).upper() == "PASSED" else "FAILED"
+
+            elif isinstance(feature_results, (list, tuple, set)):
+                for item in feature_results:
+                    if isinstance(item, dict):
+                        item_id = str(item.get("id") or item.get("feature_id") or "")
+                        item_title = str(item.get("title") or item.get("feature_title") or "")
+                        if (item_id and item_id == feat_id) or (item_title and item_title == feat_title):
+                            st = item.get("status")
+                            return "PASSED" if str(st).upper() == "PASSED" else "FAILED"
+                    elif isinstance(item, str):
+                        if item == feat_id or (feat_title and item == feat_title):
+                            return "PASSED"
+                return "FAILED"
+
+        # 2. Check verification report if present
+        if verification_report:
+            per_feat = verification_report.get("per_feature_results") or {}
+            if isinstance(per_feat, str):
+                try:
+                    per_feat = json.loads(per_feat)
+                except Exception:
+                    per_feat = {}
+            if isinstance(per_feat, dict):
+                rep_feat = per_feat.get(feat_id)
+                if rep_feat is None and feat_title:
+                    rep_feat = per_feat.get(feat_title)
+                if rep_feat is not None:
+                    if isinstance(rep_feat, dict):
+                        st = rep_feat.get("status")
+                        return "PASSED" if str(st).upper() == "PASSED" else "FAILED"
+                    return "PASSED" if str(rep_feat).upper() == "PASSED" else "FAILED"
+
+        # 3. Fallback to feature database status
+        curr_st = feature.get("status")
+        return "PASSED" if str(curr_st).upper() == "PASSED" else "FAILED"
+
+    def calculate_proportional_split(
+        self,
+        contract_id: str,
+        feature_results: Optional[Any] = None,
+        actor: Optional[User] = None
+    ) -> ProportionalSplitResult:
+        """
+        Calculates proportional escrow split math matching Phase 7 & Commit C37:
+          - Sums weights of features marked PASSED vs FAILED.
+          - Calculates itemized feature allocations based on price_weights.
+          - Deterministic Remainder Rule: Dynamically allocates the rounding delta (+- 0.01)
+            to the last feature (by sort_order / last index) so that sum(allocated_amount) == total_amount
+            exactly to the cent.
+          - Guarantees mathematical invariant: round(passed_amount + refund_amount, 2) == round(total_amount, 2)
+            with zero lost cents under any combination of weights and prices.
+        """
+        contract = self.repository.get_contract(contract_id)
+        if not contract:
+            raise ValueError(f"Contract '{contract_id}' not found.")
+
+        # Permission check if actor is provided
+        if actor is not None:
+            assert_can_view_split_preview(actor, contract)
+
+        total_amount = round(float(contract.get("total_amount", 0.0)), 2)
+        currency = contract.get("currency", "USD")
+
+        features = None
+        if hasattr(self.repository, "get_features"):
+            features = self.repository.get_features(contract_id)
+        if not features and "features" in contract:
+            features = contract["features"]
+        features = features or []
+
+        # Sort features deterministically by sort_order ASC, then by feature ID
+        sorted_features = sorted(
+            features,
+            key=lambda f: (int(f.get("sort_order", 0) if f.get("sort_order") is not None else 0), str(f.get("id", "")))
+        )
+        N = len(sorted_features)
+
+        if N == 0:
+            return ProportionalSplitResult(
+                contract_id=contract_id,
+                total_amount=total_amount,
+                passed_amount=0.0,
+                refund_amount=total_amount,
+                passed_weight=0.0,
+                failed_weight=0.0,
+                currency=currency,
+                itemized_features=[],
+                rounding_adjustment_cents=0,
+                rule_applied="NO_FEATURES_FULL_REFUND",
+                metadata={"contract_title": contract.get("title")}
+            )
+
+        # Resolve verification report if available and feature_results is None
+        verification_report = None
+        if feature_results is None and hasattr(self.repository, "get_latest_verification_report"):
+            verification_report = self.repository.get_latest_verification_report(contract_id)
+
+        # 1. Weights extraction
+        raw_weights = [float(f.get("price_weight", 0.0) or 0.0) for f in sorted_features]
+        sum_weights = sum(raw_weights)
+
+        # 2. Compute unadjusted allocation for each feature
+        unadjusted_amounts: List[float] = []
+        for i, w in enumerate(raw_weights):
+            if sum_weights > 0:
+                # If weights sum close to 100% (e.g. 99.99% from 33.33 x 3) and not exactly 100.0,
+                # normalize against sum_weights so recurring decimals (e.g. 1/3) divide cleanly.
+                if abs(sum_weights - 100.0) < 0.05 and sum_weights != 100.0:
+                    fraction = w / sum_weights
+                elif sum_weights == 100.0:
+                    fraction = w / 100.0
+                else:
+                    fraction = w / sum_weights
+            else:
+                fraction = 1.0 / N
+            unadjusted_amounts.append(round(total_amount * fraction, 2))
+
+        sum_unadjusted = round(sum(unadjusted_amounts), 2)
+        delta = round(total_amount - sum_unadjusted, 2)
+        rounding_adjustment_cents = int(round(delta * 100))
+
+        # 3. Deterministic Remainder Rule: allocate rounding delta (+- 0.01) to the last feature
+        allocated_amounts = list(unadjusted_amounts)
+        allocated_amounts[-1] = round(allocated_amounts[-1] + delta, 2)
+
+        # 4. Resolve feature statuses and build itemized features
+        itemized_features: List[Dict[str, Any]] = []
+        for i, feat in enumerate(sorted_features):
+            st = self._resolve_feature_status(feat, feature_results, verification_report)
+            is_last = (i == N - 1)
+            adj = delta if is_last else 0.0
+            feat_id = feat.get("id") or f"feat_{i+1}"
+            feat_title = feat.get("title") or f"Feature {i+1}"
+
+            itemized_features.append({
+                "id": feat_id,
+                "feature_id": feat_id,
+                "title": feat_title,
+                "feature_title": feat_title,
+                "price_weight": round(raw_weights[i], 4),
+                "unadjusted_amount": unadjusted_amounts[i],
+                "allocated_amount": allocated_amounts[i],
+                "status": st,
+                "sort_order": feat.get("sort_order", i),
+                "is_last_feature": is_last,
+                "adjustment_applied": round(adj, 2)
+            })
+
+        # 5. Calculate totals
+        passed_features = [f for f in itemized_features if f["status"] == "PASSED"]
+        failed_features = [f for f in itemized_features if f["status"] == "FAILED"]
+
+        passed_weight = round(sum(f["price_weight"] for f in passed_features), 2)
+        failed_weight = round(sum(f["price_weight"] for f in failed_features), 2)
+
+        if len(passed_features) == N:
+            passed_amount = total_amount
+            refund_amount = 0.0
+            rule_applied = "FULL_RELEASE_100_PERCENT"
+        elif len(passed_features) == 0:
+            passed_amount = 0.0
+            refund_amount = total_amount
+            rule_applied = "FULL_REFUND_0_PERCENT"
+        else:
+            passed_amount = round(sum(f["allocated_amount"] for f in passed_features), 2)
+            refund_amount = round(total_amount - passed_amount, 2)
+            rule_applied = "PROPORTIONAL_PARTIAL_SPLIT"
+
+        # Verify mathematical invariant
+        assert round(passed_amount + refund_amount, 2) == round(total_amount, 2), (
+            f"Invariant violation: passed ({passed_amount}) + refund ({refund_amount}) != total ({total_amount})"
+        )
+
+        return ProportionalSplitResult(
+            contract_id=contract_id,
+            total_amount=total_amount,
+            passed_amount=passed_amount,
+            refund_amount=refund_amount,
+            passed_weight=passed_weight,
+            failed_weight=failed_weight,
+            currency=currency,
+            itemized_features=itemized_features,
+            rounding_adjustment_cents=rounding_adjustment_cents,
+            rule_applied=rule_applied,
+            metadata={
+                "contract_title": contract.get("title"),
+                "features_total": N,
+                "features_passed": len(passed_features),
+                "features_failed": len(failed_features),
+                "rounding_adjustment_amount": round(delta, 2)
+            }
+        )
+
     def settle_contract_escrow(
         self,
         contract_id: str,
-        passed_amount: float,
-        refund_amount: float,
-        seller_paypal_email: str,
-        actor: User,
+        passed_amount: Optional[float] = None,
+        refund_amount: Optional[float] = None,
+        seller_paypal_email: Optional[str] = None,
+        actor: Optional[User] = None,
         idempotency_key: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
@@ -728,7 +1024,21 @@ class EscrowPaymentService:
                 f"Contract '{contract_id}' does not have an active PayPal authorization hold to settle."
             )
 
-        # 3. Amount Invariant Guard
+        # 3. Amount Invariant Guard & Split Math Integration
+        split_calc = None
+        try:
+            split_calc = self.calculate_proportional_split(
+                contract_id=contract_id,
+                feature_results=metadata.get("feature_results") if metadata else None
+            )
+        except Exception:
+            split_calc = None
+
+        if passed_amount is None and split_calc:
+            passed_amount = split_calc.passed_amount
+        if refund_amount is None and split_calc:
+            refund_amount = split_calc.refund_amount
+
         try:
             passed = round(float(passed_amount), 2)
             refund = round(float(refund_amount), 2)
@@ -761,6 +1071,7 @@ class EscrowPaymentService:
             "refund_amount": refund,
             "seller_paypal_email": target_email,
             "idempotency_key": idempotency_key,
+            "split_breakdown": split_calc.to_dict() if split_calc else None,
             **(metadata or {})
         }
         verdict = self.approval_service.validate_payment_approval(
@@ -883,7 +1194,8 @@ class EscrowPaymentService:
             "passed_amount": passed,
             "refund_amount": refund,
             "currency": currency,
-            "receipt_hash": receipt_hash
+            "receipt_hash": receipt_hash,
+            "split_breakdown": split_calc.to_dict() if split_calc else None
         }
 
         if idempotency_key and hasattr(self.repository, "save_idempotency_key"):
