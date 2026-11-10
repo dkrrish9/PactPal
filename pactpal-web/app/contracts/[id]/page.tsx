@@ -30,7 +30,9 @@ import {
   Bot,
   User,
   CheckCheck,
-  RefreshCw
+  RefreshCw,
+  Check,
+  Copy
 } from "lucide-react";
 import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META, ChatMessage } from "@/lib/mockApi";
 
@@ -530,6 +532,49 @@ export default function ContractDashboardPage() {
           </div>
         )}
 
+        {/* C45 Settled Receipt Notification Banner */}
+        {activeContract.status === "SETTLED" && (
+          <div
+            style={{
+              padding: "16px 24px",
+              borderRadius: 16,
+              background: "linear-gradient(135deg, rgba(16,185,129,0.15) 0%, rgba(0,102,255,0.1) 100%)",
+              border: "1px solid rgba(16,185,129,0.4)",
+              marginBottom: 24,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 24 }}>🧾</span>
+              <div>
+                <strong style={{ color: "white", fontSize: 15 }}>C45 Cryptographic Settlement Receipt Sealed</strong>
+                <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
+                  This contract has concluded. View the full proof-of-work summary, SHA-256 hash, timestamps, and evidence links.
+                </p>
+              </div>
+            </div>
+            <Link
+              href={`/contracts/${activeContract.id}/receipt`}
+              style={{
+                background: "linear-gradient(135deg, #10B981, #00A3E0)",
+                color: "white",
+                padding: "10px 22px",
+                borderRadius: 30,
+                fontSize: 13,
+                fontWeight: 700,
+                textDecoration: "none",
+                boxShadow: "0 0 20px rgba(16,185,129,0.3)",
+              }}
+            >
+              Open Official Receipt Page (C45) →
+            </Link>
+          </div>
+        )}
+
         {/* Tabs */}
         <div
           style={{
@@ -588,7 +633,7 @@ export default function ContractDashboardPage() {
           {tab === "gantt"     && <GanttTab />}
           {tab === "chat"      && <ChatTab contract={activeContract} features={features} />}
           {tab === "activity"  && <ActivityTab submission={activeContract.submission} />}
-          {tab === "receipt"   && <ReceiptTab total={activeContract.total_amount} passedAmount={passedAmount} features={features} />}
+          {tab === "receipt"   && <ReceiptTab contract={activeContract} total={activeContract.total_amount} passedAmount={passedAmount} features={features} />}
         </div>
       </div>
 
@@ -2367,21 +2412,37 @@ function ActivityTab({ submission }: { submission?: Submission | null }) {
 }
 
 function ReceiptTab({
+  contract,
   total,
   passedAmount,
   features,
 }: {
+  contract?: Contract | null;
   total: number;
   passedAmount: number;
   features: Feature[];
 }) {
+  const activeContract = contract || mockApi.getContracts()[0];
+  const receipt = mockApi.getReceipt(activeContract?.id || "pct_099e77");
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(receipt.receipt_hash);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const passedCount = features.filter((f) => (f.status || "").toLowerCase() === "passed").length;
+  const sellerPayout = passedAmount > 0 ? passedAmount : receipt.financial_dispatch.seller_payout_amount;
+  const buyerRefund = total - sellerPayout;
+
   return (
-    <div style={{ maxWidth: 680, margin: "0 auto" }}>
+    <div style={{ maxWidth: 760, margin: "0 auto" }}>
       <div
         style={{
           background: "rgba(255,255,255,0.03)",
           border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 28,
+          borderRadius: 24,
           overflow: "hidden",
           boxShadow: "0 0 60px rgba(122,92,255,0.1)",
         }}
@@ -2393,24 +2454,28 @@ function ReceiptTab({
           style={{
             background: "linear-gradient(135deg, rgba(122,92,255,0.15), rgba(0,102,255,0.1))",
             borderBottom: "1px solid rgba(255,255,255,0.08)",
-            padding: "28px 32px",
+            padding: "24px 30px",
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
+            flexWrap: "wrap",
+            gap: 12,
           }}
         >
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: 4 }}>
               PROOF-OF-WORK RECEIPT
             </div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: "white" }}>PactPal Verification Certificate</div>
+            <div style={{ fontSize: 19, fontWeight: 800, color: "white" }}>
+              PactPal Cryptographic Verification Certificate
+            </div>
           </div>
           <div
             style={{
               background: "rgba(76,175,80,0.15)",
               border: "1px solid rgba(76,175,80,0.4)",
               borderRadius: 50,
-              padding: "8px 18px",
+              padding: "6px 16px",
               fontSize: 12,
               fontWeight: 700,
               color: "#4CAF50",
@@ -2419,22 +2484,27 @@ function ReceiptTab({
               gap: 7,
             }}
           >
-            <CheckCircle size={14} aria-hidden /> Verified
+            <CheckCircle size={14} aria-hidden /> Immutable Record
           </div>
         </div>
 
-        <div style={{ padding: "28px 32px", display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* SHA-256 */}
+        <div style={{ padding: "26px 30px", display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* SHA-256 Hash box */}
           <div
             style={{
-              background: "rgba(0,0,0,0.3)",
-              border: "1px solid rgba(122,92,255,0.2)",
+              background: "rgba(0,0,0,0.4)",
+              border: "1px solid rgba(122,92,255,0.25)",
               borderRadius: 14,
-              padding: "18px 20px",
+              padding: "16px 20px",
             }}
           >
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--color-text-muted)", marginBottom: 10 }}>
-              SHA-256 FINGERPRINT
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--color-text-muted)" }}>
+                SHA-256 FINGERPRINT (HMAC LATCHED)
+              </span>
+              <span style={{ fontSize: 11, color: "#34D399", fontWeight: 600 }}>
+                ✓ Attached to PayPal Note
+              </span>
             </div>
             <div
               style={{
@@ -2447,38 +2517,46 @@ function ReceiptTab({
               role="textbox"
               aria-label="SHA-256 fingerprint"
             >
-              0xa9f3e8c2d4b16f7a3e2d1c9b8a7f6e5d4c3b2a190887766554433221100aabb
+              {receipt.receipt_hash}
             </div>
-            <button
-              style={{
-                marginTop: 10,
-                background: "none",
-                border: "1px solid rgba(122,92,255,0.3)",
-                borderRadius: 8,
-                color: "#A78BFA",
-                padding: "5px 14px",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-              aria-label="Copy SHA-256 fingerprint to clipboard"
-            >
-              📋 Copy
-            </button>
+            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+              <button
+                onClick={handleCopy}
+                style={{
+                  background: "rgba(122,92,255,0.15)",
+                  border: "1px solid rgba(122,92,255,0.3)",
+                  borderRadius: 8,
+                  color: "#C084FC",
+                  padding: "6px 14px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+                aria-label="Copy SHA-256 fingerprint to clipboard"
+              >
+                {copied ? <Check size={13} color="#34D399" /> : <Copy size={13} />}
+                {copied ? "Copied to Clipboard!" : "Copy Hash"}
+              </button>
+            </div>
           </div>
 
-          {/* Summary rows */}
+          {/* Summary metadata rows */}
           {[
-            ["Contract ID", "pact_01JDFG49XK4VD"],
-            ["Issued", new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })],
-            ["Buyer", "Priya S."],
-            ["Seller", "Alex M."],
-            ["Total held", `$${total.toLocaleString()} USD`],
-            ["Features passed", `${features.filter((f) => (f.status || "").toLowerCase() === "passed").length} of ${features.length}`],
-            ["Seller payout", `$${passedAmount.toLocaleString()} USD`],
-            ["Buyer refund", `$${(total - passedAmount).toLocaleString()} USD`],
-            ["Visual match avg", "94.3%"],
-            ["Test coverage", "87%"],
+            ["Contract ID", activeContract.id],
+            ["Contract Title", activeContract.title],
+            ["Settlement Timestamp", new Date(receipt.settled_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })],
+            ["Hirer (Buyer)", activeContract.buyer_name || "Priya Sharma"],
+            ["Freelancer (Seller)", activeContract.seller_name || "Alex Mercer"],
+            ["Total Held in Escrow", `$${total.toLocaleString()}.00 USD`],
+            ["Features Passed", `${passedCount} of ${features.length} milestones verified`],
+            ["Freelancer Disbursal", `$${sellerPayout.toLocaleString()}.00 USD`],
+            ["Hirer Refund", `$${buyerRefund.toLocaleString()}.00 USD`],
+            ["Test Assertions", `${receipt.verification_metrics.tests_passed}/${receipt.verification_metrics.tests_total} Passed (${receipt.verification_metrics.coverage_percent}% Coverage)`],
+            ["Visual Match Avg", `${receipt.verification_metrics.visual_similarity_score}% (Threshold: 90%)`],
+            ["PayPal Batch ID", receipt.financial_dispatch.paypal_payout_batch_id],
           ].map(([k, v]) => (
             <div
               key={k}
@@ -2486,38 +2564,62 @@ function ReceiptTab({
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                fontSize: 14,
-                paddingBottom: 14,
+                fontSize: 13.5,
+                paddingBottom: 12,
                 borderBottom: "1px solid rgba(255,255,255,0.05)",
               }}
             >
               <span style={{ color: "var(--color-text-muted)" }}>{k}</span>
-              <span style={{ fontWeight: 600, color: "white", fontFamily: ["Total held", "Seller payout", "Buyer refund"].includes(k) ? "JetBrains Mono, monospace" : "Inter, sans-serif" }}>
+              <span style={{ fontWeight: 600, color: "white", fontFamily: ["Total Held in Escrow", "Freelancer Disbursal", "Hirer Refund", "Contract ID", "PayPal Batch ID"].includes(k) ? "JetBrains Mono, monospace" : "Inter, sans-serif" }}>
                 {v}
               </span>
             </div>
           ))}
 
-          {/* PayPal link */}
-          <a
-            href="#"
+          {/* Direct link to dedicated C45 standalone receipt page */}
+          <Link
+            href={`/contracts/${activeContract.id}/receipt`}
             style={{
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               gap: 8,
-              background: "rgba(0,102,255,0.08)",
-              border: "1px solid rgba(0,102,255,0.25)",
+              background: "linear-gradient(135deg, #0066FF, #00A3E0)",
               borderRadius: 12,
-              color: "#60A5FA",
+              color: "white",
               padding: "14px",
               fontSize: 14,
+              fontWeight: 700,
+              textDecoration: "none",
+              boxShadow: "0 0 20px rgba(0,102,255,0.3)",
+              marginTop: 6,
+            }}
+          >
+            Open Dedicated Proof-of-Work Receipt Page (C45) →
+          </Link>
+
+          {/* PayPal link */}
+          <a
+            href={receipt.evidence_links.paypal_transaction_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 12,
+              color: "var(--color-text-secondary)",
+              padding: "12px",
+              fontSize: 13,
               fontWeight: 600,
               textDecoration: "none",
             }}
             aria-label="View PayPal transaction reference"
           >
-            🔗 View PayPal reference · PP-R-4A9F3E8C2D4B
+            🔗 View PayPal Reference · {receipt.financial_dispatch.paypal_order_id}
           </a>
         </div>
       </div>
