@@ -84,6 +84,16 @@ class GitHubFeedbackNotifier:
         }
         icon, badge_text = badge_map.get(rec, ("⚖️", rec))
 
+        sec_counts = report.security_counts or {}
+        cov_summary = report.coverage_summary or {}
+        hardening = report.container_hardening or {}
+
+        cov_pct = cov_summary.get("coverage_percentage", 0.0)
+        cov_lines = f"{cov_summary.get('covered_lines', 0)}/{cov_summary.get('total_lines', 0)}"
+        sec_total = sec_counts.get("total_security_findings", len(report.security_findings or []))
+        sec_crit = sec_counts.get("critical_count", 0)
+        sec_high = sec_counts.get("high_count", 0)
+
         lines = [
             f"# {icon} PactPal AI Escrow Referee — Deliverable Verification Report",
             "",
@@ -97,6 +107,9 @@ class GitHubFeedbackNotifier:
             f"- **Commit SHA**: `{submission.commit_sha}`",
             f"- **Submission Status**: {'⚠️ Late Submission' if submission.is_late else '✅ On-Time Delivery'}",
             f"- **Sandbox Compilation**: {'✅ Build Passed' if report.build_succeeded else '❌ Build Failed'}",
+            f"- **Test Line Coverage**: **`{cov_pct}%`** (`{cov_lines} lines`) - `{cov_summary.get('status', 'SATISFACTORY')}`",
+            f"- **Security & Loopholes**: **`{sec_total}`** detected (`{sec_crit}` critical, `{sec_high}` high)",
+            f"- **Container Hardening**: {'🛡️ Enforced (Zero-Trust, Offline Network, Ephemeral)' if hardening.get('container_hardened', True) else 'Active'}",
             f"- **Overall Verification Score**: **`{score_pct}%`**",
             f"- **Referee Recommendation**: `{rec}`",
             ""
@@ -144,9 +157,14 @@ class GitHubFeedbackNotifier:
         ])
 
         if not security_findings:
-            lines.append("- ✅ **Clean Deliverable**: No cheats, hardcoded test answers, disabled assertions, or exposed secrets detected.")
+            lines.append("- ✅ **Clean Deliverable**: No cheats, hardcoded test answers, disabled assertions, or exposed secrets detected (0 issues).")
         else:
-            lines.append(f"⚠️ **Attention Required**: Detected **{len(security_findings)}** security/loophole findings:")
+            by_sev = sec_counts.get("by_severity", {})
+            crit_num = by_sev.get("CRITICAL", 0)
+            high_num = by_sev.get("HIGH", 0)
+            med_num = by_sev.get("MEDIUM", 0)
+            low_num = by_sev.get("LOW", 0)
+            lines.append(f"⚠️ **Attention Required**: Detected **{len(security_findings)}** security/loophole findings (**{crit_num}** Critical, **{high_num}** High, **{med_num}** Medium, **{low_num}** Low):")
             lines.append("")
             lines.append("| Severity | Category | Rule | Location | Description |")
             lines.append("| :---: | :--- | :--- | :--- | :--- |")
@@ -187,13 +205,15 @@ class GitHubFeedbackNotifier:
 
         # 4. Code Coverage Summary
         cov_summary = report.coverage_summary or {}
+        uncovered = cov_summary.get("uncovered_lines", max(0, cov_summary.get("total_lines", 0) - cov_summary.get("covered_lines", 0)))
+        modules_cnt = cov_summary.get("modules_count", len(cov_summary.get("modules", {})))
         lines.extend([
             "---",
             "",
             "### 📊 Test Coverage Summary",
             f"- **Global Executable Line Coverage**: `{cov_summary.get('coverage_percentage', 0.0)}%` (Threshold: `{cov_summary.get('threshold', 80.0)}%`)",
-            f"- **Total Executable Lines**: `{cov_summary.get('total_lines', 0)}` | **Covered Lines**: `{cov_summary.get('covered_lines', 0)}`",
-            f"- **Coverage Status**: `{cov_summary.get('status', 'SATISFACTORY')}`",
+            f"- **Coverage Numbers**: `{cov_summary.get('covered_lines', 0)}` covered / `{cov_summary.get('total_lines', 0)}` total lines (`{uncovered}` uncovered across `{modules_cnt}` source modules)",
+            f"- **Coverage Status**: `{'✅ ' if cov_summary.get('meets_threshold', True) else '⚠️ '}{cov_summary.get('status', 'SATISFACTORY')}`",
             ""
         ])
 

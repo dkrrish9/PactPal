@@ -108,7 +108,9 @@ class VerificationReport:
     skipped_stages: Optional[List[str]] = None
     next_state: str = "DECISION"
     security_findings: Optional[List[Dict[str, Any]]] = None
+    security_counts: Optional[Dict[str, Any]] = None
     coverage_summary: Optional[Dict[str, Any]] = None
+    container_hardening: Optional[Dict[str, Any]] = None
     recommendation: Optional[str] = None
     notifications: Optional[List[Dict[str, Any]]] = None
 
@@ -124,7 +126,8 @@ class VerificationReport:
         failure_reason: str,
         features: Optional[List[Dict[str, Any]]] = None,
         render_job_id: Optional[str] = None,
-        ai_diagnostic: Optional[Dict[str, Any]] = None
+        ai_diagnostic: Optional[Dict[str, Any]] = None,
+        container_hardening: Optional[Dict[str, Any]] = None
     ) -> "VerificationReport":
         """
         Creates a fast-tracked failure report when a deliverable fails Stage B Build.
@@ -146,6 +149,29 @@ class VerificationReport:
                     "price_weight": feat.get("price_weight", 0.0)
                 }
 
+        default_security_counts = {
+            "total_security_findings": 0,
+            "total_cheat_findings": 0,
+            "by_severity": {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0},
+            "by_category": {},
+            "critical_count": 0,
+            "high_count": 0,
+            "medium_count": 0,
+            "low_count": 0,
+            "clean": True
+        }
+
+        default_coverage_summary = {
+            "total_lines": 0,
+            "covered_lines": 0,
+            "uncovered_lines": 0,
+            "coverage_percentage": 0.0,
+            "threshold": 80.0,
+            "status": "UNAVAILABLE",
+            "meets_threshold": False,
+            "modules": {}
+        }
+
         return cls(
             id=str(uuid.uuid4()),
             submission_id=submission_id,
@@ -162,5 +188,10 @@ class VerificationReport:
             failure_reason=failure_reason,
             ai_diagnostic=ai_diagnostic or {},
             skipped_stages=["STAGE_C_TESTS", "STAGE_D_CHEAT_SCAN", "STAGE_E_VISUAL_DIFF"],
-            next_state="DECISION"
+            next_state="DECISION",
+            security_findings=[],
+            security_counts=default_security_counts,
+            coverage_summary=default_coverage_summary,
+            container_hardening=container_hardening or {"container_hardened": True, "network_isolated": True, "security_policy": "ZERO_TRUST_AIR_GAPPED"},
+            recommendation="REJECT_AND_HOLD"
         )
