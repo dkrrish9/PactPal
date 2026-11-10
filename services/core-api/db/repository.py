@@ -171,17 +171,30 @@ class ContractRepository:
         """)
         self.conn.commit()
 
-    # --- User Management ---
-    def create_user(self, name: str, email: str, role: UserRole, paypal_email: Optional[str] = None) -> User:
-        user_id = generate_uuid()
+    # --- User Management (C09a / C09b) ---
+    def create_user(
+        self,
+        name: str,
+        email: str,
+        role: UserRole = UserRole.BUYER,
+        paypal_email: Optional[str] = None,
+        id: Optional[str] = None
+    ) -> User:
+        """
+        Creates a user record. Supports passing an explicit id (e.g. Supabase sub UUID).
+        Defaults to BUYER role upon initial Google OAuth sign-in (Task C09a).
+        """
+        user_id = id if id is not None else generate_uuid()
         timestamp = now_iso()
+        role_val = role.value if isinstance(role, UserRole) else str(role)
+        role_enum = role if isinstance(role, UserRole) else UserRole(role)
         cursor = self.conn.cursor()
         cursor.execute(
             "INSERT INTO users (id, role, name, email, paypal_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user_id, role.value, name, email, paypal_email, timestamp, timestamp)
+            (user_id, role_val, name, email, paypal_email, timestamp, timestamp)
         )
         self.conn.commit()
-        return User(id=user_id, name=name, email=email, role=role, paypal_email=paypal_email)
+        return User(id=user_id, name=name, email=email, role=role_enum, paypal_email=paypal_email)
 
     def get_user(self, user_id: str) -> Optional[User]:
         cursor = self.conn.cursor()
@@ -196,6 +209,65 @@ class ContractRepository:
             role=UserRole(row["role"]),
             paypal_email=row["paypal_email"]
         )
+
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        """Finds user by email address (case-insensitive) for OAuth account linking (Task C09a)."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE LOWER(email) = LOWER(?)", (email.strip(),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return User(
+            id=row["id"],
+            name=row["name"],
+            email=row["email"],
+            role=UserRole(row["role"]),
+            paypal_email=row["paypal_email"]
+        )
+
+    def update_user_role(self, user_id: str, role: UserRole | str) -> User:
+        """Updates user's role on role selection (Task C09b)."""
+        if not isinstance(role, UserRole):
+            try:
+                role = UserRole(str(role).upper())
+            except ValueError:
+                valid = [r.value for r in UserRole]
+                raise ValueError(f"Invalid user role: '{role}'. Must be one of {valid}")
+        timestamp = now_iso()
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE users SET role = ?, updated_at = ? WHERE id = ?",
+            (role.value, timestamp, user_id)
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"User with id '{user_id}' not found.")
+        self.conn.commit()
+        return self.get_user(user_id)
+
+    def get_contracts_for_user(self, user: User) -> List[Dict[str, Any]]:
+        """
+        Role-based contract isolation (Task C09b).
+        - BUYER only sees contracts they created (buyer_id == user.id)
+        - SELLER only sees contracts assigned to them (seller_id == user.id)
+        - ADMIN sees all contracts across the platform
+        """
+        cursor = self.conn.cursor()
+        if user.role == UserRole.ADMIN:
+            cursor.execute("SELECT id FROM contracts ORDER BY created_at DESC")
+        elif user.role == UserRole.BUYER:
+            cursor.execute("SELECT id FROM contracts WHERE buyer_id = ? ORDER BY created_at DESC", (user.id,))
+        elif user.role == UserRole.SELLER:
+            cursor.execute("SELECT id FROM contracts WHERE seller_id = ? ORDER BY created_at DESC", (user.id,))
+        else:
+            return []
+
+        rows = cursor.fetchall()
+        contracts = []
+        for r in rows:
+            contract = self.get_contract(r["id"])
+            if contract:
+                contracts.append(contract)
+        return contracts
 
     # --- Contract Management ---
     def create_contract(

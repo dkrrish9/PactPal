@@ -168,41 +168,35 @@ def assert_can_dispatch_notification(actor: User, contract: Dict[str, Any]) -> N
     )
 
 
-def assert_can_reauthorize_hold(actor: User, contract: Dict[str, Any]) -> None:
+def assert_can_access_contract(actor: User, contract: Dict[str, Any]) -> None:
     """
-    Enforces permission to re-authorize an escrow authorization hold (Commit C54).
+    Enforces authorization to access and view a contract (Task C09b).
     Allowed actors:
-    - Contract BUYER
-    - Platform ADMIN
-    - AI Referee agent
+    - Platform ADMIN (can inspect any contract)
+    - Participant BUYER (assigned buyer for the contract)
+    - Participant SELLER (assigned seller for the contract)
+    - AI Referee / System Agents
     """
     if actor.role == UserRole.ADMIN:
         return
-    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or getattr(actor, "role", None) == "AI_REFEREE":
+    if getattr(actor, "id", None) in ("AI_REFEREE", "PRICE_NEGOTIATOR", "ADMIN") or \
+       getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or \
+       getattr(actor, "role", None) in ("AI_REFEREE", "PRICE_NEGOTIATOR"):
         return
-    if actor.id == contract.get("buyer_id"):
+    if actor.id == contract.get("buyer_id") or actor.id == contract.get("seller_id"):
         return
     raise ForbiddenActionError(
-        f"User '{actor.id}' with role '{actor.role.value}' is not authorized to re-authorize hold for contract '{contract.get('id')}'. "
-        f"Access restricted to contract buyer, platform admin, or AI referee."
+        f"User '{actor.id}' with role '{actor.role.value}' is not authorized to access contract '{contract.get('id')}'. "
+        f"Access restricted to contract participants (buyer, seller) or platform admin."
     )
 
 
-def assert_can_retry_payout(actor: User, contract: Optional[Dict[str, Any]] = None) -> None:
-    """
-    Enforces permission to retry failed seller payouts or resolve escalation flags (Commit C54).
-    Allowed actors:
-    - Platform ADMIN
-    - AI Referee agent
-    """
-    if actor.role == UserRole.ADMIN:
-        return
-    if getattr(actor, "id", None) in ("AI_REFEREE", "ADMIN") or getattr(actor, "name", None) in ("AI Referee", "Platform Admin") or getattr(actor, "role", None) == "AI_REFEREE":
-        return
-    raise ForbiddenActionError(
-        f"User '{actor.id}' with role '{actor.role.value}' is not authorized to retry payouts. "
-        f"Only platform ADMIN or AI Referee can retry seller payouts or clear escalation flags."
-    )
+def assert_contract_participant(actor: User, contract: Dict[str, Any]) -> None:
+    """Validates that the actor is either the assigned buyer or seller."""
+    if actor.id != contract.get("buyer_id") and actor.id != contract.get("seller_id"):
+        raise ForbiddenActionError(
+            f"User '{actor.id}' is neither the assigned buyer nor seller for contract '{contract.get('id')}'."
+        )
 
 
 
