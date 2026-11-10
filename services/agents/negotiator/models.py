@@ -1,6 +1,6 @@
 """
 Data Models for AI Price Negotiator & Scope Change Requests
-Linked Task: C38 / A12 (Milestone 3: Money & Extras)
+Linked Tasks: C38 / C42 / A12 / A13 (Milestone 3: Money & Extras)
 """
 
 from dataclasses import dataclass, field, asdict
@@ -35,6 +35,9 @@ class ChangeRequestProposal:
     proposed_by_id: Optional[str] = None
     change_request_id: str = field(default_factory=lambda: f"CR-{uuid.uuid4().hex[:8].upper()}")
     status: str = "PROPOSED"  # PROPOSED | ACCEPTED | REJECTED | COUNTERED
+    additional_auth_id: Optional[str] = None  # C46: Secondary PayPal authorization ID for incremental hold
+    rejection_reason: Optional[str] = None
+    counter_history: List[Dict[str, Any]] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -43,3 +46,32 @@ class ChangeRequestProposal:
         data["complexity"] = self.complexity.value
         return data
 
+@dataclass
+class MiniAgreement:
+    """
+    Legally binding amendment contract synthesized upon change request acceptance.
+    Preserves original features and adds a new checklist item with explicit weight, price, and deadline.
+    """
+    agreement_id: str
+    contract_id: str
+    change_request_id: str
+    title: str
+    original_total_amount: float
+    additional_price: float
+    new_total_amount: float
+    original_deadline: str
+    new_deadline: str
+    extra_hours: int
+    amended_feature_id: str
+    amended_feature_title: str
+    acceptance_test: str
+    new_feature_weight: float
+    ai_reasoning: str
+    accepted_by_id: Optional[str] = None
+    additional_auth_id: Optional[str] = None  # C46 hook
+    status: str = "ACCEPTED"
+    signed_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    legal_text: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
