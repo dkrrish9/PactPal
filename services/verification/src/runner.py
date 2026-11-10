@@ -19,6 +19,7 @@ from .test_runner import StageCTestSuiteProcessor
 from .screenshot_capture import HeadlessScreenshotCapture, BrowserNotFoundError
 from .visual_diff import VisualDiffEngine, DEFAULT_SIMILARITY_THRESHOLD
 from .cheat_scanner import CheatScanner
+from .report_assembler import ReportAssembler
 
 class VerificationPipelineRunner:
     """Executes the verification pipeline across Stages A through F."""
@@ -28,13 +29,15 @@ class VerificationPipelineRunner:
         ai_evaluator: Optional[AIIntakeEvaluator] = None,
         figma_reference_dir: Optional[Path] = None,
         visual_diff_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
-        cheat_scanner: Optional[CheatScanner] = None
+        cheat_scanner: Optional[CheatScanner] = None,
+        report_assembler: Optional[ReportAssembler] = None
     ):
         self.ai = ai_evaluator or AIIntakeEvaluator()
         self.stage_c = StageCTestSuiteProcessor(ai_evaluator=self.ai)
         self.cheat_scanner = cheat_scanner or CheatScanner(ai_evaluator=self.ai)
         self.visual_diff_engine = VisualDiffEngine(similarity_threshold=visual_diff_threshold, ai_evaluator=self.ai)
         self.figma_dir = figma_reference_dir or (Path(__file__).resolve().parents[3] / "demo-assets" / "figma")
+        self.report_assembler = report_assembler or ReportAssembler()
 
     def run_pipeline(
         self,
@@ -164,23 +167,17 @@ class VerificationPipelineRunner:
                         "ready_for_figma_diff": False
                     }
 
-            return VerificationReport(
-                id=str(uuid.uuid4()),
-                submission_id=submission.id,
-                contract_id=submission.contract_id,
-                render_job_id=f"job_{submission.id[:8]}",
+            # 7. Merge all stages into unified multi-modal report (C32 Done Criteria)
+            return self.report_assembler.assemble_report(
+                submission=submission,
+                repo_dir=clone_dest,
                 build_succeeded=True,
                 build_logs=combined_logs,
                 test_suite_results=test_suite_results,
-                cheat_scan_findings=cheat_scan_findings,
+                cheat_scan_report=cheat_scan_report,
                 visual_diff_summary=visual_diff_summary,
-                per_feature_results=per_feature_results,
-                overall_score=overall_score,
-                completed_at=submission.submitted_at,
-                failure_reason=None,
-                ai_diagnostic=None,
-                skipped_stages=[],
-                next_state="DECISION"
+                features=features,
+                render_job_id=f"job_{submission.id[:8]}"
             )
 
     def _determine_build_commands(self, submission: SubmissionRecord, repo_dir: Path) -> List[List[str]]:
