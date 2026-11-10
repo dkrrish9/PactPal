@@ -44,6 +44,10 @@ from .github_notifier import (
     GitHubFeedbackNotifier,
     GitHubNotifierError
 )
+from .resubmission_manager import (
+    ResubmissionManager,
+    SubmissionVersion
+)
 
 __all__ = [
     "IntakeRequest",
@@ -71,5 +75,7 @@ __all__ = [
     "ReportAssembler",
     "CoverageAnalyzer",
     "GitHubFeedbackNotifier",
-    "GitHubNotifierError"
+    "GitHubNotifierError",
+    "ResubmissionManager",
+    "SubmissionVersion"
 ]

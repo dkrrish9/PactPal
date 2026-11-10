@@ -21,6 +21,8 @@ from .visual_diff import VisualDiffEngine, DEFAULT_SIMILARITY_THRESHOLD
 from .cheat_scanner import CheatScanner
 from .report_assembler import ReportAssembler
 from .github_notifier import GitHubFeedbackNotifier
+from .resubmission_manager import ResubmissionManager
+from .models import IntakeRequest
 
 class VerificationPipelineRunner:
     """Executes the verification pipeline across Stages A through F."""
@@ -32,7 +34,8 @@ class VerificationPipelineRunner:
         visual_diff_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         cheat_scanner: Optional[CheatScanner] = None,
         report_assembler: Optional[ReportAssembler] = None,
-        github_notifier: Optional[GitHubFeedbackNotifier] = None
+        github_notifier: Optional[GitHubFeedbackNotifier] = None,
+        resubmission_manager: Optional[ResubmissionManager] = None
     ):
         self.ai = ai_evaluator or AIIntakeEvaluator()
         self.stage_c = StageCTestSuiteProcessor(ai_evaluator=self.ai)
@@ -41,6 +44,43 @@ class VerificationPipelineRunner:
         self.figma_dir = figma_reference_dir or (Path(__file__).resolve().parents[3] / "demo-assets" / "figma")
         self.report_assembler = report_assembler or ReportAssembler()
         self.github_notifier = github_notifier or GitHubFeedbackNotifier()
+        self.resubmission_manager = resubmission_manager or ResubmissionManager()
+
+    def handle_contract_submission(
+        self,
+        request: IntakeRequest,
+        existing_submissions: List[Any],
+        features: Optional[List[Dict[str, Any]]] = None,
+        execute_verification: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Processes a deliverable submission or resubmission:
+          - Enforces max 3 attempts; refuses attempt #4.
+          - If accepted, runs verification pipeline and tracks version.
+        """
+        res = self.resubmission_manager.handle_submission_request(request, existing_submissions)
+        if not res.get("accepted"):
+            return res
+
+        submission_record = res["submission"]
+        if execute_verification:
+            report = self.run_pipeline(submission=submission_record, features=features)
+            res["report"] = report
+
+        return res
+
+    def list_contract_versions(
+        self,
+        contract_id: str,
+        submissions: List[Any],
+        reports: Optional[List[Any]] = None
+    ) -> Dict[str, Any]:
+        """Lists all historical submission versions for a contract with status and scores."""
+        return self.resubmission_manager.list_contract_submission_versions(
+            contract_id=contract_id,
+            submissions=submissions,
+            reports=reports
+        )
 
     def run_pipeline(
         self,
