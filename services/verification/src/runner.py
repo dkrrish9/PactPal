@@ -20,6 +20,7 @@ from .screenshot_capture import HeadlessScreenshotCapture, BrowserNotFoundError
 from .visual_diff import VisualDiffEngine, DEFAULT_SIMILARITY_THRESHOLD
 from .cheat_scanner import CheatScanner
 from .report_assembler import ReportAssembler
+from .github_notifier import GitHubFeedbackNotifier
 
 class VerificationPipelineRunner:
     """Executes the verification pipeline across Stages A through F."""
@@ -30,7 +31,8 @@ class VerificationPipelineRunner:
         figma_reference_dir: Optional[Path] = None,
         visual_diff_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         cheat_scanner: Optional[CheatScanner] = None,
-        report_assembler: Optional[ReportAssembler] = None
+        report_assembler: Optional[ReportAssembler] = None,
+        github_notifier: Optional[GitHubFeedbackNotifier] = None
     ):
         self.ai = ai_evaluator or AIIntakeEvaluator()
         self.stage_c = StageCTestSuiteProcessor(ai_evaluator=self.ai)
@@ -38,13 +40,15 @@ class VerificationPipelineRunner:
         self.visual_diff_engine = VisualDiffEngine(similarity_threshold=visual_diff_threshold, ai_evaluator=self.ai)
         self.figma_dir = figma_reference_dir or (Path(__file__).resolve().parents[3] / "demo-assets" / "figma")
         self.report_assembler = report_assembler or ReportAssembler()
+        self.github_notifier = github_notifier or GitHubFeedbackNotifier()
 
     def run_pipeline(
         self,
         submission: SubmissionRecord,
         features: Optional[List[Dict[str, Any]]] = None,
         timeout_seconds: int = 60,
-        capture_screenshots: bool = True
+        capture_screenshots: bool = True,
+        notify_seller: bool = True
     ) -> VerificationReport:
         """
         Executes isolated sandbox build and verification for a submission.
@@ -168,7 +172,7 @@ class VerificationPipelineRunner:
                     }
 
             # 7. Merge all stages into unified multi-modal report (C32 Done Criteria)
-            return self.report_assembler.assemble_report(
+            report = self.report_assembler.assemble_report(
                 submission=submission,
                 repo_dir=clone_dest,
                 build_succeeded=True,
@@ -179,6 +183,18 @@ class VerificationPipelineRunner:
                 features=features,
                 render_job_id=f"job_{submission.id[:8]}"
             )
+
+            # 8. Post GitHub Comment / Feedback Notification to Seller on Repo (C36 Done Criteria)
+            if notify_seller:
+                notification_evidence_dir = ws.workspace_path / "evidence" / "notifications"
+                notification_record = self.github_notifier.notify_seller_on_repo(
+                    report=report,
+                    submission=submission,
+                    evidence_dir=notification_evidence_dir
+                )
+                report.notifications = [notification_record]
+
+            return report
 
     def _determine_build_commands(self, submission: SubmissionRecord, repo_dir: Path) -> List[List[str]]:
         """Determines appropriate build commands for the deliverable."""

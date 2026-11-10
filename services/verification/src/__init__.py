@@ -40,6 +40,10 @@ from .report_assembler import (
     ReportAssembler,
     CoverageAnalyzer
 )
+from .github_notifier import (
+    GitHubFeedbackNotifier,
+    GitHubNotifierError
+)
 
 __all__ = [
     "IntakeRequest",
@@ -65,5 +69,7 @@ __all__ = [
     "CheatScanner",
     "CheatFinding",
     "ReportAssembler",
-    "CoverageAnalyzer"
+    "CoverageAnalyzer",
+    "GitHubFeedbackNotifier",
+    "GitHubNotifierError"
 ]

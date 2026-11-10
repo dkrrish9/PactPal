@@ -110,6 +110,7 @@ class VerificationReport:
     security_findings: Optional[List[Dict[str, Any]]] = None
     coverage_summary: Optional[Dict[str, Any]] = None
     recommendation: Optional[str] = None
+    notifications: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
