@@ -41,6 +41,10 @@ from .service import (
     assert_can_trigger_deadline_watcher,
     assert_can_view_notifications,
     assert_can_dispatch_notification,
+    assert_can_reauthorize_hold,
+    assert_can_retry_payout,
+    ExpiredAuthorizationError,
+    PayoutFailureError,
     DeadlineWatcherService,
     SweepResult,
     EmailNotificationService,
@@ -69,6 +73,10 @@ WEBHOOK_REGEX = re.compile(r"^/api/v1/payments/webhooks(?:/paypal)?/?$")
 NOTIFICATIONS_DISPATCH_REGEX = re.compile(r"^/api/v1/payments/notifications/dispatch/?$")
 CONTRACT_NOTIFICATIONS_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/notifications/?$")
 CONTRACT_NOTIFICATIONS_DISPATCH_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/notifications/dispatch/?$")
+REAUTHORIZE_AUTH_REGEX = re.compile(r"^/api/v1/payments/authorizations/([^/]+)/reauthorize/?$")
+REAUTHORIZE_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/reauthorize/?$")
+PAYOUT_RETRY_PAYMENTS_REGEX = re.compile(r"^/api/v1/payments/payouts/retry/?$")
+PAYOUT_RETRY_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/payouts/retry/?$")
 
 class PaymentsAPIHandler:
     """
@@ -276,6 +284,27 @@ class PaymentsAPIHandler:
                 return self._handle_dispatch_notification(headers, body, contract_id=contract_id)
             else:
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on contract notifications endpoint."})
+
+        # 12. POST /api/v1/payments/authorizations/{id}/reauthorize (Commit C54)
+        match_reauth = REAUTHORIZE_AUTH_REGEX.match(clean_path) or REAUTHORIZE_CONTRACT_REGEX.match(clean_path)
+        if match_reauth:
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on reauthorize endpoint."})
+            target_id = match_reauth.group(1)
+            return self._handle_reauthorize(target_id, headers, body)
+
+        # 13. POST /api/v1/payments/payouts/retry (Commit C54)
+        match_payout_retry_contract = PAYOUT_RETRY_CONTRACT_REGEX.match(clean_path)
+        if match_payout_retry_contract:
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on payout retry endpoint."})
+            contract_id = match_payout_retry_contract.group(1)
+            return self._handle_retry_payout(headers, body, contract_id=contract_id)
+
+        if PAYOUT_RETRY_PAYMENTS_REGEX.match(clean_path):
+            if method != "POST":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on payout retry endpoint."})
+            return self._handle_retry_payout(headers, body, contract_id=None)
 
         return self._json_response(404, {"error": "NOT_FOUND", "message": f"Endpoint '{clean_path}' not found in Payments API."})
 
@@ -1007,6 +1036,123 @@ class PaymentsAPIHandler:
                 "total_notifications": len(notifications),
                 "notifications": notifications
             })
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_reauthorize(
+        self,
+        target_id: str,
+        headers: Dict[str, str],
+        body: Optional[bytes]
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/authorizations/{id}/reauthorize (Commit C54).
+        Re-authorizes an expired or expiring authorization hold.
+        Accepts authorization ID or contract ID in path.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Provide valid X-Actor-Id or Authorization header."}
+            )
+
+        # Resolve target contract: target_id may be contract_id or authorization_id
+        contract = self.repository.get_contract(target_id)
+        contract_id = target_id
+        if not contract:
+            found = None
+            if hasattr(self.repository, "get_contracts_by_status"):
+                all_contracts = self.repository.get_contracts_by_status()
+                found = next((c for c in all_contracts if c.get("paypal_auth_id") == target_id), None)
+            if found:
+                contract = found
+                contract_id = found["id"]
+            else:
+                return self._json_response(
+                    404,
+                    {"error": "NOT_FOUND", "message": f"Authorization or contract '{target_id}' not found."}
+                )
+
+        idempotency_key = self._extract_idempotency_key(headers)
+
+        try:
+            res = self.service.handle_expired_authorization(
+                contract_id=contract_id,
+                actor=actor,
+                idempotency_key=idempotency_key
+            )
+            return self._json_response(200, res)
+        except ForbiddenActionError as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except UnauthorizedRoleError as e:
+            return self._json_response(403, {"error": "UNAUTHORIZED_ROLE", "message": str(e)})
+        except StateValidationError as e:
+            return self._json_response(400, {"error": "INVALID_STATE", "message": str(e)})
+        except ValueError as e:
+            msg = str(e)
+            if "not found" in msg.lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": msg})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": msg})
+        except ExpiredAuthorizationError as e:
+            return self._json_response(422, {"error": "AUTHORIZATION_EXPIRED", "message": str(e), "details": getattr(e, "details", {})})
+        except PayPalAPIError as e:
+            return self._json_response(502, {"error": "PAYPAL_API_ERROR", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_retry_payout(
+        self,
+        headers: Dict[str, str],
+        body: Optional[bytes],
+        contract_id: Optional[str] = None
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for POST /api/v1/payments/payouts/retry (Commit C54).
+        Admin/system endpoint to retry failed payouts or clear escalation flags.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Provide valid X-Actor-Id or Authorization header."}
+            )
+
+        try:
+            data = json.loads(body.decode("utf-8")) if body else {}
+        except Exception as e:
+            return self._json_response(400, {"error": "INVALID_JSON", "message": f"Malformed JSON: {str(e)}"})
+
+        resolved_contract_id = contract_id or data.get("contract_id")
+        if not resolved_contract_id:
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": "contract_id is required in path or request body."})
+
+        idempotency_key = self._extract_idempotency_key(headers)
+        new_receiver_email = data.get("seller_paypal_email") or data.get("receiver_email")
+
+        try:
+            res = self.service.retry_failed_payout(
+                contract_id=resolved_contract_id,
+                actor=actor,
+                idempotency_key=idempotency_key,
+                new_receiver_email=new_receiver_email
+            )
+            return self._json_response(200, res)
+        except ForbiddenActionError as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except UnauthorizedRoleError as e:
+            return self._json_response(403, {"error": "UNAUTHORIZED_ROLE", "message": str(e)})
+        except StateValidationError as e:
+            return self._json_response(400, {"error": "INVALID_STATE", "message": str(e)})
+        except ValueError as e:
+            msg = str(e)
+            if "not found" in msg.lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": msg})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": msg})
+        except PayoutFailureError as e:
+            return self._json_response(502, {"error": "PAYOUT_FAILURE_ESCALATION", "message": str(e), "details": getattr(e, "details", {})})
+        except PayPalAPIError as e:
+            return self._json_response(502, {"error": "PAYPAL_API_ERROR", "message": str(e)})
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
 

@@ -139,9 +139,19 @@ class PayPalClient:
                         return json.loads(raw_bytes.decode("utf-8"))
                 except urllib.error.HTTPError as retry_e:
                     err_body = retry_e.read().decode()
-                    raise PayPalAPIError(f"Request failed after token refresh ({retry_e.code}): {err_body}", status_code=retry_e.code)
+                    details = {}
+                    try:
+                        details = json.loads(err_body)
+                    except Exception:
+                        pass
+                    raise PayPalAPIError(f"Request failed after token refresh ({retry_e.code}): {err_body}", status_code=retry_e.code, details=details)
             err_body = e.read().decode()
-            raise PayPalAPIError(f"PayPal API error ({e.code}): {err_body}", status_code=e.code)
+            details = {}
+            try:
+                details = json.loads(err_body)
+            except Exception:
+                pass
+            raise PayPalAPIError(f"PayPal API error ({e.code}): {err_body}", status_code=e.code, details=details)
         except Exception as e:
             raise PayPalAPIError(f"Failed to communicate with PayPal API: {str(e)}")
 

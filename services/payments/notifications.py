@@ -148,6 +148,7 @@ class InMemoryEmailProvider(BaseEmailProvider):
             "body_text": body_text,
             "body_html": body_html,
             "metadata": metadata or {},
+            "role": (metadata or {}).get("role"),
             "status": "SENT",
             "provider": self.name,
             "sent_at": sent_at
@@ -890,6 +891,175 @@ class EmailTemplateEngine:
                 )
             return subject, body_text, body_html
 
+        # ---------------------------------------------------------------------
+        # 7. EXPIRED / AUTHORIZATION_REAUTH_FAILED (Commit C54)
+        # ---------------------------------------------------------------------
+        if state in ("EXPIRED", "AUTHORIZATION_REAUTH_FAILED"):
+            if role == "BUYER":
+                subject = f"[PactPal Action Required] Escrow Hold Expired: {title} - Please Re-fund Escrow"
+                body_text = (
+                    f"Hello {buyer.name},\n\n"
+                    f"Your PayPal authorization hold for agreement '{title}' (Contract ID: {contract_id}) has reached its 29-day limit "
+                    f"and automated re-authorization could not be completed.\n\n"
+                    f"Action Required:\n"
+                    f"Please re-fund your escrow balance on PayPal to ensure funds remain securely authorized for freelancer {seller.name} while deliverables are completed.\n\n"
+                    f"Agreement Details:\n"
+                    f"- Contract ID: {contract_id}\n"
+                    f"- Escrow Value: {total_amount:,.2f} {currency}\n"
+                    f"- Freelancer: {seller.name} ({seller.email})\n"
+                    f"- Previous Authorization ID: {paypal_auth_id}\n\n"
+                    f"PactPal Zero-Trust Multimodal Escrow"
+                )
+                body_html = cls._wrap_html(
+                    title=f"Action Required: Re-fund Escrow for {title}",
+                    headline="Escrow Authorization Hold Expired",
+                    recipient_name=buyer.name,
+                    greeting_text=f"The PayPal escrow authorization hold for <strong>{title}</strong> has reached its 29-day limit and automated re-authorization could not be completed.",
+                    key_value_pairs=[
+                        ("Contract Title", title),
+                        ("Contract ID", contract_id),
+                        ("Escrow Value", f"{total_amount:,.2f} {currency}"),
+                        ("Freelancer", f"{seller.name} ({seller.email})"),
+                        ("Previous Auth ID", paypal_auth_id)
+                    ],
+                    callout_text="To protect both parties, contract funds must remain actively authorized on PayPal escrow rails while work is in progress.",
+                    action_note="Please log in to PactPal to re-fund the escrow balance and refresh your authorization hold.",
+                    badge_text="Action Required: Re-fund Escrow",
+                    badge_color="#DC2626"
+                )
+            elif role == "SELLER":
+                subject = f"[PactPal Notice] Escrow Hold Expired: {title} - Awaiting Buyer Re-funding"
+                body_text = (
+                    f"Hello {seller.name},\n\n"
+                    f"The PayPal authorization hold for agreement '{title}' (Contract ID: {contract_id}) has reached its 29-day limit. "
+                    f"Client {buyer.name} has been prompted to re-fund the escrow balance.\n\n"
+                    f"You will receive confirmation as soon as fresh authorization rails are in place.\n\n"
+                    f"PactPal Zero-Trust Multimodal Escrow"
+                )
+                body_html = cls._wrap_html(
+                    title=f"Escrow Hold Expired: {title}",
+                    headline="Escrow Hold Expired",
+                    recipient_name=seller.name,
+                    greeting_text=f"The escrow authorization hold for agreement <strong>{title}</strong> has reached its 29-day limit.",
+                    key_value_pairs=[
+                        ("Contract Title", title),
+                        ("Contract ID", contract_id),
+                        ("Agreed Value", f"{total_amount:,.2f} {currency}"),
+                        ("Client", f"{buyer.name} ({buyer.email})")
+                    ],
+                    callout_text="Client has been prompted to re-authorize and re-fund the escrow hold.",
+                    action_note="You will receive confirmation as soon as funds are re-secured on PayPal rails.",
+                    badge_text="Hold Expired",
+                    badge_color="#F59E0B"
+                )
+            else:  # ADMIN / SYSTEM
+                subject = f"[PactPal Alert] Authorization Re-auth Failed: {title}"
+                body_text = (
+                    f"Hello Platform Admin,\n\n"
+                    f"Automated re-authorization failed for contract '{title}' (Contract ID: {contract_id}).\n"
+                    f"Hold is marked EXPIRED and buyer has been prompted to re-fund."
+                )
+                body_html = cls._wrap_html(
+                    title=f"Authorization Re-auth Failed: {title}",
+                    headline="Re-authorization Failed",
+                    recipient_name="Platform Admin",
+                    greeting_text=f"Re-authorization failed for contract <strong>{title}</strong>.",
+                    key_value_pairs=[
+                        ("Contract Title", title),
+                        ("Contract ID", contract_id),
+                        ("Amount", f"{total_amount:,.2f} {currency}"),
+                        ("Buyer", f"{buyer.name} ({buyer.email})")
+                    ],
+                    callout_text="Buyer prompted for manual re-funding.",
+                    badge_text="Re-auth Failed",
+                    badge_color="#DC2626"
+                )
+            return subject, body_text, body_html
+
+        # ---------------------------------------------------------------------
+        # 8. PAYOUT_FAILURE_ESCALATION / PAYOUT_FAILED (Commit C54)
+        # ---------------------------------------------------------------------
+        if state in ("PAYOUT_FAILURE_ESCALATION", "PAYOUT_FAILED"):
+            err_detail = metadata.get("failure_reason") or metadata.get("error") or "Unknown Payout API error"
+            recipient_email = metadata.get("recipient_email") or seller.paypal_email or seller.email
+            payout_amount = float(metadata.get("amount") or total_amount)
+            batch_ref = metadata.get("payout_batch_reference") or "N/A"
+
+            if role in ("ADMIN", "SYSTEM"):
+                subject = f"[PactPal ESCALATION] Seller Payout Failed: {title} - Admin Review Required"
+                body_text = (
+                    f"Hello Platform Admin,\n\n"
+                    f"A critical payout disbursement failure has occurred for contract '{title}' (Contract ID: {contract_id}).\n\n"
+                    f"Escalation Details:\n"
+                    f"- Recipient: {recipient_email}\n"
+                    f"- Amount: {payout_amount:,.2f} {currency}\n"
+                    f"- Failure Reason: {err_detail}\n"
+                    f"- Batch Reference: {batch_ref}\n\n"
+                    f"Action Required:\n"
+                    f"Manual administrative intervention is required to resolve recipient account issues or trigger payout retry.\n\n"
+                    f"PactPal Escalation Rails"
+                )
+                body_html = cls._wrap_html(
+                    title=f"Payout Failure Escalation: {title}",
+                    headline="Critical Payout Failure Escalation",
+                    recipient_name="Platform Admin",
+                    greeting_text=f"Seller payout disbursement failed for contract <strong>{title}</strong> and requires manual administrator review.",
+                    key_value_pairs=[
+                        ("Contract Title", title),
+                        ("Contract ID", contract_id),
+                        ("Disbursement Amount", f"{payout_amount:,.2f} {currency}"),
+                        ("Recipient Email", str(recipient_email)),
+                        ("Error / Reason", str(err_detail)),
+                        ("Batch Reference", str(batch_ref))
+                    ],
+                    callout_text="Automated retries were exhausted or PayPal returned a terminal error. Payout record has been flagged for admin review.",
+                    action_note="Use admin payout retry endpoint to re-dispatch disbursement once receiver issues are resolved.",
+                    badge_text="Admin Escalation",
+                    badge_color="#DC2626"
+                )
+            elif role == "SELLER":
+                subject = f"[PactPal Notice] Payout Processing Notice: {title}"
+                body_text = (
+                    f"Hello {seller.name},\n\n"
+                    f"Your milestone payout for contract '{title}' (Contract ID: {contract_id}) has encountered a temporary processing delay "
+                    f"and has been escalated to platform administration for immediate review.\n\n"
+                    f"Our team is actively reviewing the disbursement to ensure funds reach your PayPal account safely.\n\n"
+                    f"PactPal Escrow Support"
+                )
+                body_html = cls._wrap_html(
+                    title=f"Payout Processing Notice: {title}",
+                    headline="Payout Processing In Review",
+                    recipient_name=seller.name,
+                    greeting_text=f"Your disbursement for contract <strong>{title}</strong> has encountered a temporary processing delay.",
+                    key_value_pairs=[
+                        ("Contract Title", title),
+                        ("Contract ID", contract_id),
+                        ("Amount", f"{payout_amount:,.2f} {currency}")
+                    ],
+                    callout_text="Our platform administration team has been automatically alerted to review and resolve this payout directly.",
+                    action_note="You will receive confirmation as soon as funds are disbursed to your PayPal account.",
+                    badge_text="In Admin Review",
+                    badge_color="#F59E0B"
+                )
+            else:  # BUYER
+                subject = f"[PactPal Notice] Contract Settlement Update: {title}"
+                body_text = (
+                    f"Hello {buyer.name},\n\n"
+                    f"Settlement for contract '{title}' (Contract ID: {contract_id}) has completed. Freelancer payout disbursement is undergoing standard administrative compliance review.\n\n"
+                    f"PactPal Zero-Trust Multimodal Escrow"
+                )
+                body_html = cls._wrap_html(
+                    title=f"Settlement Update: {title}",
+                    headline="Settlement Processing",
+                    recipient_name=buyer.name,
+                    greeting_text=f"Settlement for contract <strong>{title}</strong> is concluding.",
+                    key_value_pairs=[("Contract Title", title), ("Contract ID", contract_id)],
+                    callout_text="Contract settlement funds have been accounted for.",
+                    badge_text="Settlement Update",
+                    badge_color="#2563EB"
+                )
+            return subject, body_text, body_html
+
         # Fallback generic state template
         subject = f"[PactPal] Contract Update: {title} ({state})"
         body_text = (
@@ -924,7 +1094,11 @@ class EmailNotificationService:
         "SUBMITTED",
         "VERIFYING",
         "DECISION",
-        "SETTLED"
+        "SETTLED",
+        "EXPIRED",
+        "AUTHORIZATION_REAUTH_FAILED",
+        "PAYOUT_FAILURE_ESCALATION",
+        "PAYOUT_FAILED"
     }
 
     STATE_ALIASES = {
@@ -932,6 +1106,10 @@ class EmailNotificationService:
         "PAYOUT COMPLETE": "SETTLED",
         "PAYOUT": "SETTLED",
         "COMPLETE": "SETTLED",
+        "AUTHORIZATION_EXPIRED": "EXPIRED",
+        "HOLD_EXPIRED": "EXPIRED",
+        "REAUTH_FAILED": "AUTHORIZATION_REAUTH_FAILED",
+        "PAYOUT_ESCALATION": "PAYOUT_FAILURE_ESCALATION",
     }
 
     def __init__(
@@ -1102,10 +1280,22 @@ class EmailNotificationService:
         # Enrich metadata
         meta = self._enrich_metadata_from_db(contract_id, canonical_state, metadata or {})
 
+        recipients = [buyer, seller]
+        if canonical_state in ("PAYOUT_FAILURE_ESCALATION", "PAYOUT_FAILED"):
+            admin_email = os.environ.get("ADMIN_EMAIL", "admin@pactpal.internal")
+            recipients.append(
+                NotificationRecipient(
+                    email=admin_email,
+                    name="Platform Admin",
+                    role="ADMIN",
+                    user_id="ADMIN"
+                )
+            )
+
         dispatched_records: List[Dict[str, Any]] = []
 
-        # Send to both Buyer and Seller
-        for recipient in (buyer, seller):
+        # Send to all intended recipients
+        for recipient in recipients:
             subject, body_text, body_html = EmailTemplateEngine.render(
                 state=canonical_state,
                 role=recipient.role,
@@ -1195,6 +1385,18 @@ class EmailNotificationService:
 
     def notify_settled(self, contract_id: str, metadata: Optional[Dict[str, Any]] = None, actor: Optional[Any] = None) -> List[Dict[str, Any]]:
         return self.notify_state_change(contract_id, "SETTLED", metadata, actor, force=True)
+
+    def notify_reauth_failed(self, contract_id: str, metadata: Optional[Dict[str, Any]] = None, actor: Optional[Any] = None) -> List[Dict[str, Any]]:
+        """Notifies buyer (and seller) that automated re-authorization failed and buyer must re-fund escrow (Commit C54)."""
+        return self.notify_state_change(contract_id, "AUTHORIZATION_REAUTH_FAILED", metadata, actor, force=True)
+
+    def notify_authorization_expired(self, contract_id: str, metadata: Optional[Dict[str, Any]] = None, actor: Optional[Any] = None) -> List[Dict[str, Any]]:
+        """Notifies buyer that authorization hold has expired (Commit C54)."""
+        return self.notify_state_change(contract_id, "EXPIRED", metadata, actor, force=True)
+
+    def notify_payout_escalation(self, contract_id: str, metadata: Optional[Dict[str, Any]] = None, actor: Optional[Any] = None) -> List[Dict[str, Any]]:
+        """Notifies Platform Admin, Seller, and Buyer of a failed payout disbursement escalation (Commit C54)."""
+        return self.notify_state_change(contract_id, "PAYOUT_FAILURE_ESCALATION", metadata, actor, force=True)
 
     # --- Inspection & Audit Retrieval ---
     def get_contract_notifications(
