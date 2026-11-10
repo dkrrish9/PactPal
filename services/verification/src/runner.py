@@ -163,7 +163,14 @@ class VerificationPipelineRunner:
                     failure_reason=failure_reason,
                     features=features,
                     ai_diagnostic=diagnostic,
-                    container_hardening=ws.get_hardening_profile()
+                    container_hardening=ws.get_hardening_profile(),
+                    timing_compliance={
+                        "is_late": submission.is_late,
+                        "delay_seconds": submission.delay_seconds,
+                        "submitted_at": submission.submitted_at,
+                        "deadline": submission.deadline,
+                        "status": "LATE" if submission.is_late else "ON_TIME"
+                    }
                 )
 
             # 4. Stage C: Automated Tests & Per-Feature Mapping (C23 Done Criteria)

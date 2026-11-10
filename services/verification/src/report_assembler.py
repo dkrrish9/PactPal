@@ -187,9 +187,18 @@ class ReportAssembler:
             per_feature_results=per_feature_results
         )
 
-        # 5. Build unified VerificationReport with coverage numbers, security counts, and container hardening
+        # 5. Build unified VerificationReport with coverage numbers, security counts, container hardening, and timing compliance
         report_id = str(uuid.uuid4())
         job_id = render_job_id or f"job_{submission.id[:8]}"
+
+        timing_compliance = {
+            "is_late": submission.is_late,
+            "delay_seconds": submission.delay_seconds,
+            "submitted_at": submission.submitted_at,
+            "deadline": submission.deadline,
+            "status": "LATE" if submission.is_late else "ON_TIME",
+            "deadline_evaluation": (submission.git_metadata or {}).get("deadline_evaluation") if hasattr(submission, "git_metadata") else None
+        }
 
         report = VerificationReport(
             id=report_id,
@@ -216,6 +225,7 @@ class ReportAssembler:
                 "network_isolated": True,
                 "security_policy": "ZERO_TRUST_AIR_GAPPED"
             },
+            timing_compliance=timing_compliance,
             recommendation=recommendation
         )
 
