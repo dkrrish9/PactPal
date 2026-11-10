@@ -36,6 +36,10 @@ from .cheat_scanner import (
     CheatScanner,
     CheatFinding
 )
+from .report_assembler import (
+    ReportAssembler,
+    CoverageAnalyzer
+)
 
 __all__ = [
     "IntakeRequest",
@@ -59,5 +63,7 @@ __all__ = [
     "VisualDiffError",
     "DEFAULT_SIMILARITY_THRESHOLD",
     "CheatScanner",
-    "CheatFinding"
+    "CheatFinding",
+    "ReportAssembler",
+    "CoverageAnalyzer"
 ]

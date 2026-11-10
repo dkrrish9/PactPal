@@ -167,7 +167,7 @@ class CheatScanner:
         """
         # Pattern 1: Explicit cheat comments or bypass identifiers
         cheat_comment_re = re.compile(
-            r"//\s*(?:⚠️\s*)?(?:CHEAT|FLAW|HARDCODED|FAKE\s+ANSWER|MOCK\s+BYPASS|STATIC\s+BYPASS)",
+            r"//\s*(?:⚠️\s*)?(?:CHEAT|HARDCODED\s+(?:FAKE|MOCK|TEST|ANSWER)|FAKE\s+ANSWER|MOCK\s+BYPASS|STATIC\s+BYPASS)",
             re.IGNORECASE
         )
 

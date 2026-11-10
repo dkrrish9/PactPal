@@ -128,6 +128,20 @@ class StageCTestSuiteProcessor:
                 failed = max(1, fail_count)
                 total = passed + failed
 
+        # Extract individual test suite lines
+        test_suites = []
+        for line in combined.splitlines():
+            line_str = line.strip()
+            if "PASS:" in line_str or (line_str.startswith("✓") and "PASS" in line_str):
+                suite_name = re.sub(r"^[✓✗\s]*(?:PASS|FAIL):\s*", "", line_str)
+                test_suites.append({"name": suite_name, "status": "PASSED"})
+            elif "FAIL:" in line_str or (line_str.startswith("✗") and "FAIL" in line_str):
+                suite_name = re.sub(r"^[✓✗\s]*(?:PASS|FAIL):\s*", "", line_str)
+                err = None
+                if " - " in suite_name:
+                    suite_name, err = suite_name.split(" - ", 1)
+                test_suites.append({"name": suite_name, "status": "FAILED", "error": err or "Assertion failure"})
+
         status = "COMPLETED" if exec_res.succeeded else "FAILED"
         if exec_res.timed_out:
             status = "TIMED_OUT"
@@ -140,7 +154,8 @@ class StageCTestSuiteProcessor:
             "skipped_tests": 0,
             "duration_ms": duration_ms or exec_res.duration_ms,
             "exit_code": exec_res.exit_code,
-            "raw_output": combined.strip()
+            "raw_output": combined.strip(),
+            "test_suites": test_suites
         }
 
     def _evaluate_feature_acceptance(
