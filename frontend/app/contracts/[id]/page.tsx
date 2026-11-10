@@ -1,26 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Clock, CheckCircle, AlertCircle, Circle, BarChart2, MessageSquare, Activity, FileText, ArrowRight, ShieldCheck, UploadCloud, Scale } from "lucide-react";
+import { mockApi, Contract, HoldInfo, Feature } from "@/lib/mockApi";
 
 type TabId = "overview" | "gantt" | "chat" | "activity" | "receipt";
-
-const CONTRACT = {
-  title: "E-commerce Platform v2",
-  buyer: "Priya S.",
-  seller: "Alex M.",
-  total: 1500,
-  status: "VERIFYING",
-  daysLeft: 12,
-  features: [
-    { name: "Landing page", weight: 25, status: "passed", amount: 375 },
-    { name: "Login system", weight: 20, status: "failed", amount: 300 },
-    { name: "Dashboard", weight: 30, status: "passed", amount: 450 },
-    { name: "Payment flow", weight: 25, status: "verifying", amount: 375 },
-  ],
-};
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
   DRAFT:       { label: "Draft",       color: "#7C89A8", bg: "rgba(124,137,168,0.1)" },
@@ -47,14 +33,35 @@ export default function ContractDashboardPage() {
   const params = useParams();
   const contractId = (params?.id as string) || "pct_099e77";
   const [tab, setTab] = useState<TabId>("overview");
+  const [contract, setContract] = useState<Contract | null>(null);
+  const [holdInfo, setHoldInfo] = useState<HoldInfo | null>(null);
   const [releaseModalOpen, setReleaseModalOpen] = useState(false);
   const [isReleased, setIsReleased] = useState(false);
 
-  const currentStatus = isReleased ? "SETTLED" : CONTRACT.status;
-  const meta = STATUS_META[currentStatus];
-  const passedAmount = CONTRACT.features
-    .filter((f) => f.status === "passed")
-    .reduce((s, f) => s + f.amount, 0);
+  useEffect(() => {
+    const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+    if (loaded) {
+      setContract(loaded);
+      setHoldInfo(mockApi.getHoldInfo(loaded.id));
+    }
+  }, [contractId]);
+
+  const activeContract = contract || mockApi.getContracts()[0];
+  const currentStatus = isReleased ? "SETTLED" : (activeContract.status || "VERIFYING");
+  const meta = STATUS_META[currentStatus] || STATUS_META["VERIFYING"];
+
+  const features = activeContract.features || [];
+  const passedAmount = features
+    .filter((f) => f.status.toUpperCase() === "PASSED")
+    .reduce((s, f) => s + (f.allocated_amount || 0), 0);
+
+  const daysLeft = holdInfo?.days_remaining ?? 18;
+
+  const handleConfirmDisburse = () => {
+    mockApi.settleContract(activeContract.id, passedAmount);
+    setIsReleased(true);
+    setReleaseModalOpen(false);
+  };
 
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
@@ -74,12 +81,12 @@ export default function ContractDashboardPage() {
         >
           <div>
             <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>
-              <Link href="/hire" style={{ color: "inherit", textDecoration: "none" }}>Contracts</Link>
+              <Link href="/dashboard/hirer" style={{ color: "inherit", textDecoration: "none" }}>Contracts</Link>
               {" / "}
-              <span style={{ color: "var(--color-text-secondary)" }}>{CONTRACT.title}</span>
+              <span style={{ color: "var(--color-text-secondary)" }}>{activeContract.title}</span>
             </div>
             <h1 style={{ fontSize: "clamp(24px, 3.5vw, 40px)", fontWeight: 900, letterSpacing: "-0.02em", color: "white" }}>
-              {CONTRACT.title}
+              {activeContract.title}
             </h1>
             <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
               <span
@@ -99,7 +106,7 @@ export default function ContractDashboardPage() {
                 {meta.label}
               </span>
               <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-                {CONTRACT.buyer} → {CONTRACT.seller}
+                {activeContract.buyer_name || activeContract.buyer_email} → {activeContract.seller_name || activeContract.seller_email}
               </span>
             </div>
           </div>
@@ -116,7 +123,7 @@ export default function ContractDashboardPage() {
                 borderRadius: 16,
                 padding: "12px 18px",
               }}
-              aria-label={`Escrow hold: ${CONTRACT.daysLeft} days remaining`}
+              aria-label={`Escrow hold: ${daysLeft} days remaining`}
             >
               <div
                 style={{
@@ -138,18 +145,18 @@ export default function ContractDashboardPage() {
                     stroke="#FF9800"
                     strokeWidth="3"
                     strokeDasharray="125.6"
-                    strokeDashoffset={125.6 * (1 - CONTRACT.daysLeft / 29)}
+                    strokeDashoffset={125.6 * (1 - Math.min(29, Math.max(0, daysLeft)) / 29)}
                     strokeLinecap="round"
                     transform="rotate(-90 22 22)"
                   />
                 </svg>
                 <span style={{ fontSize: 13, fontWeight: 900, color: "#FF9800", fontFamily: "JetBrains Mono, monospace" }}>
-                  {CONTRACT.daysLeft}
+                  {daysLeft}
                 </span>
               </div>
               <div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.08em" }}>ESCROW HOLD</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#FF9800" }}>{CONTRACT.daysLeft} days left</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#FF9800" }}>{daysLeft} days left</div>
               </div>
             </div>
 
@@ -165,7 +172,7 @@ export default function ContractDashboardPage() {
             >
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.08em" }}>HELD</div>
               <div style={{ fontSize: 20, fontWeight: 900, color: "white", fontFamily: "JetBrains Mono, monospace" }}>
-                ${CONTRACT.total.toLocaleString()}
+                ${activeContract.total_amount.toLocaleString()}
               </div>
             </div>
 
@@ -234,17 +241,17 @@ export default function ContractDashboardPage() {
         <div role="tabpanel" id={`tab-panel-${tab}`} aria-labelledby={`tab-${tab}`}>
           {tab === "overview"  && (
             <OverviewTab 
-              contractId={contractId} 
-              features={CONTRACT.features} 
-              total={CONTRACT.total} 
+              contractId={activeContract.id} 
+              features={features} 
+              total={activeContract.total_amount} 
               passedAmount={passedAmount}
               onOpenRelease={() => setReleaseModalOpen(true)}
             />
           )}
           {tab === "gantt"     && <GanttTab />}
-          {tab === "chat"      && <ChatTab />}
+          {tab === "chat"      && <ChatTab features={features} />}
           {tab === "activity"  && <ActivityTab />}
-          {tab === "receipt"   && <ReceiptTab total={CONTRACT.total} passedAmount={passedAmount} features={CONTRACT.features} />}
+          {tab === "receipt"   && <ReceiptTab total={activeContract.total_amount} passedAmount={passedAmount} features={features} />}
         </div>
       </div>
 
@@ -299,10 +306,7 @@ export default function ContractDashboardPage() {
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  setIsReleased(true);
-                  setReleaseModalOpen(false);
-                }}
+                onClick={handleConfirmDisburse}
                 style={{
                   flex: 1,
                   padding: "11px",
@@ -335,7 +339,7 @@ function OverviewTab({
   onOpenRelease,
 }: {
   contractId: string;
-  features: typeof CONTRACT.features;
+  features: Feature[];
   total: number;
   passedAmount: number;
   onOpenRelease: () => void;
@@ -393,35 +397,44 @@ function OverviewTab({
             </tr>
           </thead>
           <tbody>
-            {features.map((f, i) => (
-              <tr
-                key={i}
-                style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}
-              >
-                <td style={{ padding: "14px 24px", fontSize: 14, color: "white", fontWeight: 500 }}>{f.name}</td>
-                <td style={{ padding: "14px 24px", fontSize: 13, color: "var(--color-text-muted)", fontFamily: "JetBrains Mono, monospace" }}>{f.weight}%</td>
-                <td style={{ padding: "14px 24px", fontSize: 14, fontWeight: 600, color: "white", fontFamily: "JetBrains Mono, monospace" }}>${f.amount}</td>
-                <td style={{ padding: "14px 24px" }}>
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      background: `${statusColors[f.status]}15`,
-                      border: `1px solid ${statusColors[f.status]}30`,
-                      borderRadius: 50,
-                      padding: "3px 12px",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: statusColors[f.status],
-                    }}
-                  >
-                    {statusIcons[f.status]}
-                    {f.status.charAt(0).toUpperCase() + f.status.slice(1)}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {features.map((f, i) => {
+              const fStatus = (f.status || "PENDING").toLowerCase();
+              const color = statusColors[fStatus] || statusColors["pending"];
+              const icon = statusIcons[fStatus] || statusIcons["pending"];
+              const title = f.title || (f as any).name;
+              const weight = f.price_weight ?? (f as any).weight;
+              const amount = f.allocated_amount ?? (f as any).amount;
+
+              return (
+                <tr
+                  key={i}
+                  style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}
+                >
+                  <td style={{ padding: "14px 24px", fontSize: 14, color: "white", fontWeight: 500 }}>{title}</td>
+                  <td style={{ padding: "14px 24px", fontSize: 13, color: "var(--color-text-muted)", fontFamily: "JetBrains Mono, monospace" }}>{weight}%</td>
+                  <td style={{ padding: "14px 24px", fontSize: 14, fontWeight: 600, color: "white", fontFamily: "JetBrains Mono, monospace" }}>${amount}</td>
+                  <td style={{ padding: "14px 24px" }}>
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        background: `${color}15`,
+                        border: `1px solid ${color}30`,
+                        borderRadius: 50,
+                        padding: "3px 12px",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: color,
+                      }}
+                    >
+                      {icon}
+                      {fStatus.charAt(0).toUpperCase() + fStatus.slice(1)}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -647,7 +660,8 @@ function GanttTab() {
   );
 }
 
-function ChatTab() {
+function ChatTab({ features = [] }: { features?: Feature[] }) {
+  const displayFeatures = features.length > 0 ? features : (mockApi.getContracts()[0]?.features || []);
   const messages = [
     { from: "Buyer", msg: "Can you add dark mode support as well?", time: "14:20", type: "user" },
     { from: "AI Referee", msg: "Dark mode estimated: +$120, +3 extra days. Approve to create a mini-agreement?", time: "14:21", type: "ai" },
@@ -672,25 +686,30 @@ function ChatTab() {
         <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.07)", fontWeight: 700, fontSize: 14, color: "white" }}>
           Features
         </div>
-        {CONTRACT.features.map((f, i) => (
-          <div
-            key={i}
-            style={{
-              padding: "14px 20px",
-              borderBottom: "1px solid rgba(255,255,255,0.05)",
-              cursor: "pointer",
-              transition: "background 0.2s",
-            }}
-            onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(0,102,255,0.06)"))}
-            onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
-            tabIndex={0}
-            role="option"
-            aria-label={`${f.name}: ${f.status}`}
-          >
-            <div style={{ fontSize: 13, fontWeight: 600, color: "white", marginBottom: 4 }}>{f.name}</div>
-            <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{f.weight}% · ${f.amount}</div>
-          </div>
-        ))}
+        {displayFeatures.map((f, i) => {
+          const title = f.title || (f as any).name;
+          const weight = f.price_weight ?? (f as any).weight;
+          const amount = f.allocated_amount ?? (f as any).amount;
+          return (
+            <div
+              key={f.id || i}
+              style={{
+                padding: "14px 20px",
+                borderBottom: "1px solid rgba(255,255,255,0.05)",
+                cursor: "pointer",
+                transition: "background 0.2s",
+              }}
+              onMouseEnter={(e) => ((e.currentTarget.style.background = "rgba(0,102,255,0.06)"))}
+              onMouseLeave={(e) => ((e.currentTarget.style.background = "transparent"))}
+              tabIndex={0}
+              role="option"
+              aria-label={`${title}: ${f.status}`}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: "white", marginBottom: 4 }}>{title}</div>
+              <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>{weight}% · ${amount}</div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Chat panel */}
@@ -942,7 +961,7 @@ function ReceiptTab({
 }: {
   total: number;
   passedAmount: number;
-  features: typeof CONTRACT.features;
+  features: Feature[];
 }) {
   return (
     <div style={{ maxWidth: 680, margin: "0 auto" }}>
@@ -1043,7 +1062,7 @@ function ReceiptTab({
             ["Buyer", "Priya S."],
             ["Seller", "Alex M."],
             ["Total held", `$${total.toLocaleString()} USD`],
-            ["Features passed", `${features.filter((f) => f.status === "passed").length} of ${features.length}`],
+            ["Features passed", `${features.filter((f) => (f.status || "").toLowerCase() === "passed").length} of ${features.length}`],
             ["Seller payout", `$${passedAmount.toLocaleString()} USD`],
             ["Buyer refund", `$${(total - passedAmount).toLocaleString()} USD`],
             ["Visual match avg", "94.3%"],

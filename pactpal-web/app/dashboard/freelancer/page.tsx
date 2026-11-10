@@ -1,7 +1,9 @@
 "use client";
+import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { ArrowRight, TrendingUp, Clock, CheckCircle, Circle } from "lucide-react";
+import { mockApi, Contract } from "@/lib/mockApi";
 
 const earnings = [
   { month: "Sep", amount: 1200 },
@@ -10,20 +12,29 @@ const earnings = [
 ];
 const maxEarning = Math.max(...earnings.map((e) => e.amount));
 
-const myContracts = [
-  { title: "E-commerce Platform v2", status: "VERIFYING", amount: 1500, daysLeft: 12, progress: 75 },
-  { title: "Mobile fitness app", status: "IN_PROGRESS", amount: 1800, daysLeft: 20, progress: 40 },
-  { title: "Logo and brand kit", status: "SETTLED", amount: 600, daysLeft: 0, progress: 100 },
-];
-
 const statusColors: Record<string, { color: string; bg: string; label: string }> = {
-  VERIFYING:   { color: "#7A5CFF", bg: "rgba(122,92,255,0.1)", label: "Verifying" },
+  DRAFT:       { color: "#7C89A8", bg: "rgba(124,137,168,0.1)", label: "Draft" },
+  REVIEW:      { color: "#00A3E0", bg: "rgba(0,163,224,0.1)", label: "In Review" },
+  SIGNED:      { color: "#7A5CFF", bg: "rgba(122,92,255,0.1)", label: "Signed" },
+  FUNDED:      { color: "#FF9800", bg: "rgba(255,152,0,0.1)", label: "Funded" },
   IN_PROGRESS: { color: "#0066FF", bg: "rgba(0,102,255,0.1)", label: "In Progress" },
+  SUBMITTED:   { color: "#00A3E0", bg: "rgba(0,163,224,0.1)", label: "Submitted" },
+  VERIFYING:   { color: "#7A5CFF", bg: "rgba(122,92,255,0.1)", label: "Verifying" },
+  DECISION:    { color: "#FF9800", bg: "rgba(255,152,0,0.1)", label: "Decision" },
   SETTLED:     { color: "#4CAF50", bg: "rgba(76,175,80,0.1)", label: "Settled" },
+  DISPUTE:     { color: "#F44336", bg: "rgba(244,67,54,0.1)", label: "Dispute" },
 };
 
 export default function FreelancerDashboardPage() {
-  const totalEarned = earnings.reduce((s, e) => s + e.amount, 0);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+
+  useEffect(() => {
+    setContracts(mockApi.getContracts());
+  }, []);
+
+  const totalEarned = contracts
+    .filter((c) => c.status === "SETTLED")
+    .reduce((s, c) => s + c.total_amount, 0) || 5400;
 
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
@@ -142,12 +153,16 @@ export default function FreelancerDashboardPage() {
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }} role="list" aria-label="Your contracts">
-              {myContracts.map((c, i) => {
-                const meta = statusColors[c.status];
+              {contracts.map((c) => {
+                const meta = statusColors[c.status] || { color: "#7C89A8", bg: "rgba(124,137,168,0.1)", label: c.status };
+                const passedCount = c.features?.filter((f) => f.status.toUpperCase() === "PASSED").length ?? 0;
+                const totalFeatures = c.features?.length || 1;
+                const progress = Math.round((passedCount / totalFeatures) * 100);
+
                 return (
                   <Link
-                    key={i}
-                    href={`/contracts/${i}`}
+                    key={c.id}
+                    href={`/contracts/${c.id}`}
                     role="listitem"
                     style={{
                       display: "flex",
@@ -171,7 +186,12 @@ export default function FreelancerDashboardPage() {
                     aria-label={`Contract: ${c.title}, status ${meta.label}`}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-                      <div style={{ fontWeight: 700, fontSize: 15, color: "white" }}>{c.title}</div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: "white" }}>{c.title}</div>
+                        <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
+                          Buyer: {c.buyer_name || c.buyer_email}
+                        </div>
+                      </div>
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                         <span
                           style={{
@@ -187,14 +207,14 @@ export default function FreelancerDashboardPage() {
                           {meta.label}
                         </span>
                         <span style={{ fontSize: 16, fontWeight: 800, color: "#FF9800", fontFamily: "JetBrains Mono, monospace" }}>
-                          ${c.amount.toLocaleString()}
+                          ${c.total_amount.toLocaleString()}
                         </span>
                       </div>
                     </div>
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>
-                        <span>Progress</span>
-                        <span>{c.progress}%{c.daysLeft > 0 ? ` · ${c.daysLeft}d left` : " · Complete"}</span>
+                        <span>Verification Progress ({passedCount}/{totalFeatures} passed)</span>
+                        <span>{progress}%</span>
                       </div>
                       <div
                         style={{
@@ -204,16 +224,16 @@ export default function FreelancerDashboardPage() {
                           overflow: "hidden",
                         }}
                         role="progressbar"
-                        aria-valuenow={c.progress}
+                        aria-valuenow={progress}
                         aria-valuemin={0}
                         aria-valuemax={100}
-                        aria-label={`Progress: ${c.progress}%`}
+                        aria-label={`Progress: ${progress}%`}
                       >
                         <div
                           style={{
                             height: "100%",
-                            width: `${c.progress}%`,
-                            background: c.progress === 100
+                            width: `${progress}%`,
+                            background: progress === 100
                               ? "linear-gradient(90deg, #4CAF50, #81C784)"
                               : "linear-gradient(90deg, #FF9800, #FFB74D)",
                             borderRadius: 3,
