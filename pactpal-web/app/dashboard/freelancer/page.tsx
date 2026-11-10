@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { ArrowRight, TrendingUp, Clock, CheckCircle, Circle } from "lucide-react";
-import { mockApi, Contract } from "@/lib/mockApi";
+import { mockApi, Contract, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
 
 const earnings = [
   { month: "Sep", amount: 1200 },
