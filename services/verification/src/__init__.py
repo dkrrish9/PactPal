@@ -32,6 +32,10 @@ from .visual_diff import (
     VisualDiffError,
     DEFAULT_SIMILARITY_THRESHOLD
 )
+from .cheat_scanner import (
+    CheatScanner,
+    CheatFinding
+)
 
 __all__ = [
     "IntakeRequest",
@@ -53,5 +57,7 @@ __all__ = [
     "BrowserDetector",
     "VisualDiffEngine",
     "VisualDiffError",
-    "DEFAULT_SIMILARITY_THRESHOLD"
+    "DEFAULT_SIMILARITY_THRESHOLD",
+    "CheatScanner",
+    "CheatFinding"
 ]
