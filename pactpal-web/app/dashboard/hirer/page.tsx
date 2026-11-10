@@ -274,18 +274,54 @@ export default function HirerDashboardPage() {
                       {c.features?.length ?? 0} features
                     </td>
                     <td style={{ padding: "16px 24px" }}>
-                      <Link
-                        href={`/contracts/${c.id}`}
-                        style={{
-                          fontSize: 13,
-                          color: "#0066FF",
-                          textDecoration: "none",
-                          fontWeight: 600,
-                        }}
-                        aria-label={`View contract: ${c.title}`}
-                      >
-                        View →
-                      </Link>
+                      {c.status === "REVIEW" ? (
+                        <Link
+                          href={`/contracts/${c.id}/review`}
+                          style={{
+                            fontSize: 12,
+                            color: "#38BDF8",
+                            background: "rgba(0,163,224,0.12)",
+                            border: "1px solid rgba(0,163,224,0.3)",
+                            padding: "5px 12px",
+                            borderRadius: 20,
+                            textDecoration: "none",
+                            fontWeight: 700,
+                            display: "inline-block",
+                          }}
+                        >
+                          Review & Sign →
+                        </Link>
+                      ) : c.status === "SIGNED" ? (
+                        <Link
+                          href={`/contracts/${c.id}/fund`}
+                          style={{
+                            fontSize: 12,
+                            color: "#FBBF24",
+                            background: "rgba(255,152,0,0.12)",
+                            border: "1px solid rgba(255,152,0,0.3)",
+                            padding: "5px 12px",
+                            borderRadius: 20,
+                            textDecoration: "none",
+                            fontWeight: 700,
+                            display: "inline-block",
+                          }}
+                        >
+                          Fund with PayPal →
+                        </Link>
+                      ) : (
+                        <Link
+                          href={`/contracts/${c.id}`}
+                          style={{
+                            fontSize: 13,
+                            color: "#0066FF",
+                            textDecoration: "none",
+                            fontWeight: 600,
+                          }}
+                          aria-label={`View contract: ${c.title}`}
+                        >
+                          View →
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 );

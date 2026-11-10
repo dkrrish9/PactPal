@@ -176,24 +176,149 @@ export default function ContractDashboardPage() {
               </div>
             </div>
 
-            <button
-              style={{
-                background: "linear-gradient(135deg, #0066FF, #00A3E0)",
-                border: "none",
-                borderRadius: 50,
-                color: "white",
-                padding: "12px 24px",
-                fontSize: 14,
-                fontWeight: 700,
-                cursor: "pointer",
-                boxShadow: "0 0 20px rgba(0,102,255,0.4)",
-              }}
-              aria-label="Quick actions"
-            >
-              Actions ↓
-            </button>
+            {activeContract.status === "REVIEW" ? (
+              <Link
+                href={`/contracts/${activeContract.id}/review`}
+                style={{
+                  background: "linear-gradient(135deg, #00A3E0, #0066FF)",
+                  borderRadius: 50,
+                  color: "white",
+                  padding: "12px 24px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  boxShadow: "0 0 20px rgba(0,163,224,0.4)",
+                }}
+              >
+                Review & Counter (C17) →
+              </Link>
+            ) : activeContract.status === "SIGNED" ? (
+              <Link
+                href={`/contracts/${activeContract.id}/fund`}
+                style={{
+                  background: "linear-gradient(135deg, #FF9800, #F57C00)",
+                  borderRadius: 50,
+                  color: "white",
+                  padding: "12px 24px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  boxShadow: "0 0 20px rgba(255,152,0,0.4)",
+                }}
+              >
+                Fund Escrow with PayPal (C20) →
+              </Link>
+            ) : (
+              <Link
+                href={`/contracts/${activeContract.id}/review`}
+                style={{
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: 50,
+                  color: "white",
+                  padding: "12px 24px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                Review Checklist 📋
+              </Link>
+            )}
           </div>
         </div>
+
+        {/* Milestone Action Callout Banner */}
+        {activeContract.status === "REVIEW" && (
+          <div
+            style={{
+              marginBottom: 28,
+              padding: "18px 24px",
+              background: "rgba(0, 163, 224, 0.1)",
+              border: "1px solid rgba(0, 163, 224, 0.35)",
+              borderRadius: 18,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 24 }}>📝</span>
+              <div>
+                <strong style={{ color: "white", fontSize: 15 }}>C17 Seller Review & Checklist Confirmation</strong>
+                <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
+                  Freelancer can accept terms, propose counter terms (price/weights/deadline), and dual-confirm the checklist.
+                </p>
+              </div>
+            </div>
+            <Link
+              href={`/contracts/${activeContract.id}/review`}
+              style={{
+                background: "linear-gradient(135deg, #00A3E0, #0066FF)",
+                color: "white",
+                padding: "10px 22px",
+                borderRadius: 30,
+                fontSize: 13,
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              Open Seller Review Page →
+            </Link>
+          </div>
+        )}
+
+        {activeContract.status === "SIGNED" && (
+          <div
+            style={{
+              marginBottom: 28,
+              padding: "18px 24px",
+              background: "rgba(255, 152, 0, 0.1)",
+              border: "1px solid rgba(255, 152, 0, 0.35)",
+              borderRadius: 18,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 24 }}>🔒</span>
+              <div>
+                <strong style={{ color: "white", fontSize: 15 }}>C20 Escrow Funding & Authorization Hold</strong>
+                <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
+                  Both parties have signed! Buyer must now authorize the 29-day PayPal hold to activate escrow.
+                </p>
+              </div>
+            </div>
+            <Link
+              href={`/contracts/${activeContract.id}/fund`}
+              style={{
+                background: "linear-gradient(135deg, #FF9800, #F57C00)",
+                color: "white",
+                padding: "10px 22px",
+                borderRadius: 30,
+                fontSize: 13,
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              Open PayPal Funding Page →
+            </Link>
+          </div>
+        )}
 
         {/* Tabs */}
         <div
