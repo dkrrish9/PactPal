@@ -29,10 +29,13 @@ from .service import (
     StateValidationError,
     WebhookVerificationError,
     ProportionalSplitResult,
-    assert_can_view_split_preview
+    SettlementSummary,
+    assert_can_view_split_preview,
+    assert_can_view_settlement_summary
 )
 
 HOLD_ENDPOINT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/hold/?$")
+SETTLEMENT_SUMMARY_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/settlement-summary/?$")
 SPLIT_PREVIEW_CONTRACT_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/split-preview/?$")
 SPLIT_PREVIEW_PAYMENTS_REGEX = re.compile(r"^/api/v1/payments/split-preview/?$")
 APPROVAL_CHECK_REGEX = re.compile(r"^/api/v1/payments/approval-check/?$")
@@ -103,6 +106,14 @@ class PaymentsAPIHandler:
                 return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on hold endpoint."})
             contract_id = match_hold.group(1)
             return self._handle_get_hold(contract_id, headers)
+
+        # 2. GET /api/v1/contracts/{id}/settlement-summary (C41 Milestone 3)
+        match_settlement_summary = SETTLEMENT_SUMMARY_REGEX.match(clean_path)
+        if match_settlement_summary:
+            if method != "GET":
+                return self._json_response(405, {"error": "METHOD_NOT_ALLOWED", "message": f"Method {method} not allowed on settlement-summary endpoint."})
+            contract_id = match_settlement_summary.group(1)
+            return self._handle_get_settlement_summary(contract_id, headers)
 
         # 2. GET or POST /api/v1/contracts/{id}/split-preview (C37 Milestone 3)
         match_split_preview = SPLIT_PREVIEW_CONTRACT_REGEX.match(clean_path)
@@ -182,6 +193,37 @@ class PaymentsAPIHandler:
             return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
         except StateValidationError as e:
             # Contract is not in funded state
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except Exception as e:
+            return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
+
+    def _handle_get_settlement_summary(
+        self,
+        contract_id: str,
+        headers: Dict[str, str]
+    ) -> Tuple[int, Dict[str, str], bytes]:
+        """
+        Handler for GET /api/v1/contracts/{id}/settlement-summary (Commit C41).
+        Returns dual settlement summary for both parties (paid, returned, why).
+        RBAC: Contract Buyer, Seller, Platform Admin, or AI Referee.
+        """
+        actor = self._extract_actor(headers)
+        if actor is None:
+            return self._json_response(
+                401,
+                {"error": "UNAUTHORIZED", "message": "Authentication required. Supply X-Actor-Id or Authorization header."}
+            )
+
+        try:
+            summary = self.service.get_settlement_summary(contract_id=contract_id, actor=actor)
+            return self._json_response(200, summary)
+        except ValueError as e:
+            if "not found" in str(e).lower():
+                return self._json_response(404, {"error": "NOT_FOUND", "message": str(e)})
+            return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
+        except (ForbiddenActionError, UnauthorizedRoleError) as e:
+            return self._json_response(403, {"error": "FORBIDDEN", "message": str(e)})
+        except StateValidationError as e:
             return self._json_response(400, {"error": "BAD_REQUEST", "message": str(e)})
         except Exception as e:
             return self._json_response(500, {"error": "INTERNAL_SERVER_ERROR", "message": str(e)})
