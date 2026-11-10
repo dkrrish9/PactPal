@@ -1,0 +1,27 @@
+{
+  "project": "PactPal Verified Freelance Project",
+  "version": "1.0.0",
+  "canvas": {
+    "width": 1280,
+    "height": 800,
+    "background_color": "#f8fafc"
+  },
+  "typography": {
+    "font_family": "-apple-system, BlinkMacSystemFont, sans-serif",
+    "heading_color": "#0f172a",
+    "accent_color": "#2563eb",
+    "body_color": "#334155"
+  },
+  "layout": {
+    "type": "grid",
+    "columns": "repeat(auto-fit, minmax(280px, 1fr))",
+    "gap": "1.5rem",
+    "padding": "2rem"
+  },
+  "required_components": [
+    { "id": "feat-profile", "title": "1. User Profile", "expected_color": "#2563eb" },
+    { "id": "feat-catalog", "title": "2. Product Catalog", "expected_color": "#2563eb" },
+    { "id": "feat-calc", "title": "3. Escrow Calculator", "expected_color": "#2563eb" },
+    { "id": "feat-contact", "title": "4. Dispute & Feedback", "expected_color": "#2563eb" }
+  ]
+}

@@ -27,6 +27,11 @@ from .screenshot_capture import (
     ScreenshotCaptureError,
     BrowserDetector
 )
+from .visual_diff import (
+    VisualDiffEngine,
+    VisualDiffError,
+    DEFAULT_SIMILARITY_THRESHOLD
+)
 
 __all__ = [
     "IntakeRequest",
@@ -45,5 +50,8 @@ __all__ = [
     "HeadlessScreenshotCapture",
     "BrowserNotFoundError",
     "ScreenshotCaptureError",
-    "BrowserDetector"
+    "BrowserDetector",
+    "VisualDiffEngine",
+    "VisualDiffError",
+    "DEFAULT_SIMILARITY_THRESHOLD"
 ]
