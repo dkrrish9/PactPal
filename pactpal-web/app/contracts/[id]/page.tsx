@@ -3,8 +3,8 @@ import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Clock, CheckCircle, AlertCircle, Circle, BarChart2, MessageSquare, Activity, FileText, ArrowRight, ShieldCheck, UploadCloud, Scale } from "lucide-react";
-import { mockApi, Contract, HoldInfo, Feature } from "@/lib/mockApi";
+import { Clock, CheckCircle, AlertCircle, Circle, BarChart2, MessageSquare, Activity, FileText, ArrowRight, ShieldCheck, UploadCloud, Scale, GitBranch, ExternalLink, AlertTriangle } from "lucide-react";
+import { mockApi, Contract, HoldInfo, Feature, Submission } from "@/lib/mockApi";
 
 type TabId = "overview" | "gantt" | "chat" | "activity" | "receipt";
 
@@ -370,12 +370,14 @@ export default function ContractDashboardPage() {
               features={features} 
               total={activeContract.total_amount} 
               passedAmount={passedAmount}
+              submission={activeContract.submission}
+              deadline={activeContract.deadline}
               onOpenRelease={() => setReleaseModalOpen(true)}
             />
           )}
           {tab === "gantt"     && <GanttTab />}
           {tab === "chat"      && <ChatTab features={features} />}
-          {tab === "activity"  && <ActivityTab />}
+          {tab === "activity"  && <ActivityTab submission={activeContract.submission} />}
           {tab === "receipt"   && <ReceiptTab total={activeContract.total_amount} passedAmount={passedAmount} features={features} />}
         </div>
       </div>
@@ -461,12 +463,16 @@ function OverviewTab({
   features,
   total,
   passedAmount,
+  submission,
+  deadline,
   onOpenRelease,
 }: {
   contractId: string;
   features: Feature[];
   total: number;
   passedAmount: number;
+  submission?: Submission | null;
+  deadline?: string;
   onOpenRelease: () => void;
 }) {
   const statusColors: Record<string, string> = {
@@ -483,7 +489,157 @@ function OverviewTab({
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {/* Latest Seller Submission Card (C25 Core Requirement) */}
+      {submission && (
+        <div
+          style={{
+            background: "rgba(255, 255, 255, 0.03)",
+            border: `1px solid ${submission.is_late ? "rgba(244, 67, 54, 0.35)" : "rgba(76, 175, 80, 0.35)"}`,
+            borderRadius: 20,
+            padding: "24px 28px",
+            boxShadow: submission.is_late ? "0 0 30px rgba(244,67,54,0.08)" : "0 0 30px rgba(76,175,80,0.08)",
+          }}
+          role="region"
+          aria-label="Latest deliverable submission"
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 14, marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 28 }}>📦</span>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <h3 style={{ fontSize: 17, fontWeight: 800, color: "white", margin: 0 }}>
+                    Seller Submission (Version {submission.version_number})
+                  </h3>
+                  {/* Late Flag Badge (C25) */}
+                  <span
+                    style={{
+                      background: submission.is_late ? "rgba(244, 67, 54, 0.15)" : "rgba(76, 175, 80, 0.15)",
+                      border: `1px solid ${submission.is_late ? "rgba(244, 67, 54, 0.4)" : "rgba(76, 175, 80, 0.4)"}`,
+                      color: submission.is_late ? "#EF5350" : "#81C784",
+                      padding: "3px 10px",
+                      borderRadius: 20,
+                      fontSize: 11,
+                      fontWeight: 800,
+                      letterSpacing: "0.06em",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    {submission.is_late ? <AlertTriangle size={12} /> : <CheckCircle size={12} />}
+                    {submission.is_late ? "LATE SUBMISSION" : "ON-TIME SUBMISSION"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
+                  Intake recorded on: {new Date(submission.submitted_at).toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            <Link
+              href={`/contracts/${contractId}/submit`}
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "#60A5FA",
+                background: "rgba(0,102,255,0.1)",
+                border: "1px solid rgba(0,102,255,0.25)",
+                padding: "8px 16px",
+                borderRadius: 20,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              Submit New Revision →
+            </Link>
+          </div>
+
+          {/* Submission Details Strip */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 16,
+              background: "rgba(0,0,0,0.25)",
+              border: "1px solid rgba(255,255,255,0.06)",
+              borderRadius: 14,
+              padding: "16px 20px",
+              marginBottom: 16,
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.06em", marginBottom: 4 }}>
+                REPOSITORY URL
+              </div>
+              <a
+                href={submission.repo_url}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  color: "#60A5FA",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  textDecoration: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  wordBreak: "break-all",
+                }}
+              >
+                <GitBranch size={13} /> {submission.repo_url} <ExternalLink size={12} />
+              </a>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.06em", marginBottom: 4 }}>
+                COMMIT SHA & BRANCH
+              </div>
+              <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 13, color: "white", display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ background: "rgba(255,255,255,0.08)", padding: "2px 8px", borderRadius: 6, fontSize: 11, color: "#93C5FD" }}>
+                  {submission.branch}
+                </span>
+                <span title={submission.commit_sha}>
+                  {submission.commit_sha.substring(0, 10)}...
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.06em", marginBottom: 4 }}>
+                AGREED DEADLINE
+              </div>
+              <div style={{ fontSize: 13, color: "white", fontWeight: 600 }}>
+                {new Date(submission.deadline).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+              </div>
+            </div>
+          </div>
+
+          {/* Build Note */}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.06em", marginBottom: 6 }}>
+              SELLER BUILD NOTE & VERIFICATION INSTRUCTIONS
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                color: "var(--color-text-secondary)",
+                background: "rgba(255,255,255,0.02)",
+                border: "1px solid rgba(255,255,255,0.05)",
+                borderRadius: 10,
+                padding: "12px 16px",
+                lineHeight: 1.5,
+              }}
+            >
+              {submission.build_notes}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24 }}>
       {/* Features table */}
       <div
         style={{
@@ -742,6 +898,7 @@ function OverviewTab({
           </div>
         </div>
       </div>
+    </div>
 
       <style>{`
         @media (max-width: 900px) {
@@ -941,9 +1098,17 @@ function ChatTab({ features = [] }: { features?: Feature[] }) {
   );
 }
 
-function ActivityTab() {
+function ActivityTab({ submission }: { submission?: Submission | null }) {
   const stages = [
-    { stage: "A", label: "Intake & Git clone", status: "passed", time: "14:30:01", detail: "Repo cloned: github.com/alex/ecomm-v2 · Commit: 4a9f2b1" },
+    { 
+      stage: "A", 
+      label: "Intake & Git clone", 
+      status: "passed", 
+      time: submission ? new Date(submission.submitted_at).toLocaleTimeString() : "14:30:01", 
+      detail: submission 
+        ? `Repo cloned: ${submission.repo_url} · Commit: ${submission.commit_sha.substring(0, 8)} · ${submission.is_late ? "⚠️ LATE SUBMISSION" : "✅ ON-TIME"}`
+        : "Repo cloned: github.com/freelancer/pactpal-storefront · Commit: 4a9f2b1 · ✅ ON-TIME" 
+    },
     { stage: "B", label: "Clean build", status: "passed", time: "14:30:45", detail: "Build succeeded in 38s. 0 errors, 2 warnings." },
     { stage: "C", label: "Automated test suite", status: "passed", time: "14:31:12", detail: "42 tests passed, 0 failed. Coverage: 87%." },
     { stage: "D", label: "Cheat & loophole scan", status: "failed", time: "14:31:30", detail: "HIGH: Hardcoded JWT response in /api/login. Not real auth.", severity: "HIGH" },
