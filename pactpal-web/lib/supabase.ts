@@ -363,3 +363,4 @@ export function signOutUser(): void {
   }
   setCurrentUser(null);
 }
+

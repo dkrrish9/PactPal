@@ -222,9 +222,12 @@ export default function CreateContractPage() {
             style={{
               display: "flex",
               justifyContent: "space-between",
+              alignItems: "center",
               marginTop: 40,
               paddingTop: 24,
               borderTop: "1px solid rgba(255,255,255,0.07)",
+              flexWrap: "wrap",
+              gap: 12,
             }}
           >
             <button
@@ -249,24 +252,61 @@ export default function CreateContractPage() {
               <ArrowLeft size={16} aria-hidden /> Back
             </button>
 
+            {step === 1 && !weightOk && (
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "#EF4444",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontFamily: "JetBrains Mono, monospace",
+                }}
+              >
+                <span>⚠️</span> Total is {totalWeight}% (must equal exactly 100% to proceed)
+              </div>
+            )}
+
             {step < STEPS.length - 1 ? (
               <button
-                onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
+                onClick={() => {
+                  if (step === 1 && !weightOk) return;
+                  if (step === 0 && !basicInfoOk) return;
+                  setStep((s) => Math.min(STEPS.length - 1, s + 1));
+                }}
+                disabled={(step === 1 && !weightOk) || (step === 0 && !basicInfoOk)}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
-                  background: "linear-gradient(135deg, #0066FF, #00A3E0)",
-                  border: "none",
+                  background:
+                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                      ? "rgba(255,255,255,0.06)"
+                      : "linear-gradient(135deg, #0066FF, #00A3E0)",
+                  border:
+                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                      ? "1px solid rgba(255,255,255,0.1)"
+                      : "none",
                   borderRadius: 50,
-                  color: "white",
+                  color:
+                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                      ? "rgba(255,255,255,0.35)"
+                      : "white",
                   padding: "12px 28px",
                   fontSize: 15,
                   fontWeight: 700,
-                  cursor: "pointer",
-                  boxShadow: "0 0 20px rgba(0,102,255,0.4)",
+                  cursor:
+                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                      ? "not-allowed"
+                      : "pointer",
+                  boxShadow:
+                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                      ? "none"
+                      : "0 0 20px rgba(0,102,255,0.4)",
+                  transition: "all 0.2s ease",
                 }}
                 aria-label="Next step"
+                aria-disabled={(step === 1 && !weightOk) || (step === 0 && !basicInfoOk)}
               >
                 Next <ArrowRight size={16} aria-hidden />
               </button>
