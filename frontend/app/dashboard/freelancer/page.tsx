@@ -4,6 +4,7 @@ import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { ArrowRight, TrendingUp, Clock, CheckCircle, Circle } from "lucide-react";
 import { mockApi, Contract, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
+import { getCurrentUser, UserProfile } from "@/lib/supabase";
 
 const earnings = [
   { month: "Sep", amount: 1200 },
@@ -26,15 +27,31 @@ const statusColors: Record<string, { color: string; bg: string; label: string }>
 };
 
 export default function FreelancerDashboardPage() {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
 
   useEffect(() => {
-    setContracts(mockApi.getContracts());
+    const user = getCurrentUser();
+    setCurrentUser(user);
+    const all = mockApi.getContracts();
+    if (user && !user.is_demo && user.id !== "usr_seller_01" && !user.email.includes("alex")) {
+      const userContracts = all.filter(
+        (c) =>
+          c.seller_id === user.id ||
+          c.seller_email?.toLowerCase() === user.email.toLowerCase() ||
+          c.seller_name?.toLowerCase() === user.name.toLowerCase()
+      );
+      setContracts(userContracts);
+    } else {
+      setContracts(all);
+    }
   }, []);
 
   const totalEarned = contracts
     .filter((c) => c.status === "SETTLED")
-    .reduce((s, c) => s + c.total_amount, 0) || 5400;
+    .reduce((s, c) => s + c.total_amount, 0);
+
+  const displayName = currentUser?.name || "Alex";
 
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
@@ -46,7 +63,7 @@ export default function FreelancerDashboardPage() {
           <div>
             <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>Freelancer Dashboard</div>
             <h1 style={{ fontSize: "clamp(28px, 4vw, 48px)", fontWeight: 900, letterSpacing: "-0.025em", color: "white" }}>
-              Welcome back, <span className="gradient-text-orange">Alex</span> 👋
+              Welcome back, <span className="gradient-text-orange">{displayName}</span> 👋
             </h1>
           </div>
 
