@@ -68,7 +68,7 @@ export default function AuthCallbackPage() {
         }
 
         // 3. Fallback listener in case token hash is still processing
-        const { data: authListener } = supabase.auth.onAuthStateChange((event, newSession) => {
+        const { data: authListener } = supabase.auth.onAuthStateChange((event: any, newSession: any) => {
           if (newSession && newSession.user && mounted) {
             const user = newSession.user;
             const userMeta = user.user_metadata || {};
