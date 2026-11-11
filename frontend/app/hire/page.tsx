@@ -11,15 +11,6 @@ const steps = [
   { icon: "💸", title: "Pay for what passes", desc: "Passed features release automatically. Failed features are refunded." },
 ];
 
-const categories = [
-  { name: "Website Design", icon: "🌐", count: "12,400+ freelancers" },
-  { name: "Mobile Apps", icon: "📱", count: "8,200+ freelancers" },
-  { name: "AI & Automation", icon: "🤖", count: "5,100+ freelancers" },
-  { name: "Brand & UI Design", icon: "🎨", count: "9,800+ freelancers" },
-  { name: "API Development", icon: "⚡", count: "7,300+ freelancers" },
-  { name: "Data & Analytics", icon: "📊", count: "4,600+ freelancers" },
-];
-
 export default function HirePage() {
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
@@ -228,71 +219,6 @@ export default function HirePage() {
                 {step.desc}
               </p>
             </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Category grid */}
-      <section
-        style={{
-          padding: "0 24px 120px",
-          maxWidth: 1280,
-          margin: "0 auto",
-        }}
-        aria-labelledby="hirer-categories-heading"
-      >
-        <h2
-          id="hirer-categories-heading"
-          style={{
-            fontSize: "clamp(28px, 3.5vw, 44px)",
-            fontWeight: 900,
-            letterSpacing: "-0.02em",
-            color: "white",
-            marginBottom: 40,
-          }}
-        >
-          Browse talent by category
-        </h2>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: 16,
-          }}
-          role="list"
-        >
-          {categories.map((cat) => (
-            <Link
-              key={cat.name}
-              href={`/hire/category/${cat.name.toLowerCase().replace(/\s+/g, "-")}`}
-              role="listitem"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 16,
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.07)",
-                borderRadius: 16,
-                padding: "20px 20px",
-                textDecoration: "none",
-                transition: "all 0.25s ease",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "rgba(0,102,255,0.3)";
-                e.currentTarget.style.background = "rgba(0,102,255,0.06)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)";
-                e.currentTarget.style.background = "rgba(255,255,255,0.03)";
-              }}
-              aria-label={`Browse ${cat.name}`}
-            >
-              <span style={{ fontSize: 28 }} aria-hidden>{cat.icon}</span>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 15, color: "white" }}>{cat.name}</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>{cat.count}</div>
-              </div>
-            </Link>
           ))}
         </div>
       </section>
