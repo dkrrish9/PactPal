@@ -4,6 +4,13 @@ import Footer from "@/components/Footer";
 import { ArrowRight, CheckCircle, Clock, Shield } from "lucide-react";
 import Link from "next/link";
 
+const steps = [
+  { icon: "📋", title: "Post your project", desc: "Describe your requirements, set features with weighted acceptance tests." },
+  { icon: "🔒", title: "Fund the escrow", desc: "Authorize payment via PayPal — money is held, not charged yet." },
+  { icon: "🤖", title: "AI verifies the work", desc: "Our Referee runs 6 stages of automated verification on delivery." },
+  { icon: "💸", title: "Pay for what passes", desc: "Passed features release automatically. Failed features are refunded." },
+];
+
 const categories = [
   { name: "Website Design", icon: "🌐", count: "12,400+ freelancers" },
   { name: "Mobile Apps", icon: "📱", count: "8,200+ freelancers" },
@@ -132,7 +139,96 @@ export default function HirePage() {
             >
               Hirer Dashboard (Active Contracts) 📋
             </Link>
+
+            <Link
+              href="#how"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                color: "var(--color-text-secondary)",
+                fontSize: 14,
+                textDecoration: "none",
+                padding: "8px 12px",
+              }}
+            >
+              See how it works ↓
+            </Link>
           </div>
+        </div>
+      </section>
+
+      {/* How it works for hirers */}
+      <section
+        id="how"
+        style={{ padding: "80px 24px 120px", maxWidth: 1280, margin: "0 auto" }}
+        aria-labelledby="hirer-how-heading"
+      >
+        <h2
+          id="hirer-how-heading"
+          style={{
+            fontSize: "clamp(32px, 4vw, 52px)",
+            fontWeight: 900,
+            letterSpacing: "-0.025em",
+            color: "white",
+            marginBottom: 56,
+            textAlign: "center",
+          }}
+        >
+          Simple. Transparent. <span className="gradient-text">Bulletproof.</span>
+        </h2>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: 20,
+          }}
+          role="list"
+        >
+          {steps.map((step, i) => (
+            <div
+              key={i}
+              role="listitem"
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.07)",
+                borderRadius: 24,
+                padding: "32px 28px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 36,
+                  marginBottom: 20,
+                  display: "block",
+                  lineHeight: 1,
+                }}
+                aria-hidden
+              >
+                {step.icon}
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                  color: "var(--color-text-muted)",
+                  marginBottom: 8,
+                  fontFamily: "JetBrains Mono, monospace",
+                }}
+                aria-hidden
+              >
+                STEP 0{i + 1}
+              </div>
+              <h3 style={{ fontSize: 20, fontWeight: 700, color: "white", marginBottom: 10 }}>
+                {step.title}
+              </h3>
+              <p style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.65 }}>
+                {step.desc}
+              </p>
+            </div>
+          ))}
         </div>
       </section>
 
