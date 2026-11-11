@@ -2,8 +2,9 @@
 import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Link from "next/link";
-import { Plus, Shield, Clock, CheckCircle, AlertCircle, Circle } from "lucide-react";
+import { Plus, Shield, Clock, CheckCircle, AlertCircle, Circle, FileText, ArrowRight } from "lucide-react";
 import { mockApi, Contract, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
+import { getCurrentUser, UserProfile } from "@/lib/supabase";
 
 const statusMeta: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
   DRAFT:       { color: "#7C89A8", bg: "rgba(124,137,168,0.1)", label: "Draft", icon: <Circle size={12} /> },
@@ -19,51 +20,28 @@ const statusMeta: Record<string, { color: string; bg: string; label: string; ico
 };
 
 export default function HirerDashboardPage() {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [filter, setFilter] = useState("ALL");
-  const [userName, setUserName] = useState(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const stored = localStorage.getItem("pactpal_current_user");
-        if (stored) {
-          const u = JSON.parse(stored);
-          if (u.name) return u.name;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return "Hirer";
-  });
-  const [userPayPalEmail, setUserPayPalEmail] = useState(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const stored = localStorage.getItem("pactpal_current_user");
-        if (stored) {
-          const u = JSON.parse(stored);
-          if (u.paypal_email) return u.paypal_email;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return "";
-  });
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    setContracts(mockApi.getContracts());
-    try {
-      if (typeof window !== "undefined") {
-        const stored = localStorage.getItem("pactpal_current_user");
-        if (stored) {
-          const u = JSON.parse(stored);
-          if (u.name) setUserName(u.name);
-          if (u.paypal_email) setUserPayPalEmail(u.paypal_email);
-        }
-      }
-    } catch {
-      // ignore
+    const user = getCurrentUser();
+    setCurrentUser(user);
+
+    const all = mockApi.getContracts();
+    if (user && !user.is_demo && user.id !== "usr_buyer_01" && !user.email.includes("priya")) {
+      const userContracts = all.filter(
+        (c) =>
+          c.buyer_id === user.id ||
+          c.buyer_email?.toLowerCase() === user.email.toLowerCase() ||
+          c.buyer_name?.toLowerCase() === user.name.toLowerCase()
+      );
+      setContracts(userContracts);
+    } else {
+      setContracts(all);
     }
+    setIsLoaded(true);
   }, []);
 
   const totalHeld = contracts
@@ -80,6 +58,10 @@ export default function HirerDashboardPage() {
     return true;
   });
 
+  const displayName = currentUser?.name || "Hirer";
+  const userPayPalEmail = currentUser?.paypal_email || "";
+  const isPersonalized = currentUser && !currentUser.is_demo && !currentUser.email.includes("priya");
+
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
       <Navbar />
@@ -88,9 +70,11 @@ export default function HirerDashboardPage() {
         {/* Page header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 40, flexWrap: "wrap", gap: 16 }}>
           <div>
-            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>Hirer Dashboard</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>
+              Hirer Dashboard {isPersonalized && <span style={{ color: "#60A5FA" }}>• Authenticated Account</span>}
+            </div>
             <h1 style={{ fontSize: "clamp(28px, 4vw, 48px)", fontWeight: 900, letterSpacing: "-0.025em", color: "white" }}>
-              Welcome back, <span className="gradient-text">{userName}</span> 👋
+              Welcome back, <span className="gradient-text">{displayName}</span> 👋
             </h1>
             {userPayPalEmail && (
               <div
@@ -275,6 +259,59 @@ export default function HirerDashboardPage() {
             </div>
           </div>
 
+          {filteredContracts.length === 0 ? (
+            <div
+              style={{
+                padding: "60px 24px",
+                textAlign: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <div
+                style={{
+                  width: 60,
+                  height: 60,
+                  borderRadius: "50%",
+                  background: "rgba(0,102,255,0.12)",
+                  border: "1px solid rgba(0,102,255,0.25)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 26,
+                  marginBottom: 16,
+                }}
+              >
+                ✨
+              </div>
+              <h3 style={{ fontSize: 20, fontWeight: 800, color: "white", marginBottom: 6 }}>
+                No contracts registered yet
+              </h3>
+              <p style={{ color: "var(--color-text-secondary)", fontSize: 14, maxWidth: 440, marginBottom: 24, lineHeight: 1.6 }}>
+                Welcome to PactPal! You are signed in as <strong style={{ color: "white" }}>{displayName}</strong>. Your workspace is fresh and clean. Post your first project to define acceptance tests and let the AI Referee referee delivery.
+              </p>
+              <Link
+                href="/hire/create"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "linear-gradient(135deg, #0066FF, #00A3E0)",
+                  color: "white",
+                  borderRadius: 50,
+                  padding: "12px 28px",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  boxShadow: "0 0 20px rgba(0,102,255,0.4)",
+                }}
+              >
+                <Plus size={16} /> Post Your First Project →
+              </Link>
+            </div>
+          ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }} role="table" aria-label="Contracts list">
             <thead>
               <tr>
@@ -416,6 +453,7 @@ export default function HirerDashboardPage() {
               })}
             </tbody>
           </table>
+          )}
         </div>
       </div>
     </main>

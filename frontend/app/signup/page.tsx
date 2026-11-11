@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { signUpUser } from "@/lib/supabase";
 
 type Role = "hirer" | "freelancer" | null;
 
@@ -189,7 +190,7 @@ export default function SignupPage() {
     if (step < 3) setStep((s) => (s + 1) as 1 | 2 | 3);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!paypalConnected) {
       setError("Please authorize PayPal before completing setup.");
@@ -199,26 +200,46 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
+      const res = await signUpUser({
+        name: form.name,
+        email: form.email,
+        password: form.password,
+        role: (role || "hirer") as "hirer" | "freelancer",
+        paypal_email: paypalEmail,
+        paypal_payer_id: paypalPayerId,
+        paypal_connected: true,
+      });
+
+      if (res.error) {
+        setError(res.error);
+        setLoading(false);
+        return;
+      }
+
+      // Persist full authenticated user profile with PayPal details
       if (typeof window !== "undefined") {
         const userProfile = {
-          role,
+          id: res.user?.id || `usr_${Date.now()}`,
+          role: role || "hirer",
           name: form.name,
           email: form.email,
           paypal_email: paypalEmail,
           paypal_payer_id: paypalPayerId,
           paypal_connected: true,
           created_at: new Date().toISOString(),
+          is_demo: false,
         };
         localStorage.setItem("pactpal_current_user", JSON.stringify(userProfile));
+        window.dispatchEvent(new Event("pactpal_auth_change"));
       }
-    } catch {
-      // ignore
-    }
 
-    setTimeout(() => {
       setLoading(false);
       window.location.href = role === "hirer" ? "/dashboard/hirer" : "/dashboard/freelancer";
-    }, 1000);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to create account. Please try again.";
+      setError(message);
+      setLoading(false);
+    }
   }
 
   const stepLabels = ["Choose role", "Account details", "Connect PayPal"];

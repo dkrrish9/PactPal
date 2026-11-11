@@ -769,7 +769,11 @@ export const mockApi = {
     title: string;
     description: string;
     buyer_email: string;
+    buyer_name?: string;
+    buyer_id?: string;
     seller_email: string;
+    seller_name?: string;
+    seller_id?: string;
     total_amount: number;
     currency?: string;
     deadline: string;
@@ -798,11 +802,11 @@ export const mockApi = {
       id: newId,
       title: input.title,
       description: input.description,
-      buyer_id: `usr_${Math.random().toString(36).substring(2, 6)}`,
-      buyer_name: input.buyer_email.split("@")[0],
+      buyer_id: input.buyer_id || `usr_${Math.random().toString(36).substring(2, 6)}`,
+      buyer_name: input.buyer_name || input.buyer_email.split("@")[0],
       buyer_email: input.buyer_email,
-      seller_id: `usr_${Math.random().toString(36).substring(2, 6)}`,
-      seller_name: input.seller_email.split("@")[0],
+      seller_id: input.seller_id || `usr_${Math.random().toString(36).substring(2, 6)}`,
+      seller_name: input.seller_name || input.seller_email.split("@")[0],
       seller_email: input.seller_email,
       status: "DRAFT",
       total_amount: input.total_amount,

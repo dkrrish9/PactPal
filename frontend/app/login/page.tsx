@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { signInUser, DEMO_HIRER, DEMO_FREELANCER } from "@/lib/supabase";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -8,7 +9,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email || !password) {
       setError("Please fill in all fields.");
@@ -16,11 +17,31 @@ export default function LoginPage() {
     }
     setError("");
     setLoading(true);
-    setTimeout(() => {
+
+    try {
+      const res = await signInUser({ email, password });
+      if (res.error) {
+        setError(res.error);
+        setLoading(false);
+        return;
+      }
+
       setLoading(false);
-      // Simulate: redirect to hirer dashboard
-      window.location.href = "/dashboard/hirer";
-    }, 1500);
+      const targetRole = res.user?.role || "hirer";
+      window.location.href = targetRole === "freelancer" ? "/dashboard/freelancer" : "/dashboard/hirer";
+    } catch (err: any) {
+      setError(err?.message || "Sign in failed.");
+      setLoading(false);
+    }
+  }
+
+  function handleQuickDemo(demoUser: typeof DEMO_HIRER) {
+    setEmail(demoUser.email);
+    setPassword("DemoPassword123!");
+    signInUser({ email: demoUser.email, password: "DemoPassword123!" }).then((res) => {
+      const targetRole = res.user?.role || "hirer";
+      window.location.href = targetRole === "freelancer" ? "/dashboard/freelancer" : "/dashboard/hirer";
+    });
   }
 
   return (
@@ -235,6 +256,49 @@ export default function LoginPage() {
             <Link href="/signup" style={{ color: "var(--color-primary)", fontWeight: 600, fontSize: 14, textDecoration: "none" }}>
               Sign up free
             </Link>
+          </div>
+
+          {/* Demo account quick login */}
+          <div style={{ marginTop: 20, padding: "12px", background: "rgba(0,102,255,0.06)", border: "1px dashed rgba(0,102,255,0.25)", borderRadius: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-primary)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
+              ⚡ One-Click Demo Logins
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => handleQuickDemo(DEMO_HIRER)}
+                style={{
+                  flex: 1,
+                  background: "rgba(0,102,255,0.15)",
+                  border: "1px solid rgba(0,102,255,0.3)",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  color: "white",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Priya (Hirer Demo)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickDemo(DEMO_FREELANCER)}
+                style={{
+                  flex: 1,
+                  background: "rgba(255,152,0,0.15)",
+                  border: "1px solid rgba(255,152,0,0.3)",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  color: "#FF9800",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Alex (Freelancer Demo)
+              </button>
+            </div>
           </div>
 
           {/* Divider */}
