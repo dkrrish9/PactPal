@@ -27,9 +27,49 @@ const statusColors: Record<string, { color: string; bg: string; label: string }>
 
 export default function FreelancerDashboardPage() {
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [userName, setUserName] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("pactpal_current_user");
+        if (stored) {
+          const u = JSON.parse(stored);
+          if (u.name) return u.name;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return "Freelancer";
+  });
+  const [userPayPalEmail, setUserPayPalEmail] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("pactpal_current_user");
+        if (stored) {
+          const u = JSON.parse(stored);
+          if (u.paypal_email) return u.paypal_email;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return "";
+  });
 
   useEffect(() => {
     setContracts(mockApi.getContracts());
+    try {
+      if (typeof window !== "undefined") {
+        const stored = localStorage.getItem("pactpal_current_user");
+        if (stored) {
+          const u = JSON.parse(stored);
+          if (u.name) setUserName(u.name);
+          if (u.paypal_email) setUserPayPalEmail(u.paypal_email);
+        }
+      }
+    } catch {
+      // ignore
+    }
   }, []);
 
   const totalEarned = contracts
@@ -46,8 +86,39 @@ export default function FreelancerDashboardPage() {
           <div>
             <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 6 }}>Freelancer Dashboard</div>
             <h1 style={{ fontSize: "clamp(28px, 4vw, 48px)", fontWeight: 900, letterSpacing: "-0.025em", color: "white" }}>
-              Welcome back, <span className="gradient-text-orange">Alex</span> 👋
+              Welcome back, <span className="gradient-text-orange">{userName}</span> 👋
             </h1>
+            {userPayPalEmail && (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 10,
+                  background: "rgba(255,152,0,0.12)",
+                  border: "1px solid rgba(255,152,0,0.35)",
+                  padding: "5px 14px",
+                  borderRadius: 20,
+                }}
+              >
+                <span style={{ fontSize: 14 }}>💳</span>
+                <span style={{ fontSize: 13, color: "#FDBA74", fontFamily: "monospace" }}>
+                  PayPal Payouts: {userPayPalEmail}
+                </span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    background: "#10B981",
+                    color: "#000",
+                    fontWeight: 800,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                  }}
+                >
+                  VERIFIED
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Role switcher */}
