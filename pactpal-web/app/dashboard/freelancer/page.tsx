@@ -51,7 +51,8 @@ export default function FreelancerDashboardPage() {
     .filter((c) => c.status === "SETTLED")
     .reduce((s, c) => s + c.total_amount, 0);
 
-  const displayName = currentUser?.name || "Alex";
+  const displayName = currentUser?.name || "Freelancer";
+  const userPayPalEmail = currentUser?.paypal_email || "";
 
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
@@ -65,6 +66,37 @@ export default function FreelancerDashboardPage() {
             <h1 style={{ fontSize: "clamp(28px, 4vw, 48px)", fontWeight: 900, letterSpacing: "-0.025em", color: "white" }}>
               Welcome back, <span className="gradient-text-orange">{displayName}</span> 👋
             </h1>
+            {userPayPalEmail && (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 10,
+                  background: "rgba(255,152,0,0.12)",
+                  border: "1px solid rgba(255,152,0,0.35)",
+                  padding: "5px 14px",
+                  borderRadius: 20,
+                }}
+              >
+                <span style={{ fontSize: 14 }}>💳</span>
+                <span style={{ fontSize: 13, color: "#FDBA74", fontFamily: "monospace" }}>
+                  PayPal Payouts: {userPayPalEmail}
+                </span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    background: "#10B981",
+                    color: "#000",
+                    fontWeight: 800,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                  }}
+                >
+                  VERIFIED
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Role switcher */}
