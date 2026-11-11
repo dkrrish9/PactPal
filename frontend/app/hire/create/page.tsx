@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import { useRouter } from "next/navigation";
 import { 
@@ -14,6 +14,7 @@ import {
   Loader2
 } from "lucide-react";
 import { mockApi } from "@/lib/mockApi";
+import { getCurrentUser } from "@/lib/supabase";
 
 type Feature = { name: string; weight: number; test: string };
 
@@ -45,6 +46,16 @@ export default function CreateContractPage() {
     figmaUrl: "https://figma.com/design/sample-project-spec",
   });
 
+  useEffect(() => {
+    const user = getCurrentUser();
+    if (user && user.email) {
+      setForm((prev) => ({
+        ...prev,
+        buyerEmail: user.email,
+      }));
+    }
+  }, []);
+
   const [features, setFeatures] = useState<Feature[]>([
     { name: "Landing page", weight: 25, test: "All 12 sections render, CTA links work, mobile drawer opens" },
     { name: "Login system", weight: 20, test: "Login/logout with JWT, session persists across refresh" },
@@ -61,9 +72,12 @@ export default function CreateContractPage() {
     setIsSubmitting(true);
 
     try {
+      const user = getCurrentUser();
       const created = mockApi.createContract({
         title: form.title,
         description: form.description,
+        buyer_id: user?.id,
+        buyer_name: user?.name,
         buyer_email: form.buyerEmail,
         seller_email: form.sellerEmail,
         total_amount: parseFloat(form.totalAmount) || 1500,

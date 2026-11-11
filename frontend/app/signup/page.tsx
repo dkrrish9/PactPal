@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
+import { signUpUser } from "@/lib/supabase";
 
 type Role = "hirer" | "freelancer" | null;
 
@@ -24,13 +25,31 @@ export default function SignupPage() {
     if (step < 3) setStep((s) => (s + 1) as 1 | 2 | 3);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => {
+    setError("");
+
+    try {
+      const res = await signUpUser({
+        name: form.name,
+        email: form.email,
+        password: form.password,
+        role: (role || "hirer") as "hirer" | "freelancer",
+      });
+
+      if (res.error) {
+        setError(res.error);
+        setLoading(false);
+        return;
+      }
+
       setLoading(false);
       window.location.href = role === "hirer" ? "/dashboard/hirer" : "/dashboard/freelancer";
-    }, 1800);
+    } catch (err: any) {
+      setError(err?.message || "Failed to create account. Please try again.");
+      setLoading(false);
+    }
   }
 
   const stepLabels = ["Choose role", "Account details", "Connect PayPal"];

@@ -1,14 +1,27 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Search, Sun, Moon, ChevronDown, Menu, X, Bell, Shield, CheckCircle, AlertTriangle, FileText, Calendar } from "lucide-react";
+import { Search, Sun, Moon, ChevronDown, Menu, X, Bell, Shield, CheckCircle, AlertTriangle, FileText, Calendar, LogOut, User } from "lucide-react";
+import { getCurrentUser, signOutUser, UserProfile } from "@/lib/supabase";
 
 export default function Navbar() {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(3);
+
+  useEffect(() => {
+    setCurrentUser(getCurrentUser());
+    const onAuth = () => setCurrentUser(getCurrentUser());
+    window.addEventListener("pactpal_auth_change", onAuth);
+    window.addEventListener("storage", onAuth);
+    return () => {
+      window.removeEventListener("pactpal_auth_change", onAuth);
+      window.removeEventListener("storage", onAuth);
+    };
+  }, []);
 
   const notifications = [
     {
@@ -503,42 +516,121 @@ export default function Navbar() {
           <span>Search…</span>
         </div>
 
-        <Link
-          href="/login"
-          style={{
-            background: "none",
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: "10px",
-            color: "var(--color-text-secondary)",
-            padding: "8px 18px",
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: "pointer",
-            transition: "all 0.2s",
-            textDecoration: "none",
-            display: "inline-block",
-          }}
-          aria-label="Log in"
-          onMouseEnter={(e) => {
-            (e.currentTarget.style.borderColor = "rgba(255,255,255,0.3)");
-            (e.currentTarget.style.color = "white");
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)");
-            (e.currentTarget.style.color = "var(--color-text-secondary)");
-          }}
-        >
-          Log in
-        </Link>
+        {currentUser ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Link
+              href={currentUser.role === "freelancer" ? "/dashboard/freelancer" : "/dashboard/hirer"}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.14)",
+                borderRadius: 20,
+                padding: "6px 14px",
+                color: "white",
+                textDecoration: "none",
+                fontSize: 13,
+                fontWeight: 600,
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.borderColor = "rgba(0,102,255,0.4)")}
+              onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.14)")}
+            >
+              <div
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: "50%",
+                  background: currentUser.role === "freelancer" 
+                    ? "linear-gradient(135deg, #FF9800, #F57C00)" 
+                    : "linear-gradient(135deg, #0066FF, #00A3E0)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  color: "white",
+                }}
+              >
+                {currentUser.name ? currentUser.name.charAt(0).toUpperCase() : "U"}
+              </div>
+              <span>{currentUser.name ? currentUser.name.split(" ")[0] : "Account"}</span>
+            </Link>
 
-        <Link
-          href="/signup"
-          className="btn-gradient"
-          style={{ padding: "9px 22px", fontSize: 14, textDecoration: "none" }}
-          aria-label="Sign up for PactPal"
-        >
-          Sign up →
-        </Link>
+            <button
+              onClick={() => {
+                signOutUser();
+                window.location.href = "/";
+              }}
+              style={{
+                background: "none",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: "10px",
+                color: "var(--color-text-secondary)",
+                padding: "8px 12px",
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+                transition: "all 0.2s",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+              aria-label="Log out"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "rgba(239,68,68,0.4)";
+                e.currentTarget.style.color = "#F87171";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)";
+                e.currentTarget.style.color = "var(--color-text-secondary)";
+              }}
+            >
+              <LogOut size={13} />
+              <span>Log out</span>
+            </button>
+          </div>
+        ) : (
+          <>
+            <Link
+              href="/login"
+              style={{
+                background: "none",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: "10px",
+                color: "var(--color-text-secondary)",
+                padding: "8px 18px",
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: "pointer",
+                transition: "all 0.2s",
+                textDecoration: "none",
+                display: "inline-block",
+              }}
+              aria-label="Log in"
+              onMouseEnter={(e) => {
+                (e.currentTarget.style.borderColor = "rgba(255,255,255,0.3)");
+                (e.currentTarget.style.color = "white");
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)");
+                (e.currentTarget.style.color = "var(--color-text-secondary)");
+              }}
+            >
+              Log in
+            </Link>
+
+            <Link
+              href="/signup"
+              className="btn-gradient"
+              style={{ padding: "9px 22px", fontSize: 14, textDecoration: "none" }}
+              aria-label="Sign up for PactPal"
+            >
+              Sign up →
+            </Link>
+          </>
+        )}
 
         {/* Mobile menu toggle */}
         <button
@@ -600,28 +692,74 @@ export default function Navbar() {
             </Link>
           ))}
           <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
-            <Link
-              href="/login"
-              style={{
-                flex: 1,
-                border: "1px solid rgba(255,255,255,0.12)",
-                borderRadius: "10px",
-                color: "white",
-                padding: "10px",
-                textAlign: "center",
-                textDecoration: "none",
-                fontSize: 14,
-              }}
-            >
-              Log in
-            </Link>
-            <Link
-              href="/signup"
-              className="btn-gradient"
-              style={{ flex: 1, padding: "10px", fontSize: 14, textDecoration: "none", textAlign: "center" }}
-            >
-              Sign up
-            </Link>
+            {currentUser ? (
+              <>
+                <Link
+                  href={currentUser.role === "freelancer" ? "/dashboard/freelancer" : "/dashboard/hirer"}
+                  onClick={() => setMenuOpen(false)}
+                  style={{
+                    flex: 1,
+                    background: "rgba(0,102,255,0.15)",
+                    border: "1px solid rgba(0,102,255,0.3)",
+                    borderRadius: "10px",
+                    color: "white",
+                    padding: "10px",
+                    textAlign: "center",
+                    textDecoration: "none",
+                    fontSize: 14,
+                    fontWeight: 700,
+                  }}
+                >
+                  Dashboard ({currentUser.name.split(" ")[0]})
+                </Link>
+                <button
+                  onClick={() => {
+                    signOutUser();
+                    setMenuOpen(false);
+                    window.location.href = "/";
+                  }}
+                  style={{
+                    flex: 1,
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "10px",
+                    color: "var(--color-text-secondary)",
+                    padding: "10px",
+                    cursor: "pointer",
+                    fontSize: 14,
+                  }}
+                >
+                  Log out
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  onClick={() => setMenuOpen(false)}
+                  style={{
+                    flex: 1,
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "10px",
+                    color: "white",
+                    padding: "10px",
+                    textAlign: "center",
+                    textDecoration: "none",
+                    fontSize: 14,
+                  }}
+                >
+                  Log in
+                </Link>
+                <Link
+                  href="/signup"
+                  onClick={() => setMenuOpen(false)}
+                  className="btn-gradient"
+                  style={{ flex: 1, padding: "10px", fontSize: 14, textDecoration: "none", textAlign: "center" }}
+                >
+                  Sign up
+                </Link>
+              </>
+            )}
           </div>
         </div>
       )}
