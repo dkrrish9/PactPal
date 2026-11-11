@@ -13,6 +13,9 @@ export interface UserProfile {
   access_token?: string;
   created_at: string;
   is_demo?: boolean;
+  paypal_email?: string;
+  paypal_payer_id?: string;
+  paypal_connected?: boolean;
 }
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://glelhzurkqkrrcsbhlkz.supabase.co";
@@ -108,8 +111,11 @@ export async function signUpUser(params: {
   email: string;
   password: string;
   role: "hirer" | "freelancer";
+  paypal_email?: string;
+  paypal_payer_id?: string;
+  paypal_connected?: boolean;
 }): Promise<AuthResponse> {
-  const { name, email, password, role } = params;
+  const { name, email, password, role, paypal_email, paypal_payer_id, paypal_connected } = params;
 
   let supabaseId = `usr_${Math.random().toString(36).substring(2, 9)}`;
   let accessToken: string | undefined = undefined;
@@ -153,6 +159,9 @@ export async function signUpUser(params: {
     access_token: accessToken,
     created_at: new Date().toISOString(),
     is_demo: false,
+    paypal_email,
+    paypal_payer_id,
+    paypal_connected,
   };
 
   setCurrentUser(newUser);
