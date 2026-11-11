@@ -323,22 +323,6 @@ export default function Navbar() {
           How the Referee Works
         </Link>
 
-        <Link
-          href="/pricing"
-          style={{
-            color: "var(--color-text-secondary)",
-            fontSize: 15,
-            fontWeight: 500,
-            textDecoration: "none",
-            padding: "4px 0",
-            transition: "color 0.2s",
-          }}
-          onMouseEnter={(e) => ((e.currentTarget.style.color = "white"))}
-          onMouseLeave={(e) => ((e.currentTarget.style.color = "var(--color-text-secondary)"))}
-        >
-          Pricing
-        </Link>
-
         {/* Schedule Multi-Contract View (C57) */}
         <Link
           href="/schedule"
@@ -670,7 +654,6 @@ export default function Navbar() {
             { label: "Hire", href: "/hire" },
             { label: "Find Work", href: "/work" },
             { label: "How the Referee Works", href: "/referee" },
-            { label: "Pricing", href: "/pricing" },
             { label: "Multi-Contract Schedule", href: "/schedule" },
             { label: "Admin Console", href: "/admin" },
           ].map((item) => (

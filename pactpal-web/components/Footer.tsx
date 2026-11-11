@@ -3,7 +3,7 @@
 const footerCols = [
   {
     title: "Product",
-    links: ["How it works", "Pricing", "Security", "API Docs", "Changelog"],
+    links: ["How it works", "Security", "API Docs", "Changelog"],
   },
   {
     title: "Hire",
