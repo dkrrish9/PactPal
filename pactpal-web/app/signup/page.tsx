@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { signUpUser } from "@/lib/supabase";
 
@@ -11,6 +11,171 @@ export default function SignupPage() {
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // PayPal Connection State
+  const [connectingPayPal, setConnectingPayPal] = useState(false);
+  const [paypalConnected, setPaypalConnected] = useState(false);
+  const [paypalEmail, setPaypalEmail] = useState("");
+  const [paypalPayerId, setPaypalPayerId] = useState("");
+
+  // Listen for PayPal popup return via postMessage and localStorage events
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // Restore draft if returned via redirect
+    try {
+      const draft = sessionStorage.getItem("pactpal_signup_draft");
+      if (draft) {
+        const parsed = JSON.parse(draft);
+        if (parsed.role) setRole(parsed.role);
+        if (parsed.form) setForm(parsed.form);
+        if (parsed.step) setStep(parsed.step);
+      }
+    } catch {
+      // ignore
+    }
+
+    function applySuccess(email: string, payerId?: string) {
+      setPaypalEmail(email);
+      setPaypalPayerId(payerId || "PAYER_SANDBOX_VERIFIED");
+      setPaypalConnected(true);
+      setConnectingPayPal(false);
+      setError("");
+      try {
+        sessionStorage.removeItem("pactpal_signup_draft");
+        localStorage.removeItem("pactpal_paypal_auth_event");
+      } catch {
+        // ignore
+      }
+    }
+
+    function handleMessage(event: MessageEvent) {
+      if (event.data?.type === "PAYPAL_AUTH_SUCCESS" && event.data?.email) {
+        applySuccess(event.data.email, event.data.payerId);
+      }
+      if (event.data?.type === "PAYPAL_AUTH_CANCEL") {
+        setConnectingPayPal(false);
+      }
+    }
+
+    function handleStorage(event: StorageEvent) {
+      if (event.key === "pactpal_paypal_auth_event" && event.newValue) {
+        try {
+          const ev = JSON.parse(event.newValue);
+          if (ev.type === "PAYPAL_AUTH_SUCCESS" && ev.email) {
+            applySuccess(ev.email, ev.payerId);
+          } else if (ev.type === "PAYPAL_AUTH_CANCEL") {
+            setConnectingPayPal(false);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    const pollTimer = setInterval(() => {
+      try {
+        const stored = localStorage.getItem("pactpal_paypal_auth_event");
+        if (stored) {
+          const ev = JSON.parse(stored);
+          if (ev.type === "PAYPAL_AUTH_SUCCESS" && ev.email) {
+            applySuccess(ev.email, ev.payerId);
+          } else if (ev.type === "PAYPAL_AUTH_CANCEL") {
+            setConnectingPayPal(false);
+            localStorage.removeItem("pactpal_paypal_auth_event");
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }, 500);
+
+    window.addEventListener("message", handleMessage);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      clearInterval(pollTimer);
+      window.removeEventListener("message", handleMessage);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
+  async function handleConnectPayPal() {
+    setError("");
+    setConnectingPayPal(true);
+
+    try {
+      sessionStorage.setItem(
+        "pactpal_signup_draft",
+        JSON.stringify({ role, form, step: 3 })
+      );
+    } catch {
+      // ignore
+    }
+
+    const popupWidth = 520;
+    const popupHeight = 700;
+    const left = window.screenX + (window.outerWidth - popupWidth) / 2;
+    const top = window.screenY + (window.outerHeight - popupHeight) / 2;
+
+    // Open popup immediately on user action to avoid popup blockers
+    const popup = window.open(
+      "",
+      "PayPalLoginWindow",
+      `width=${popupWidth},height=${popupHeight},left=${left},top=${top},status=no,toolbar=no,menubar=no`
+    );
+
+    if (popup) {
+      try {
+        popup.document.write(
+          "<!DOCTYPE html><html><head><title>Connecting to PayPal...</title><style>body{margin:0;background:#070B16;color:white;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center;}.spinner{font-size:36px;margin-bottom:16px;animation:spin 1s linear infinite;}@keyframes spin{100%{transform:rotate(360deg);}}</style></head><body><div><div class='spinner'>🔄</div><h3 style='margin:0 0 8px;'>Connecting to PayPal Sandbox...</h3><p style='color:#94A3B8;font-size:14px;margin:0;'>Opening official PayPal login...</p></div></body></html>"
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      const res = await fetch("/api/paypal/create-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.approve_url) {
+        if (popup) popup.close();
+        throw new Error(data.message || data.error || "Failed to initialize PayPal authorization.");
+      }
+
+      if (popup && !popup.closed) {
+        popup.location.href = data.approve_url;
+      } else {
+        window.location.href = data.approve_url;
+      }
+
+      const checkClosed = setInterval(() => {
+        if (!popup || popup.closed) {
+          clearInterval(checkClosed);
+          setTimeout(() => {
+            setConnectingPayPal((prev) => {
+              return prev && !paypalConnected ? false : prev;
+            });
+          }, 1500);
+        }
+      }, 800);
+    } catch (err: unknown) {
+      if (popup && !popup.closed) popup.close();
+      setConnectingPayPal(false);
+      const msg = err instanceof Error ? err.message : "Failed to open PayPal authorization.";
+      setError(msg);
+    }
+  }
+
+  function handleDisconnectPayPal() {
+    setPaypalConnected(false);
+    setPaypalEmail("");
+    setPaypalPayerId("");
+  }
 
   function handleNext() {
     if (step === 1 && !role) {
@@ -27,8 +192,12 @@ export default function SignupPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
+    if (!paypalConnected) {
+      setError("Please authorize PayPal before completing setup.");
+      return;
+    }
     setError("");
+    setLoading(true);
 
     try {
       const res = await signUpUser({
@@ -36,6 +205,9 @@ export default function SignupPage() {
         email: form.email,
         password: form.password,
         role: (role || "hirer") as "hirer" | "freelancer",
+        paypal_email: paypalEmail,
+        paypal_payer_id: paypalPayerId,
+        paypal_connected: true,
       });
 
       if (res.error) {
@@ -44,10 +216,28 @@ export default function SignupPage() {
         return;
       }
 
+      // Persist full authenticated user profile with PayPal details
+      if (typeof window !== "undefined") {
+        const userProfile = {
+          id: res.user?.id || `usr_${Date.now()}`,
+          role: role || "hirer",
+          name: form.name,
+          email: form.email,
+          paypal_email: paypalEmail,
+          paypal_payer_id: paypalPayerId,
+          paypal_connected: true,
+          created_at: new Date().toISOString(),
+          is_demo: false,
+        };
+        localStorage.setItem("pactpal_current_user", JSON.stringify(userProfile));
+        window.dispatchEvent(new Event("pactpal_auth_change"));
+      }
+
       setLoading(false);
       window.location.href = role === "hirer" ? "/dashboard/hirer" : "/dashboard/freelancer";
-    } catch (err: any) {
-      setError(err?.message || "Failed to create account. Please try again.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to create account. Please try again.";
+      setError(message);
       setLoading(false);
     }
   }
@@ -447,51 +637,135 @@ export default function SignupPage() {
                 PactPal uses PayPal to hold escrow funds securely. We&apos;ll never charge you without your explicit approval.
               </p>
 
-              {/* PayPal mock connect button */}
-              <div
-                style={{
-                  background: "rgba(0,112,186,0.12)",
-                  border: "2px dashed rgba(0,112,186,0.4)",
-                  borderRadius: 16,
-                  padding: "32px",
-                  textAlign: "center",
-                  marginBottom: 24,
-                }}
-              >
-                <div style={{ fontSize: 48, marginBottom: 16 }}>🔗</div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: "white", marginBottom: 8 }}>
-                  PayPal Authorization
-                </div>
+              {/* PayPal connect / authorization card */}
+              {!paypalConnected ? (
                 <div
                   style={{
-                    fontSize: 13,
-                    color: "var(--color-text-muted)",
-                    marginBottom: 20,
-                    lineHeight: 1.6,
+                    background: "rgba(0,112,186,0.12)",
+                    border: "2px dashed rgba(0,112,186,0.4)",
+                    borderRadius: 16,
+                    padding: "32px",
+                    textAlign: "center",
+                    marginBottom: 24,
                   }}
                 >
-                  You&apos;ll be redirected to PayPal to authorize PactPal to hold and release funds on your behalf. This is a demo environment.
+                  <div style={{ fontSize: 48, marginBottom: 16 }}>
+                    {connectingPayPal ? "🔄" : "🔗"}
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: "white", marginBottom: 8 }}>
+                    PayPal Authorization
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "var(--color-text-muted)",
+                      marginBottom: 20,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    You&apos;ll be redirected to PayPal to authorize PactPal to hold and release funds on your behalf. This is a demo environment.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleConnectPayPal}
+                    disabled={connectingPayPal}
+                    style={{
+                      background: connectingPayPal ? "#005ea6" : "#0070BA",
+                      border: "none",
+                      borderRadius: 10,
+                      padding: "12px 28px",
+                      color: "white",
+                      fontSize: 15,
+                      fontWeight: 700,
+                      cursor: connectingPayPal ? "not-allowed" : "pointer",
+                      transition: "opacity 0.2s",
+                      boxShadow: "0 4px 14px rgba(0,112,186,0.35)",
+                    }}
+                    aria-label="Connect PayPal account"
+                    onMouseEnter={(e) => {
+                      if (!connectingPayPal) e.currentTarget.style.opacity = "0.85";
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!connectingPayPal) e.currentTarget.style.opacity = "1";
+                    }}
+                  >
+                    {connectingPayPal ? "Connecting to PayPal Sandbox…" : "Connect PayPal →"}
+                  </button>
                 </div>
-                <button
-                  type="button"
+              ) : (
+                <div
                   style={{
-                    background: "#0070BA",
-                    border: "none",
-                    borderRadius: 10,
-                    padding: "12px 28px",
-                    color: "white",
-                    fontSize: 15,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    transition: "opacity 0.2s",
+                    background: "rgba(16, 185, 129, 0.09)",
+                    border: "2px solid rgba(16, 185, 129, 0.4)",
+                    borderRadius: 16,
+                    padding: "28px 24px",
+                    textAlign: "center",
+                    marginBottom: 24,
+                    boxShadow: "0 0 20px rgba(16, 185, 129, 0.15)",
                   }}
-                  aria-label="Connect PayPal account"
-                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.85")}
-                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
                 >
-                  Connect PayPal →
-                </button>
-              </div>
+                  <div style={{ fontSize: 44, marginBottom: 12 }}>✅</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#34D399", marginBottom: 6 }}>
+                    PayPal Account Authorized
+                  </div>
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      background: "rgba(0,0,0,0.3)",
+                      padding: "6px 14px",
+                      borderRadius: 20,
+                      border: "1px solid rgba(16, 185, 129, 0.3)",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <span style={{ fontSize: 13, color: "white", fontFamily: "monospace" }}>
+                      {paypalEmail}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        background: "#10B981",
+                        color: "#000",
+                        fontWeight: 800,
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      VERIFIED
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "var(--color-text-muted)",
+                      lineHeight: 1.5,
+                      marginBottom: 16,
+                    }}
+                  >
+                    PactPal is authorized to handle escrow holds &amp; releases. Your account is ready!
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDisconnectPayPal}
+                    style={{
+                      background: "transparent",
+                      border: "1px solid rgba(255,255,255,0.18)",
+                      borderRadius: 8,
+                      padding: "6px 14px",
+                      color: "var(--color-text-muted)",
+                      fontSize: 12,
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = "white")}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = "var(--color-text-muted)")}
+                  >
+                    Disconnect / Re-authorize
+                  </button>
+                </div>
+              )}
 
               <div
                 style={{
