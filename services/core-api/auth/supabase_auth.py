@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 PactPal Supabase Authentication & Session Management Module
 Linked Tasks:
