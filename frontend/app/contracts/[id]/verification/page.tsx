@@ -9,6 +9,7 @@ import {
   Contract, 
   VerificationReport 
 } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 import { 
   ShieldCheck, 
   CheckCircle2, 
@@ -41,12 +42,27 @@ export default function VerificationResultPage() {
   const [copiedJson, setCopiedJson] = useState(false);
 
   useEffect(() => {
-    const loadedContract = mockApi.getContract(contractId) || mockApi.getContracts()[0];
-    if (loadedContract) {
-      setContract(loadedContract);
-      const rep = mockApi.getVerificationReport(loadedContract.id);
-      setReport(rep);
+    async function loadVerificationData() {
+      try {
+        const liveContract = await backendClient.getContract(contractId);
+        if (liveContract) {
+          setContract(liveContract as unknown as Contract);
+          const rep = await backendClient.getVerificationReport(liveContract.id);
+          if (rep) {
+            setReport(rep);
+            return;
+          }
+        }
+      } catch {}
+
+      const loadedContract = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+      if (loadedContract) {
+        setContract(loadedContract);
+        const rep = mockApi.getVerificationReport(loadedContract.id);
+        setReport(rep);
+      }
     }
+    loadVerificationData();
   }, [contractId]);
 
   if (!contract || !report) {

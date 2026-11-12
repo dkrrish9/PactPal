@@ -22,6 +22,7 @@ import {
   Info
 } from "lucide-react";
 import { mockApi, Contract } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 
 export default function ContractSubmitPage() {
   const params = useParams();
@@ -49,12 +50,24 @@ export default function ContractSubmitPage() {
   const [pipelineStage, setPipelineStage] = useState<string | null>(null);
 
   useEffect(() => {
-    const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
-    if (loaded) {
-      setContract(loaded);
-      if (loaded.repo_url) setRepoUrl(loaded.repo_url);
-      if (loaded.commit_sha) setCommitSha(loaded.commit_sha);
+    async function loadSubmitData() {
+      try {
+        const live = await backendClient.getContract(contractId);
+        if (live) {
+          setContract(live as unknown as Contract);
+          if (live.repo_url) setRepoUrl(live.repo_url);
+          return;
+        }
+      } catch {}
+
+      const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+      if (loaded) {
+        setContract(loaded);
+        if (loaded.repo_url) setRepoUrl(loaded.repo_url);
+        if (loaded.commit_sha) setCommitSha(loaded.commit_sha);
+      }
     }
+    loadSubmitData();
   }, [contractId]);
 
   if (!contract) {
@@ -96,8 +109,9 @@ export default function ContractSubmitPage() {
       } else {
         clearInterval(interval);
         
-        // Save submission into mockApi state contract
-        mockApi.submitDeliverable(contract.id, {
+        // Save submission into Supabase DB + mockApi state contract
+        backendClient.submitDeliverable({
+          contract_id: contract.id,
           repo_url: repoUrl,
           commit_sha: commitSha,
           branch: branch,

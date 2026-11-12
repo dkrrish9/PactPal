@@ -26,6 +26,7 @@ import {
   Search
 } from "lucide-react";
 import { mockApi, Contract, ProofOfWorkReceipt } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 
 export default function ReceiptPage() {
   const params = useParams();
@@ -39,10 +40,23 @@ export default function ReceiptPage() {
   const [activeTab, setActiveTab] = useState<"summary" | "features" | "evidence" | "json">("summary");
 
   useEffect(() => {
-    const c = mockApi.getContract(rawId) || mockApi.getContracts()[0];
-    setContract(c);
-    const r = mockApi.getReceipt(c?.id || rawId);
-    setReceipt(r);
+    async function loadReceiptData() {
+      try {
+        const live = await backendClient.getContract(rawId);
+        if (live) setContract(live as unknown as Contract);
+        const liveReceipt = await backendClient.getReceipt(rawId);
+        if (liveReceipt) {
+          setReceipt(liveReceipt);
+          return;
+        }
+      } catch {}
+
+      const c = mockApi.getContract(rawId) || mockApi.getContracts()[0];
+      setContract(c);
+      const r = mockApi.getReceipt(c?.id || rawId);
+      setReceipt(r);
+    }
+    loadReceiptData();
   }, [rawId]);
 
   if (!contract || !receipt) {
@@ -76,8 +90,8 @@ export default function ReceiptPage() {
     downloadAnchor.remove();
   };
 
-  const handleSimulateSettlement = () => {
-    mockApi.settleContract(contract.id);
+  const handleSimulateSettlement = async () => {
+    await backendClient.settleContract(contract.id);
     const updated = mockApi.getContract(contract.id);
     setContract(updated);
     setReceipt(mockApi.getReceipt(contract.id));

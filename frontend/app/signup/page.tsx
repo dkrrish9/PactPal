@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { signUpUser } from "@/lib/supabase";
+import { signUpUser, setCurrentUser, UserProfile } from "@/lib/supabase";
 
 export default function SignupPage() {
   const [step, setStep] = useState<1 | 2>(1);
@@ -204,9 +204,9 @@ export default function SignupPage() {
         return;
       }
 
-      // Persist authenticated user profile in localStorage
+      // Persist authenticated user profile in Supabase DB session
       if (typeof window !== "undefined") {
-        const userProfile = {
+        const userProfile: UserProfile = {
           id: res.user?.id || `usr_${Date.now()}`,
           role: "hirer" as const,
           name: form.name.trim(),
@@ -217,8 +217,7 @@ export default function SignupPage() {
           created_at: new Date().toISOString(),
           is_demo: false,
         };
-        localStorage.setItem("pactpal_current_user", JSON.stringify(userProfile));
-        window.dispatchEvent(new Event("pactpal_auth_change"));
+        setCurrentUser(userProfile);
       }
 
       setLoading(false);

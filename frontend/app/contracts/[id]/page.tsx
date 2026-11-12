@@ -35,19 +35,21 @@ import {
   Copy
 } from "lucide-react";
 import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META, ChatMessage } from "@/lib/mockApi";
-import { getCurrentUser, UserProfile } from "@/lib/supabase";
+import { getCurrentUser, UserProfile, toUUID } from "@/lib/supabase";
+import { backendClient } from "@/lib/backendClient";
 
 function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
   if (!c || !user) return false;
   const userEmail = (user.email || "").trim().toLowerCase();
   const userName = (user.name || "").trim().toLowerCase();
   const userId = user.id || "";
+  const userUuid = toUUID(userId);
 
   const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
   const buyerName = (c.buyer_name || "").trim().toLowerCase();
   const buyerId = c.buyer_id || "";
 
-  if (userId && buyerId && userId === buyerId) return true;
+  if (userId && buyerId && (userId === buyerId || userUuid === buyerId)) return true;
   if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
   if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
@@ -90,11 +92,34 @@ export default function ContractDashboardPage() {
 
   useEffect(() => {
     setCurrentUser(getCurrentUser());
-    const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
-    if (loaded) {
-      setContract(loaded);
-      setHoldInfo(mockApi.getHoldInfo(loaded.id));
+    let isMounted = true;
+
+    async function loadContractData() {
+      try {
+        const live = await backendClient.getContract(contractId);
+        if (live && isMounted) {
+          setContract(live as unknown as Contract);
+          setHoldInfo(mockApi.getHoldInfo(live.id));
+          return;
+        }
+      } catch (err) {
+        console.warn("Failed to load contract from Supabase:", err);
+      }
+      const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+      if (loaded && isMounted) {
+        setContract(loaded);
+        setHoldInfo(mockApi.getHoldInfo(loaded.id));
+      }
     }
+
+    loadContractData();
+
+    const handleUpdate = () => loadContractData();
+    window.addEventListener("pactpal_contract_updated", handleUpdate);
+    return () => {
+      isMounted = false;
+      window.removeEventListener("pactpal_contract_updated", handleUpdate);
+    };
   }, [contractId]);
 
   const activeContract = contract || mockApi.getContracts()[0];
@@ -127,8 +152,8 @@ export default function ContractDashboardPage() {
 
   const daysLeft = holdInfo?.days_remaining ?? 18;
 
-  const handleConfirmDisburse = () => {
-    mockApi.settleContract(activeContract.id, passedAmount);
+  const handleConfirmDisburse = async () => {
+    await backendClient.settleContract(activeContract.id, passedAmount);
     setIsReleased(true);
     setReleaseModalOpen(false);
   };
@@ -2127,29 +2152,45 @@ function ChatTab({
     ? (currentUser?.name || activeContract?.buyer_name || "Hirer")
     : (currentUser?.name || activeContract?.seller_name || "Freelancer");
 
-  // Load persisted messages from mockApi
+  // Load persisted messages from Supabase DB with mockApi fallback
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setMessages(mockApi.getMessages(contractId));
+    let isMounted = true;
+    async function loadChatMessages() {
+      try {
+        const live = await backendClient.getMessages(contractId);
+        if (live && live.length > 0 && isMounted) {
+          setMessages(live);
+          return;
+        }
+      } catch (err) {
+        console.warn("Failed to load messages from backend:", err);
+      }
+      if (isMounted) {
+        setMessages(mockApi.getMessages(contractId));
+      }
     }
+    loadChatMessages();
+    return () => { isMounted = false; };
   }, [contractId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAiThinking]);
 
-  const handleSendMessage = (contentToSend?: string) => {
+  const handleSendMessage = async (contentToSend?: string) => {
     const text = (contentToSend || inputText).trim();
     if (!text) return;
 
-    mockApi.sendMessage(contractId, {
+    if (!contentToSend) setInputText("");
+
+    const newMsg = await backendClient.sendMessage(contractId, {
       sender_type: mySenderRole,
       sender_name: mySenderName,
       content: text,
+      sender_id: currentUser?.id,
     });
 
-    setMessages([...mockApi.getMessages(contractId)]);
-    if (!contentToSend) setInputText("");
+    setMessages((prev) => [...prev, newMsg]);
 
     // Simulate smart AI Referee response if a user triggers scope, weight, or terms discussion
     const lower = text.toLowerCase();
@@ -2164,24 +2205,22 @@ function ChatTab({
       lower.includes("change")
     ) {
       setIsAiThinking(true);
-      setTimeout(() => {
-        mockApi.sendMessage(contractId, {
+      setTimeout(async () => {
+        const aiMsg = await backendClient.sendMessage(contractId, {
           sender_type: "AI_REFEREE",
           sender_name: "AI Referee",
           content: `AI Referee Analysis: Scope alteration noted for "${activeContract?.title}". In accordance with PactPal arbitration rules, any modification to milestone weights or deadline requires dual-party confirmation before funding hold adjustment.`,
           metadata: { action: "SCOPE_ADVISORY" },
         });
-        setMessages([...mockApi.getMessages(contractId)]);
+        setMessages((prev) => [...prev, aiMsg]);
         setIsAiThinking(false);
       }, 900);
     }
   };
 
-  const handleResetChat = () => {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(`pactpal_chat_v1_${contractId}`);
-      setMessages(mockApi.getMessages(contractId));
-    }
+  const handleResetChat = async () => {
+    await backendClient.resetMessages(contractId);
+    setMessages(mockApi.getMessages(contractId));
   };
 
   const filteredMessages = messages.filter((m) => {
