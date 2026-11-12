@@ -184,6 +184,10 @@ export default function SignupPage() {
 
   async function handleSubmit(e?: React.FormEvent) {
     if (e) e.preventDefault();
+    if (!paypalConnected) {
+      setError("Please authorize your PayPal account before completing setup.");
+      return;
+    }
     setError("");
     setLoading(true);
 
@@ -721,15 +725,21 @@ export default function SignupPage() {
                 </button>
                 <button
                   type="submit"
-                  className="btn-gradient"
-                  disabled={loading}
+                  className={paypalConnected ? "btn-gradient" : undefined}
+                  disabled={loading || !paypalConnected}
                   style={{
                     flex: 2,
                     padding: "13px",
                     fontSize: 15,
                     fontWeight: 700,
-                    opacity: loading ? 0.7 : 1,
-                    cursor: loading ? "not-allowed" : "pointer",
+                    borderRadius: 10,
+                    background: !paypalConnected ? "rgba(255,255,255,0.06)" : undefined,
+                    border: !paypalConnected ? "1px solid rgba(255,255,255,0.1)" : "none",
+                    color: !paypalConnected ? "rgba(255,255,255,0.35)" : "white",
+                    boxShadow: !paypalConnected ? "none" : undefined,
+                    opacity: !paypalConnected ? 0.6 : loading ? 0.7 : 1,
+                    cursor: loading || !paypalConnected ? "not-allowed" : "pointer",
+                    transition: "all 0.2s ease",
                   }}
                 >
                   {loading ? "Creating account…" : "Complete setup →"}
