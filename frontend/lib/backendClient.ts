@@ -8,7 +8,39 @@ import { Contract, Feature, ContractStatus, ChatMessage } from "@/types/contract
 import { mockApi, ProofOfWorkReceipt } from "@/lib/mockApi";
 import { supabase, toUUID, isUUID } from "@/lib/supabase";
 
-const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://glelhzurkqkrrcsbhlkz.supabase.co";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_lG_-_i364GzIiO8oYCzzig_NyOLrG-b";
+
+function getBackendBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_BACKEND_URL) {
+    return process.env.NEXT_PUBLIC_BACKEND_URL.replace(/\/$/, "");
+  }
+  if (typeof window !== "undefined") {
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    // In production (Render/Vercel), use relative URL ("") so the browser hits Next.js API routes on the same host,
+    // avoiding browser CORS loopback blocks on 127.0.0.1:8000
+    return isLocal ? "http://127.0.0.1:8000" : "";
+  }
+  return "http://127.0.0.1:8000";
+}
+
+/**
+ * Clean Supabase Public REST fetch helper.
+ * Uses the clean public anon key to guarantee that queries never fail with 401
+ * even when the client's browser has an expired/corrupted user JWT session.
+ */
+async function supabaseRestFetch(pathAndQuery: string, init?: RequestInit): Promise<Response> {
+  const url = `${SUPABASE_URL}/rest/v1/${pathAndQuery}`;
+  return fetch(url, {
+    ...init,
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+  });
+}
 
 function mapSupabaseRowToContract(row: any): Contract {
   const buyerName = row.buyer?.name || "Hirer";
@@ -66,8 +98,10 @@ async function safeFetch<T>(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const baseUrl = getBackendBaseUrl();
+    const url = `${baseUrl}${endpoint}`;
 
-    const res = await fetch(`${BACKEND_BASE}${endpoint}`, {
+    const res = await fetch(url, {
       ...options,
       signal: controller.signal,
       headers: {
@@ -89,7 +123,8 @@ async function safeFetch<T>(
     if (fallback) {
       return fallback();
     }
-    throw new Error(`Backend unavailable at ${BACKEND_BASE}${endpoint}`);
+    const baseUrl = getBackendBaseUrl();
+    throw new Error(`Backend unavailable at ${baseUrl}${endpoint}`);
   }
 }
 
@@ -135,7 +170,8 @@ export const backendClient = {
     };
   }> {
     try {
-      const res = await fetch(`${BACKEND_BASE}/api/v1/agreement-reader/validate`, {
+      const baseUrl = getBackendBaseUrl();
+      const res = await fetch(`${baseUrl}/api/v1/agreement-reader/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -205,11 +241,13 @@ export const backendClient = {
   },
 
   /**
-   * List all contracts directly from Supabase DB with local fallback
+   * List all contracts directly from Supabase DB with clean public REST recovery
    */
   async getContracts(): Promise<Contract[]> {
+    const querySelect = "id,title,description,status,total_amount,currency,deadline,paypal_order_id,paypal_auth_id,auth_expires_at,figma_url,repo_url,buyer_id,seller_id,created_at,updated_at,is_locked,buyer_confirmed_at,seller_confirmed_at,locked_at,features(*),buyer:users!contracts_buyer_id_fkey(id,name,email,paypal_email),seller:users!contracts_seller_id_fkey(id,name,email,paypal_email)";
+
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("contracts")
         .select(`
           id,
@@ -238,13 +276,39 @@ export const backendClient = {
         `)
         .order("created_at", { ascending: false });
 
+      // If Supabase returns 401 (e.g. stale/expired user JWT in localStorage), auto-recover via clean public anon REST fetch:
+      if (error || !data || data.length === 0) {
+        console.warn("Supabase client query issue, attempting clean public anon recovery...", error?.message);
+        const res = await supabaseRestFetch(`contracts?select=${encodeURIComponent(querySelect)}&order=created_at.desc`);
+        if (res.ok) {
+          const restData = await res.json();
+          if (restData && restData.length > 0) {
+            data = restData;
+            error = null;
+          }
+        }
+      }
+
       if (!error && data && data.length > 0) {
         const mapped = data.map(mapSupabaseRowToContract);
         mockApi.syncContractsFromSupabase(mapped);
         return mapped;
       }
     } catch (err) {
-      console.warn("Supabase query note, falling back to local:", err);
+      console.warn("Supabase query note, falling back to clean REST recovery:", err);
+      try {
+        const res = await supabaseRestFetch(`contracts?select=${encodeURIComponent(querySelect)}&order=created_at.desc`);
+        if (res.ok) {
+          const restData = await res.json();
+          if (restData && restData.length > 0) {
+            const mapped = restData.map(mapSupabaseRowToContract);
+            mockApi.syncContractsFromSupabase(mapped);
+            return mapped;
+          }
+        }
+      } catch (restErr) {
+        console.warn("Clean REST recovery error:", restErr);
+      }
     }
 
     return safeFetch<{ data: Contract[]; total: number }>(
@@ -255,14 +319,15 @@ export const backendClient = {
   },
 
   /**
-   * Get single contract by ID from Supabase DB
+   * Get single contract by ID from Supabase DB with clean public REST recovery
    */
   async getContract(id: string): Promise<Contract | null> {
     if (!id) return null;
     const targetUuid = toUUID(id);
+    const querySelect = "id,title,description,status,total_amount,currency,deadline,paypal_order_id,paypal_auth_id,auth_expires_at,figma_url,repo_url,buyer_id,seller_id,created_at,updated_at,is_locked,buyer_confirmed_at,seller_confirmed_at,locked_at,features(*),buyer:users!contracts_buyer_id_fkey(id,name,email,paypal_email),seller:users!contracts_seller_id_fkey(id,name,email,paypal_email)";
 
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("contracts")
         .select(`
           id,
@@ -292,12 +357,36 @@ export const backendClient = {
         .or(`id.eq.${id},id.eq.${targetUuid}`)
         .maybeSingle();
 
+      if (error || !data) {
+        const res = await supabaseRestFetch(
+          `contracts?select=${encodeURIComponent(querySelect)}&or=(id.eq.${id},id.eq.${targetUuid})&limit=1`
+        );
+        if (res.ok) {
+          const rows = await res.json();
+          if (rows && rows.length > 0) {
+            data = rows[0];
+            error = null;
+          }
+        }
+      }
+
       if (!error && data) {
         const mapped = mapSupabaseRowToContract(data);
         return mapped;
       }
     } catch (err) {
-      console.warn("Supabase getContract note:", err);
+      console.warn("Supabase getContract note, attempting clean REST recovery:", err);
+      try {
+        const res = await supabaseRestFetch(
+          `contracts?select=${encodeURIComponent(querySelect)}&or=(id.eq.${id},id.eq.${targetUuid})&limit=1`
+        );
+        if (res.ok) {
+          const rows = await res.json();
+          if (rows && rows.length > 0) {
+            return mapSupabaseRowToContract(rows[0]);
+          }
+        }
+      } catch {}
     }
 
     return safeFetch<Contract | null>(
@@ -308,7 +397,8 @@ export const backendClient = {
   },
 
   /**
-   * Create a new contract stored directly in Supabase DB
+   * Create a new contract stored directly in Supabase DB.
+   * Resolves existing users by email first to prevent 23505 duplicate key and 23503 foreign key constraint errors.
    */
   async createContract(payload: {
     title: string;
@@ -334,120 +424,159 @@ export const backendClient = {
       ? crypto.randomUUID()
       : toUUID(`pct_${Date.now()}_${Math.random()}`);
 
-    const buyerRawId = payload.buyer_id || payload.buyer_email || "usr_buyer_01";
-    const buyerUUID = toUUID(buyerRawId);
-    const buyerEmail = payload.buyer_email || "alice@buyer.example.com";
-    const buyerName = payload.buyer_name || buyerEmail.split("@")[0];
+    const cleanBuyerEmail = (payload.buyer_email || "hirer@pactpal.dev").trim().toLowerCase();
+    const cleanBuyerName = payload.buyer_name || cleanBuyerEmail.split("@")[0] || "Hirer";
+    let buyerUUID = toUUID(payload.buyer_id || cleanBuyerEmail);
 
+    // 1. Resolve Buyer: check if user already exists in public.users to avoid 23505 conflict
     try {
-      await supabase.from("users").upsert({
-        id: buyerUUID,
-        role: "BUYER",
-        name: buyerName,
-        email: buyerEmail,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "id" });
-    } catch (e) {
-      console.warn("Failed to upsert buyer in Supabase:", e);
-    }
-
-    let sellerUUID: string | null = null;
-    let sellerEmail = payload.seller_email || "";
-    let sellerName = payload.seller_name || "";
-
-    if (payload.seller_id || (sellerEmail && sellerEmail.trim())) {
-      const sellerRawId = payload.seller_id || sellerEmail || "usr_seller_01";
-      sellerUUID = toUUID(sellerRawId);
-      if (!sellerEmail) sellerEmail = "bob@seller.example.com";
-      if (!sellerName) sellerName = sellerEmail.split("@")[0];
-
-      try {
-        await supabase.from("users").upsert({
-          id: sellerUUID,
-          role: "SELLER",
-          name: sellerName,
-          email: sellerEmail,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: "id" });
-      } catch (e) {
-        console.warn("Failed to upsert seller in Supabase:", e);
-      }
-    }
-
-    try {
-      const { error: contractErr } = await supabase.from("contracts").insert({
-        id: contractId,
-        buyer_id: buyerUUID,
-        seller_id: sellerUUID,
-        title: payload.title,
-        description: payload.description || payload.title,
-<<<<<<< HEAD
-        status: "DRAFT",
-=======
-        buyer_id: payload.buyer_id,
-        buyer_name: payload.buyer_name,
-        buyer_email: payload.buyer_email || "",
-        seller_id: payload.seller_id,
-        seller_name: payload.seller_name,
-        seller_email: payload.seller_email || "",
->>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
-        total_amount: payload.total_amount,
-        currency: "USD",
-        deadline: payload.deadline,
-        figma_url: payload.figma_url || null,
-        repo_url: payload.repo_url || null,
-        is_locked: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      if (contractErr) {
-        console.error("Supabase contract insert error:", contractErr);
-      }
-
-      if (payload.features && payload.features.length > 0) {
-        const featureRows = payload.features.map((f, i) => ({
-          id: toUUID(`${contractId}_feat_${i + 1}`),
-          contract_id: contractId,
-          title: f.title,
-          acceptance_test: f.acceptance_test,
-          price_weight: Number(f.price_weight) || 0,
-          allocated_amount: Number(f.allocated_amount) || ((payload.total_amount * Number(f.price_weight)) / 100),
-          status: "PENDING",
-          sort_order: i + 1,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }));
-
-        const { error: featErr } = await supabase.from("features").insert(featureRows);
-        if (featErr) {
-          console.error("Supabase features insert error:", featErr);
+      const userCheckRes = await supabaseRestFetch(
+        `users?select=id,email&email=eq.${encodeURIComponent(cleanBuyerEmail)}&limit=1`
+      );
+      if (userCheckRes.ok) {
+        const existing = await userCheckRes.json();
+        if (existing && existing.length > 0 && existing[0].id) {
+          buyerUUID = existing[0].id;
+        } else {
+          // Buyer does not exist yet: create user row
+          await supabaseRestFetch("users", {
+            method: "POST",
+            body: JSON.stringify({
+              id: buyerUUID,
+              role: "BUYER",
+              name: cleanBuyerName,
+              email: cleanBuyerEmail,
+              updated_at: new Date().toISOString(),
+            }),
+          });
         }
       }
+    } catch (e) {
+      console.warn("Buyer lookup note:", e);
+    }
 
-      await supabase.from("messages").insert({
-        id: toUUID(`${contractId}_msg_init`),
-        contract_id: contractId,
-        sender_id: buyerUUID,
-        sender_type: "BUYER",
-        content: `Contract initiated: "${payload.title}" with total budget $${payload.total_amount.toLocaleString()}. Milestone checklist created.`,
-        metadata: { event: "CONTRACT_CREATED", total_amount: payload.total_amount },
-        sent_at: new Date().toISOString(),
+    // 2. Resolve Seller: check if seller already exists in public.users
+    let sellerUUID: string | null = null;
+    const cleanSellerEmail = (payload.seller_email || "").trim().toLowerCase();
+    if (cleanSellerEmail || payload.seller_id) {
+      const sellerRaw = payload.seller_id || cleanSellerEmail || "usr_seller_01";
+      sellerUUID = toUUID(sellerRaw);
+      const sellerName = payload.seller_name || cleanSellerEmail.split("@")[0] || "Seller";
+
+      try {
+        const sellerCheckRes = await supabaseRestFetch(
+          `users?select=id,email&email=eq.${encodeURIComponent(cleanSellerEmail || "alex.dev@code.io")}&limit=1`
+        );
+        if (sellerCheckRes.ok) {
+          const existing = await sellerCheckRes.json();
+          if (existing && existing.length > 0 && existing[0].id) {
+            sellerUUID = existing[0].id;
+          } else if (cleanSellerEmail) {
+            await supabaseRestFetch("users", {
+              method: "POST",
+              body: JSON.stringify({
+                id: sellerUUID,
+                role: "SELLER",
+                name: sellerName,
+                email: cleanSellerEmail,
+                updated_at: new Date().toISOString(),
+              }),
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("Seller lookup note:", e);
+      }
+    }
+
+    // 3. Insert contract into Supabase with clean public REST call
+    const contractBody = {
+      id: contractId,
+      buyer_id: buyerUUID,
+      seller_id: sellerUUID,
+      title: payload.title,
+      description: payload.description || payload.title,
+      status: "DRAFT",
+      total_amount: payload.total_amount,
+      currency: "USD",
+      deadline: payload.deadline,
+      figma_url: payload.figma_url || null,
+      repo_url: payload.repo_url || null,
+      is_locked: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      const insertRes = await supabaseRestFetch("contracts", {
+        method: "POST",
+        body: JSON.stringify(contractBody),
       });
+
+      if (!insertRes.ok) {
+        const errText = await insertRes.text();
+        console.error("Supabase contract insert error:", insertRes.status, errText);
+      } else {
+        console.log("Contract successfully persisted to Supabase:", contractId);
+      }
     } catch (supaErr) {
       console.warn("Supabase contract creation exception:", supaErr);
     }
 
+    // 4. Insert features linked to contract
+    if (payload.features && payload.features.length > 0) {
+      const featureRows = payload.features.map((f, i) => ({
+        id: toUUID(`${contractId}_feat_${i + 1}`),
+        contract_id: contractId,
+        title: f.title,
+        acceptance_test: f.acceptance_test,
+        price_weight: Number(f.price_weight) || 0,
+        allocated_amount: Number(f.allocated_amount) || ((payload.total_amount * Number(f.price_weight)) / 100),
+        status: "PENDING",
+        sort_order: i + 1,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
+
+      try {
+        await supabaseRestFetch("features", {
+          method: "POST",
+          body: JSON.stringify(featureRows),
+        });
+      } catch (featErr) {
+        console.warn("Supabase features insert error:", featErr);
+      }
+    }
+
+    // 5. Insert initial negotiation chat message in Supabase
+    try {
+      await supabaseRestFetch("messages", {
+        method: "POST",
+        body: JSON.stringify({
+          id: toUUID(`${contractId}_msg_init`),
+          contract_id: contractId,
+          sender_id: buyerUUID,
+          sender_type: "BUYER",
+          content: `Contract initiated: "${payload.title}" with total budget $${payload.total_amount.toLocaleString()}. Milestone checklist created.`,
+          metadata: { event: "CONTRACT_CREATED", total_amount: payload.total_amount },
+          sent_at: new Date().toISOString(),
+        }),
+      });
+    } catch (msgErr) {
+      console.warn("Supabase initial message insert error:", msgErr);
+    }
+
+    // 6. Sync to local mock cache for immediate client reactivity
     const localContract = mockApi.createContract({
       id: contractId,
       title: payload.title,
       description: payload.description || payload.title,
       buyer_id: buyerUUID,
-      buyer_name: buyerName,
-      buyer_email: buyerEmail,
+      buyer_name: cleanBuyerName,
+      buyer_email: cleanBuyerEmail,
       seller_id: sellerUUID || undefined,
-      seller_name: sellerName || undefined,
-      seller_email: sellerEmail || undefined,
+      seller_name: payload.seller_name || undefined,
+      seller_email: cleanSellerEmail || undefined,
       total_amount: payload.total_amount,
       deadline: payload.deadline,
       figma_url: payload.figma_url,
@@ -921,16 +1050,32 @@ export const backendClient = {
   },
 
   /**
-   * Get negotiation chat messages directly from Supabase DB with local fallback
+   * Get negotiation chat messages directly from Supabase DB with clean public REST recovery
    */
   async getMessages(contractId: string): Promise<ChatMessage[]> {
     const targetUuid = toUUID(contractId);
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from("messages")
         .select("id, contract_id, sender_id, sender_type, content, metadata, sent_at")
         .or(`contract_id.eq.${contractId},contract_id.eq.${targetUuid}`)
         .order("sent_at", { ascending: true });
+
+      // If Supabase returns 401 (e.g. stale token), auto-recover via clean public REST fetch:
+      if (error || !data || data.length === 0) {
+        try {
+          const res = await supabaseRestFetch(
+            `messages?select=id,contract_id,sender_id,sender_type,content,metadata,sent_at&or=(contract_id.eq.${contractId},contract_id.eq.${targetUuid})&order=sent_at.asc`
+          );
+          if (res.ok) {
+            const restData = await res.json();
+            if (restData && restData.length > 0) {
+              data = restData;
+              error = null;
+            }
+          }
+        } catch {}
+      }
 
       if (!error && data && data.length > 0) {
         const mapped: ChatMessage[] = data.map((row: any) => {
@@ -979,7 +1124,7 @@ export const backendClient = {
     const localMsg = mockApi.sendMessage(contractId, message);
 
     try {
-      await supabase.from("messages").insert({
+      const msgRow = {
         id: toUUID(localMsg.id),
         contract_id: targetUuid,
         sender_id: senderUuid,
@@ -987,12 +1132,54 @@ export const backendClient = {
         content: message.content,
         metadata: { ...(message.metadata || {}), sender_name: localMsg.sender_name },
         sent_at: localMsg.sent_at,
+      };
+
+      const res = await supabaseRestFetch("messages", {
+        method: "POST",
+        body: JSON.stringify(msgRow),
       });
+
+      if (!res.ok) {
+        await supabase.from("messages").insert(msgRow);
+      }
     } catch (err) {
       console.warn("Supabase sendMessage insert error:", err);
     }
 
     return localMsg;
+  },
+
+  /**
+   * Update contract status in Supabase DB + local cache
+   */
+  async updateContractStatus(id: string, status: ContractStatus): Promise<Contract | null> {
+    const targetUuid = toUUID(id);
+    const now = new Date().toISOString();
+    const updatePayload = {
+      status,
+      updated_at: now,
+    };
+
+    try {
+      const res = await supabaseRestFetch(`contracts?or=(id.eq.${id},id.eq.${targetUuid})`, {
+        method: "PATCH",
+        body: JSON.stringify(updatePayload),
+      });
+      if (!res.ok) {
+        await supabase.from("contracts").update(updatePayload).or(`id.eq.${id},id.eq.${targetUuid}`);
+      }
+    } catch (err) {
+      console.warn("Supabase updateContractStatus note:", err);
+      try {
+        await supabase.from("contracts").update(updatePayload).or(`id.eq.${id},id.eq.${targetUuid}`);
+      } catch {}
+    }
+
+    const localUpdated = mockApi.updateContractStatus(id, status);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_updated"));
+    }
+    return localUpdated;
   },
 
   /**
