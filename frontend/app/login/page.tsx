@@ -9,6 +9,48 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  async function handleGoogleSignIn() { /* unchanged */ }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email || !password) {
+      setError("Please fill in all fields.");
+      return;
+    }
+    setError("");
+    setLoading(true);
+
+    try {
+      const res = await signInUser({ email, password });
+      if (res.error) {
+        setError(res.error);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(false);
+      // Always redirect to Hirer dashboard after login
+      window.location.href = "/dashboard/hirer";
+    } catch (err: any) {
+      setError(err?.message || "Sign in failed.");
+      setLoading(false);
+    }
+  }
+
+  return (
+    // unchanged JSX
+    <main style={{ minHeight: "100vh", background: "var(--color-bg)", display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 24px", position: "relative", overflow: "hidden" }}>
+      {/* Glow blobs */}
+      ...
+    </main>
+  );
+}
+ {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
   async function handleGoogleSignIn() {
     setError("");
     setLoading(true);
