@@ -167,6 +167,7 @@ export interface Contract {
   submission?: Submission | null;
   paypal_order_id?: string | null;
   paypal_auth_id?: string | null;
+  paypal_capture_id?: string | null;
   auth_expires_at?: string | null; // ISO string
   created_at: string;
   buyer_confirmed_at?: string | null;
@@ -1348,7 +1349,7 @@ export const mockApi = {
         passed_weight_percent: passedWeight,
         failed_weight_percent: failedWeight,
         paypal_order_id: contract.paypal_order_id || "17M76648VK7664316",
-        paypal_capture_id: `CAP_${id.toUpperCase()}_PAYOUT`,
+        paypal_capture_id: contract.paypal_capture_id || `CAP_${id.toUpperCase()}_PAYOUT`,
         paypal_payout_batch_id: `BATCH_${Math.abs(sellerPayout * 13)}_RELEASE`,
         paypal_refund_id: buyerRefund > 0 ? `REFUND_${id.toUpperCase()}_BUYER` : undefined,
       },

@@ -64,11 +64,15 @@ export async function POST(request: Request) {
       }
     }
 
-    // Safeguard: If origin points to internal container port 10000 (Render internal default port)
-    // override with RENDER_EXTERNAL_URL if set, or strip port 10000
-    if (origin.includes(":10000")) {
+    // Safeguard: Port 10000 is Render's internal container port and cannot be reached from outside.
+    // If origin contains :10000 or points to localhost when running in production/Render, resolve to live domain.
+    if (origin.includes(":10000") || (origin.includes("localhost") && (process.env.RENDER || process.env.NODE_ENV === "production"))) {
       if (process.env.RENDER_EXTERNAL_URL) {
         origin = process.env.RENDER_EXTERNAL_URL.replace(/\/$/, "");
+      } else if (forwardedHost && !forwardedHost.includes(":10000") && !forwardedHost.includes("localhost")) {
+        origin = `${forwardedProto}://${forwardedHost}`.replace(/\/$/, "");
+      } else {
+        origin = "https://pactpal-frontend-c0mh.onrender.com";
       }
     }
 

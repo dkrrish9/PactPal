@@ -194,6 +194,7 @@ export interface Contract {
   submission?: Submission | null;
   paypal_order_id?: string | null;
   paypal_auth_id?: string | null;
+  paypal_capture_id?: string | null;
   auth_expires_at?: string | null;
   funded_at?: string | null;
   created_at: string;

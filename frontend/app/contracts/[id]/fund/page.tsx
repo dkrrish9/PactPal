@@ -1,9 +1,9 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { mockApi, Contract, HoldInfo } from "@/lib/mockApi";
 import { backendClient } from "@/lib/backendClient";
 import { getCurrentUser, UserProfile } from "@/lib/supabase";
@@ -39,7 +39,26 @@ function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
 }
 
 export default function ContractFundPage() {
+  return (
+    <Suspense
+      fallback={
+        <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
+          <Navbar />
+          <div style={{ maxWidth: 800, margin: "140px auto", textAlign: "center", color: "white" }}>
+            <h2 style={{ fontSize: 22, fontWeight: 700 }}>Loading escrow funding details...</h2>
+          </div>
+          <Footer />
+        </main>
+      }
+    >
+      <ContractFundContent />
+    </Suspense>
+  );
+}
+
+function ContractFundContent() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const contractId = (params?.id as string) || "pct_signed_03";
 
@@ -48,6 +67,7 @@ export default function ContractFundPage() {
   const [holdInfo, setHoldInfo] = useState<HoldInfo | null>(null);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
   const [authSuccess, setAuthSuccess] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<{
     days: number;
     hours: number;
@@ -86,6 +106,94 @@ export default function ContractFundPage() {
     loadFundData();
   }, [contractId]);
 
+  // Complete official authorization hold with PayPal order token
+  const completeAuthorization = async (orderId: string) => {
+    setIsAuthorizing(true);
+    setAuthError(null);
+    try {
+      const res = await backendClient.authorizeEscrowHold({
+        contract_id: contractId,
+        order_id: orderId,
+      });
+
+      if (res && res.paypal_auth_id) {
+        const live = await backendClient.getContract(contractId);
+        if (live) {
+          setContract(live as unknown as Contract);
+        } else {
+          setContract((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "FUNDED",
+                  paypal_auth_id: res.paypal_auth_id,
+                  paypal_order_id: orderId,
+                  auth_expires_at: res.auth_expires_at,
+                }
+              : null
+          );
+        }
+        const hold = mockApi.getHoldInfo(contractId);
+        setHoldInfo(hold);
+        setAuthSuccess(true);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to execute PayPal authorization hold.";
+      setAuthError(msg);
+    } finally {
+      setIsAuthorizing(false);
+    }
+  };
+
+  // Handle redirect return params from PayPal Sandbox
+  useEffect(() => {
+    const paypalAction = searchParams.get("paypal_action");
+    const token = searchParams.get("token");
+
+    if (paypalAction === "cancelled") {
+      setAuthError("PayPal authorization hold was cancelled by payer.");
+      if (typeof window !== "undefined" && window.opener) {
+        try {
+          window.opener.postMessage({ type: "PAYPAL_ESCROW_CANCELLED", contractId }, "*");
+          window.close();
+        } catch {}
+      }
+      return;
+    }
+
+    if (paypalAction === "approved" && token) {
+      if (typeof window !== "undefined" && window.opener) {
+        try {
+          window.opener.postMessage({ type: "PAYPAL_ESCROW_APPROVED", orderId: token, contractId }, "*");
+          window.close();
+          return;
+        } catch {}
+      }
+      // Direct redirect in same tab
+      completeAuthorization(token);
+      if (typeof window !== "undefined") {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    }
+  }, [searchParams, contractId]);
+
+  // Handle postMessage from popup window
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const onMessage = async (event: MessageEvent) => {
+      if (event.data?.type === "PAYPAL_ESCROW_APPROVED" && event.data?.orderId) {
+        await completeAuthorization(event.data.orderId);
+      } else if (event.data?.type === "PAYPAL_ESCROW_CANCELLED") {
+        setIsAuthorizing(false);
+        setAuthError("PayPal authorization hold was cancelled.");
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [contractId]);
+
   // Live countdown ticker every 1 second
   useEffect(() => {
     const interval = setInterval(() => {
@@ -117,14 +225,53 @@ export default function ContractFundPage() {
   }
 
   const handlePayPalApprove = async () => {
+    if (!contract) return;
     setIsAuthorizing(true);
-    const updated = await backendClient.fundContract(contract.id);
-    if (updated) {
-      setContract({ ...(updated as unknown as Contract) });
-      const newHold = mockApi.getHoldInfo(updated.id);
-      setHoldInfo(newHold);
+    setAuthError(null);
+
+    try {
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const holdRes = await backendClient.createEscrowHold({
+        contract_id: contract.id,
+        amount: contract.total_amount,
+        currency: contract.currency || "USD",
+        title: contract.title,
+        origin,
+      });
+
+      if (!holdRes.approve_url) {
+        throw new Error("Did not receive a valid PayPal approval URL.");
+      }
+
+      // Open official PayPal Sandbox popup
+      const popupWidth = 600;
+      const popupHeight = 720;
+      const left = window.screenX + (window.outerWidth - popupWidth) / 2;
+      const top = window.screenY + (window.outerHeight - popupHeight) / 2;
+
+      const popup = window.open(
+        holdRes.approve_url,
+        "PayPalEscrowPopup",
+        `width=${popupWidth},height=${popupHeight},left=${left},top=${top},status=no,toolbar=no,menubar=no`
+      );
+
+      if (!popup || popup.closed || typeof popup.closed === "undefined") {
+        // Fallback to direct redirect if popup blocked
+        window.location.href = holdRes.approve_url;
+      } else {
+        const timer = setInterval(() => {
+          if (!popup || popup.closed) {
+            clearInterval(timer);
+            setTimeout(() => {
+              setIsAuthorizing((prev) => (authSuccess ? false : prev));
+            }, 1200);
+          }
+        }, 800);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to initiate PayPal escrow authorization.";
+      setAuthError(msg);
       setIsAuthorizing(false);
-      setAuthSuccess(true);
     }
   };
 
@@ -413,6 +560,27 @@ export default function ContractFundPage() {
               </p>
             </div>
           </div>
+
+          {authError && (
+            <div
+              style={{
+                width: "100%",
+                padding: "14px 18px",
+                marginBottom: 16,
+                background: "rgba(239, 68, 68, 0.12)",
+                border: "1px solid rgba(239, 68, 68, 0.4)",
+                borderRadius: 14,
+                color: "#FCA5A5",
+                fontSize: 13,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <AlertCircle size={18} color="#EF4444" />
+              <span>{authError}</span>
+            </div>
+          )}
 
           {/* Action Button: PayPal Approve (HIRER ONLY) or Waiting Indicator (FREELANCER) */}
           <div
