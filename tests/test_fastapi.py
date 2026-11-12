@@ -114,6 +114,96 @@ class TestFastAPIApp(unittest.TestCase):
         msg_data = get_resp.json()
         self.assertGreaterEqual(msg_data["total"], 1)
 
+    def test_agreement_reader_validate_valid(self):
+        """Phase 3: Valid contract passes Agreement Reader with exact penny conservation."""
+        future_deadline = "2026-12-31T23:59:59Z"
+        payload = {
+            "title": "Clean Architecture Web App",
+            "description": "Production grade web application",
+            "total_amount": 1000.0,
+            "deadline": future_deadline,
+            "currency": "USD",
+            "features": [
+                {"title": "Auth Module", "acceptance_test": "User can sign in with valid credentials.", "price_weight": 50.0},
+                {"title": "Dashboard View", "acceptance_test": "Metrics widget renders cleanly with test data.", "price_weight": 50.0},
+            ]
+        }
+        resp = self.client.post("/api/v1/agreement-reader/validate", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["status"], "VALID")
+        self.assertIsNotNone(data["checklist"])
+        self.assertEqual(len(data["checklist"]["features"]), 2)
+        total_allocated = sum(f["allocated_amount"] for f in data["checklist"]["features"])
+        self.assertEqual(total_allocated, 1000.0)
+
+    def test_agreement_reader_clarification_on_invalid_weights(self):
+        """Phase 3: Weights summing to != 100% trigger structured ClarificationRequest."""
+        future_deadline = "2026-12-31T23:59:59Z"
+        payload = {
+            "title": "Mismatched Weights Project",
+            "total_amount": 1000.0,
+            "deadline": future_deadline,
+            "features": [
+                {"title": "Auth Module", "acceptance_test": "User can sign in cleanly.", "price_weight": 40.0},
+                {"title": "Dashboard View", "acceptance_test": "Metrics widget renders with data.", "price_weight": 40.0},
+            ]
+        }
+        # Validation endpoint check
+        val_resp = self.client.post("/api/v1/agreement-reader/validate", json=payload)
+        self.assertEqual(val_resp.status_code, 200)
+        val_data = val_resp.json()
+        self.assertEqual(val_data["status"], "NEEDS_CLARIFICATION")
+        self.assertIsNotNone(val_data["clarification_request"])
+        self.assertIn("100.0%", val_data["clarification_request"]["conversational_message"])
+
+        # Creation endpoint blocks with 422
+        create_resp = self.client.post("/api/v1/contracts", json=payload)
+        self.assertEqual(create_resp.status_code, 422)
+        create_data = create_resp.json()
+        self.assertEqual(create_data["error"], "CLARIFICATION_REQUIRED")
+        self.assertIn("clarification_request", create_data)
+
+    def test_dual_confirmation_and_checklist_locking(self):
+        """Phase 3: Dual confirmation locks checklist and blocks unauthorized mutation."""
+        fresh_payload = {
+            "title": "Dual Confirmation Test Contract",
+            "description": "Testing checklist locking",
+            "total_amount": 1200.0,
+            "deadline": "2026-12-31T23:59:59Z",
+            "seller_id": "usr_seller_01",
+            "features": [
+                {"title": "Feature Alpha", "acceptance_test": "Test Alpha condition passes.", "price_weight": 60.0},
+                {"title": "Feature Beta", "acceptance_test": "Test Beta condition passes.", "price_weight": 40.0}
+            ]
+        }
+        create_res = self.client.post("/api/v1/contracts", json=fresh_payload, headers={"X-Actor-Id": "usr_buyer_01"})
+        self.assertEqual(create_res.status_code, 201)
+        contract_id = create_res.json()["id"]
+
+        # Seller confirms
+        resp_seller = self.client.post(
+            f"/api/v1/contracts/{contract_id}/confirm-checklist",
+            json={"role": "SELLER"},
+            headers={"X-Actor-Id": "usr_seller_01"}
+        )
+        self.assertEqual(resp_seller.status_code, 200)
+        c_seller = resp_seller.json()
+        self.assertIsNotNone(c_seller["seller_confirmed_at"])
+        self.assertFalse(c_seller["is_locked"])
+
+        # Buyer confirms -> locks checklist & transitions to SIGNED
+        resp_buyer = self.client.post(
+            f"/api/v1/contracts/{contract_id}/confirm-checklist",
+            json={"role": "BUYER"},
+            headers={"X-Actor-Id": "usr_buyer_01"}
+        )
+        self.assertEqual(resp_buyer.status_code, 200)
+        c_buyer = resp_buyer.json()
+        self.assertIsNotNone(c_buyer["buyer_confirmed_at"])
+        self.assertTrue(c_buyer["is_locked"])
+        self.assertEqual(c_buyer["status"], "SIGNED")
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -5,6 +5,7 @@ import Footer from "@/components/Footer";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { mockApi, Contract, Feature } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 import { 
   ShieldCheck, 
   CheckCircle2, 
@@ -41,21 +42,46 @@ export default function ContractReviewPage() {
   const [featureWeights, setFeatureWeights] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
-    if (loaded) {
-      setContract(loaded);
-      setCounterPrice(loaded.total_amount);
-      setCounterDeadline(loaded.deadline.split("T")[0]);
-      
-      const initialChecks: Record<string, boolean> = {};
-      const initialWeights: Record<string, number> = {};
-      loaded.features.forEach((f) => {
-        initialChecks[f.id] = loaded.checklist_locked || Boolean(loaded.seller_confirmed_at);
-        initialWeights[f.id] = f.price_weight;
-      });
-      setCheckedFeatures(initialChecks);
-      setFeatureWeights(initialWeights);
+    let isMounted = true;
+    async function loadData() {
+      try {
+        const live = await backendClient.getContract(contractId);
+        if (live && isMounted) {
+          setContract(live as unknown as Contract);
+          setCounterPrice(live.total_amount);
+          setCounterDeadline(live.deadline.split("T")[0]);
+          const initialChecks: Record<string, boolean> = {};
+          const initialWeights: Record<string, number> = {};
+          const locked = Boolean(live.is_locked || (live as any).checklist_locked || (live as any).seller_confirmed_at);
+          (live.features || []).forEach((f: any) => {
+            initialChecks[f.id] = locked;
+            initialWeights[f.id] = f.price_weight;
+          });
+          setCheckedFeatures(initialChecks);
+          setFeatureWeights(initialWeights);
+          return;
+        }
+      } catch {
+        // Fallback
+      }
+
+      const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+      if (loaded && isMounted) {
+        setContract(loaded);
+        setCounterPrice(loaded.total_amount);
+        setCounterDeadline(loaded.deadline.split("T")[0]);
+        const initialChecks: Record<string, boolean> = {};
+        const initialWeights: Record<string, number> = {};
+        loaded.features.forEach((f) => {
+          initialChecks[f.id] = loaded.checklist_locked || Boolean(loaded.seller_confirmed_at);
+          initialWeights[f.id] = f.price_weight;
+        });
+        setCheckedFeatures(initialChecks);
+        setFeatureWeights(initialWeights);
+      }
     }
+    loadData();
+    return () => { isMounted = false; };
   }, [contractId]);
 
   if (!contract) {
@@ -69,18 +95,31 @@ export default function ContractReviewPage() {
     );
   }
 
-  const allItemsChecked = contract.features.every((f) => checkedFeatures[f.id]);
+  const isLocked = Boolean(contract.is_locked || (contract as any).checklist_locked || (contract.buyer_confirmed_at && contract.seller_confirmed_at));
+  const allItemsChecked = (contract.features || []).every((f) => checkedFeatures[f.id]);
   const totalWeight = Object.values(featureWeights).reduce((a, b) => a + b, 0);
 
   const handleToggleCheck = (featId: string) => {
-    if (contract.checklist_locked) return;
+    if (isLocked) return;
     setCheckedFeatures((prev) => ({
       ...prev,
       [featId]: !prev[featId],
     }));
   };
 
-  const handleAcceptAndSign = () => {
+  const handleAcceptAndSign = async () => {
+    try {
+      const updated = await backendClient.signContract(contract.id, role);
+      if (updated) {
+        setContract(updated as unknown as Contract);
+        setSuccessToast("Contract accepted & signed! Dual confirmation registered.");
+        setTimeout(() => setSuccessToast(null), 5000);
+        return;
+      }
+    } catch {
+      // Fallback
+    }
+
     const updated = mockApi.signContract(contract.id);
     if (updated) {
       setContract({ ...updated });
@@ -89,7 +128,19 @@ export default function ContractReviewPage() {
     }
   };
 
-  const handleConfirmRole = () => {
+  const handleConfirmRole = async () => {
+    try {
+      const updated = await backendClient.confirmChecklist(contract.id, role);
+      if (updated) {
+        setContract(updated as unknown as Contract);
+        setSuccessToast(`Checklist confirmed by ${role === "SELLER" ? "Seller" : "Buyer"}! Status: ${updated.status}`);
+        setTimeout(() => setSuccessToast(null), 4000);
+        return;
+      }
+    } catch {
+      // Fallback
+    }
+
     const updated = mockApi.confirmChecklist(contract.id, role);
     if (updated) {
       setContract({ ...updated });
@@ -358,7 +409,7 @@ export default function ContractReviewPage() {
             <div>
               <h2 style={{ fontSize: 18, fontWeight: 800, color: "white", display: "flex", alignItems: "center", gap: 8 }}>
                 Dual Confirmation Status
-                {contract.checklist_locked ? (
+                {isLocked ? (
                   <span style={{ fontSize: 11, background: "rgba(76,175,80,0.15)", color: "#81C784", padding: "3px 10px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 4 }}>
                     <Lock size={12} /> Checklist Locked
                   </span>
@@ -374,7 +425,7 @@ export default function ContractReviewPage() {
             </div>
 
             {/* Quick Confirm button for current viewing role */}
-            {!contract.checklist_locked && (
+            {!isLocked && (
               <button
                 onClick={handleConfirmRole}
                 style={{
@@ -548,7 +599,7 @@ export default function ContractReviewPage() {
                     border: `1px solid ${isChecked ? "rgba(0, 102, 255, 0.3)" : "rgba(255, 255, 255, 0.06)"}`,
                     borderRadius: 18,
                     padding: "20px 24px",
-                    cursor: contract.checklist_locked ? "default" : "pointer",
+                    cursor: isLocked ? "default" : "pointer",
                     transition: "all 0.2s ease",
                   }}
                 >
@@ -651,7 +702,7 @@ export default function ContractReviewPage() {
             <div style={{ fontSize: 16, fontWeight: 800, color: "white" }}>
               {contract.status === "SIGNED"
                 ? "Contract Signed by Both Parties"
-                : contract.checklist_locked
+                : isLocked
                 ? "Checklist Confirmed & Locked"
                 : "Ready to confirm or negotiate terms?"}
             </div>

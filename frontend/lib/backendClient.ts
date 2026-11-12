@@ -56,6 +56,106 @@ export const backendClient = {
   },
 
   /**
+   * Validate agreement form with AI Agreement Reader (Phase 3)
+   */
+  async validateAgreement(payload: {
+    title: string;
+    description?: string;
+    total_amount: number;
+    deadline: string;
+    currency?: string;
+    features: Array<{
+      title: string;
+      acceptance_test: string;
+      price_weight: number;
+    }>;
+  }): Promise<{
+    status: "VALID" | "NEEDS_CLARIFICATION";
+    checklist?: any;
+    clarification_request?: {
+      summary: string;
+      conversational_message: string;
+      clarifications: Array<{
+        field: string;
+        feature_title?: string;
+        issue: string;
+        suggested_action: string;
+        options: string[];
+      }>;
+      raw_errors: string[];
+    };
+  }> {
+    try {
+      const res = await fetch(`${BACKEND_BASE}/api/v1/agreement-reader/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {
+      // Local fallback
+    }
+
+    const totalWeight = payload.features.reduce((acc, f) => acc + (Number(f.price_weight) || 0), 0);
+    const weightValid = Math.abs(totalWeight - 100) < 0.01;
+    const allTestsValid = payload.features.every((f) => (f.acceptance_test || "").trim().length >= 10);
+    const deadlineValid = new Date(payload.deadline).getTime() > Date.now();
+
+    if (weightValid && allTestsValid && deadlineValid && payload.total_amount > 0) {
+      return { status: "VALID" };
+    }
+
+    const rawErrors: string[] = [];
+    const clarifications: any[] = [];
+
+    if (!weightValid) {
+      const diff = 100 - totalWeight;
+      const issue = `Feature price weights sum to ${totalWeight.toFixed(1)}%, differing from 100% by ${diff > 0 ? "+" : ""}${diff.toFixed(1)}%.`;
+      rawErrors.push(issue);
+      clarifications.push({
+        field: "features[].price_weight",
+        issue,
+        suggested_action: "Adjust weights to equal exactly 100%.",
+        options: ["Auto-balance weights evenly", "Assign remainder to final feature"]
+      });
+    }
+
+    if (!allTestsValid) {
+      const issue = "One or more features lack a specific, measurable acceptance test (>=10 chars).";
+      rawErrors.push(issue);
+      clarifications.push({
+        field: "features[].acceptance_test",
+        issue,
+        suggested_action: "Specify measurable pass/fail test conditions for each deliverable.",
+        options: ["Adopt AI-suggested test condition"]
+      });
+    }
+
+    if (!deadlineValid) {
+      const issue = "Milestone delivery deadline must be set to a future date.";
+      rawErrors.push(issue);
+      clarifications.push({
+        field: "deadline",
+        issue,
+        suggested_action: "Select a future deadline date.",
+        options: ["Set deadline to 14 days from now"]
+      });
+    }
+
+    return {
+      status: "NEEDS_CLARIFICATION",
+      clarification_request: {
+        summary: `Contract validation failed with ${rawErrors.length} issue(s). Clarification required before freezing escrow.`,
+        conversational_message: "🤝 AI Escrow Referee Notice:\nZero-trust rules require exact, measurable terms before freezing buyer funds. Under our impartial referee policy, I will NEVER guess your milestone prices or acceptance criteria.\n\nPlease clarify the flagged item(s) below:",
+        clarifications,
+        raw_errors: rawErrors
+      }
+    };
+  },
+
+  /**
    * List all contracts
    */
   async getContracts(): Promise<Contract[]> {
@@ -145,6 +245,21 @@ export const backendClient = {
         body: JSON.stringify({ role }),
       },
       () => mockApi.signContract(id) as unknown as Contract
+    );
+  },
+
+  /**
+   * Dual Confirmation Checklist Lock (Phase 3)
+   */
+  async confirmChecklist(id: string, role: "BUYER" | "SELLER"): Promise<Contract> {
+    return safeFetch<Contract>(
+      `/api/v1/contracts/${id}/confirm-checklist`,
+      {
+        method: "POST",
+        headers: { "X-Actor-Id": role === "SELLER" ? "usr_seller_01" : "usr_buyer_01" },
+        body: JSON.stringify({ role }),
+      },
+      () => mockApi.confirmChecklist(id, role) as unknown as Contract
     );
   },
 
