@@ -83,4 +83,6 @@ tmp/
 temp/
 sandbox_artifacts/
 screenshots/diff_*
+*.db
+*.sqlite3
 
