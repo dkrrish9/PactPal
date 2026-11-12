@@ -33,8 +33,8 @@ function isUserBuyer(c: Contract, user: UserProfile | null): boolean {
   const buyerId = c.buyer_id || "";
 
   if (userId && (buyerId === userId || buyerId === userUuid)) return true;
-  if (userEmail && buyerEmail === userEmail) return true;
-  if (userName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  if (userEmail && buyerEmail && buyerEmail === userEmail) return true;
+  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
 }
 
@@ -50,8 +50,8 @@ function isUserSeller(c: Contract, user: UserProfile | null): boolean {
   const sellerId = c.seller_id || "";
 
   if (userId && (sellerId === userId || sellerId === userUuid)) return true;
-  if (userEmail && sellerEmail === userEmail) return true;
-  if (userName && (userName.includes(sellerName) || sellerName.includes(userName))) return true;
+  if (userEmail && sellerEmail && sellerEmail === userEmail) return true;
+  if (userName && sellerName && (userName.includes(sellerName) || sellerName.includes(userName))) return true;
   return false;
 }
 

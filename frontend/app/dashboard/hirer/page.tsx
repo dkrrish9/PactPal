@@ -23,6 +23,7 @@ const statusMeta: Record<string, { color: string; bg: string; label: string; ico
 export default function HirerDashboardPage() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [scope, setScope] = useState<"MY" | "ALL">("MY");
   const [filter, setFilter] = useState("ALL");
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -32,19 +33,7 @@ export default function HirerDashboardPage() {
 
     try {
       const all = await backendClient.getContracts();
-      if (user && !user.is_demo && user.id !== "usr_buyer_01" && user.id !== "55e7ebaa-8e27-5409-82ae-2d1b224463c1") {
-        const userUuid = toUUID(user.id);
-        const userContracts = all.filter(
-          (c) =>
-            c.buyer_id === user.id ||
-            c.buyer_id === userUuid ||
-            c.buyer_email?.toLowerCase() === user.email.toLowerCase() ||
-            c.buyer_name?.toLowerCase() === user.name.toLowerCase()
-        );
-        setContracts(userContracts);
-      } else {
-        setContracts(all);
-      }
+      setContracts(all);
     } catch (err) {
       console.error("Failed to load contracts from Supabase:", err);
       setContracts(mockApi.getContracts());
@@ -68,14 +57,30 @@ export default function HirerDashboardPage() {
     };
   }, []);
 
-  const totalHeld = contracts
+  const myContracts = contracts.filter((c) => {
+    if (!currentUser) return false;
+    const userUuid = toUUID(currentUser.id);
+    return (
+      c.buyer_id === currentUser.id ||
+      c.buyer_id === userUuid ||
+      (currentUser.email && c.buyer_email?.toLowerCase() === currentUser.email.toLowerCase()) ||
+      (currentUser.name && c.buyer_name?.toLowerCase() === currentUser.name.toLowerCase())
+    );
+  });
+
+  const displayedContracts =
+    scope === "MY" && currentUser && !currentUser.is_demo && currentUser.id !== "usr_buyer_01" && currentUser.id !== "55e7ebaa-8e27-5409-82ae-2d1b224463c1"
+      ? myContracts
+      : contracts;
+
+  const totalHeld = displayedContracts
     .filter((c) => c.status === "FUNDED" || c.status === "IN_PROGRESS" || c.status === "VERIFYING" || c.status === "DECISION")
     .reduce((s, c) => s + c.total_amount, 0);
 
-  const activeCount = contracts.filter((c) => c.status !== "SETTLED" && c.status !== "DRAFT").length;
-  const settledCount = contracts.filter((c) => c.status === "SETTLED").length;
+  const activeCount = displayedContracts.filter((c) => c.status !== "SETTLED" && c.status !== "DRAFT").length;
+  const settledCount = displayedContracts.filter((c) => c.status === "SETTLED").length;
 
-  const filteredContracts = contracts.filter((c) => {
+  const filteredContracts = displayedContracts.filter((c) => {
     if (filter === "ACTIVE") return c.status !== "SETTLED";
     if (filter === "SETTLED") return c.status === "SETTLED";
     if (filter === "HELD") return c.status === "FUNDED" || c.status === "IN_PROGRESS";
@@ -258,9 +263,48 @@ export default function HirerDashboardPage() {
               alignItems: "center",
               padding: "20px 24px",
               borderBottom: "1px solid rgba(255,255,255,0.07)",
+              flexWrap: "wrap",
+              gap: 12,
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 15, color: "white" }}>All contracts</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: "white" }}>Contracts</div>
+              <div style={{ display: "flex", background: "rgba(255,255,255,0.04)", borderRadius: 50, padding: 3, border: "1px solid rgba(255,255,255,0.08)" }}>
+                <button
+                  onClick={() => setScope("MY")}
+                  style={{
+                    background: scope === "MY" ? "linear-gradient(135deg, #0066FF, #00A3E0)" : "transparent",
+                    color: scope === "MY" ? "white" : "var(--color-text-muted)",
+                    border: "none",
+                    borderRadius: 50,
+                    padding: "4px 14px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    boxShadow: scope === "MY" ? "0 0 12px rgba(0,102,255,0.4)" : "none",
+                  }}
+                >
+                  My Projects ({myContracts.length})
+                </button>
+                <button
+                  onClick={() => setScope("ALL")}
+                  style={{
+                    background: scope === "ALL" ? "linear-gradient(135deg, #0066FF, #00A3E0)" : "transparent",
+                    color: scope === "ALL" ? "white" : "var(--color-text-muted)",
+                    border: "none",
+                    borderRadius: 50,
+                    padding: "4px 14px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    boxShadow: scope === "ALL" ? "0 0 12px rgba(0,102,255,0.4)" : "none",
+                  }}
+                >
+                  All Platform ({contracts.length})
+                </button>
+              </div>
+            </div>
+
             <div style={{ display: "flex", gap: 8 }}>
               {["ALL", "ACTIVE", "HELD", "SETTLED"].map((f) => (
                 <button
