@@ -2110,12 +2110,22 @@ function ChatTab({
   const contractId = activeContract?.id || "pct_099e77";
   const displayFeatures = features.length > 0 ? features : (activeContract?.features || []);
 
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
-  const [senderRole, setSenderRole] = useState<"BUYER" | "SELLER" | "AI_REFEREE">("BUYER");
   const [roleFilter, setRoleFilter] = useState<"ALL" | "BUYER" | "SELLER" | "AI_REFEREE">("ALL");
   const [isAiThinking, setIsAiThinking] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setCurrentUser(getCurrentUser());
+  }, []);
+
+  const isViewerHirer = isUserHirer(activeContract, currentUser);
+  const mySenderRole: "BUYER" | "SELLER" = isViewerHirer ? "BUYER" : "SELLER";
+  const mySenderName = isViewerHirer
+    ? (currentUser?.name || activeContract?.buyer_name || "Hirer")
+    : (currentUser?.name || activeContract?.seller_name || "Freelancer");
 
   // Load persisted messages from mockApi
   useEffect(() => {
@@ -2128,18 +2138,13 @@ function ChatTab({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAiThinking]);
 
-  const handleSendMessage = (contentToSend?: string, roleOverride?: "BUYER" | "SELLER" | "AI_REFEREE") => {
+  const handleSendMessage = (contentToSend?: string) => {
     const text = (contentToSend || inputText).trim();
     if (!text) return;
 
-    const role = roleOverride || senderRole;
-    let senderName = "AI Referee";
-    if (role === "BUYER") senderName = activeContract?.buyer_name || "Priya Sharma";
-    if (role === "SELLER") senderName = activeContract?.seller_name || "Alex Mercer";
-
     mockApi.sendMessage(contractId, {
-      sender_type: role,
-      sender_name: senderName,
+      sender_type: mySenderRole,
+      sender_name: mySenderName,
       content: text,
     });
 
@@ -2148,7 +2153,7 @@ function ChatTab({
 
     // Simulate smart AI Referee response if a user triggers scope, weight, or terms discussion
     const lower = text.toLowerCase();
-    if (role !== "AI_REFEREE" && (
+    if (
       lower.includes("scope") ||
       lower.includes("weight") ||
       lower.includes("price") ||
@@ -2157,7 +2162,7 @@ function ChatTab({
       lower.includes("test") ||
       lower.includes("add") ||
       lower.includes("change")
-    )) {
+    ) {
       setIsAiThinking(true);
       setTimeout(() => {
         mockApi.sendMessage(contractId, {
@@ -2614,16 +2619,22 @@ function ChatTab({
           <span style={{ fontSize: 11, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>
             Suggested:
           </span>
-          {[
-            { text: "Can you add dark mode support as well?", role: "BUYER" as const },
-            { text: "I can deliver dark mode for $100 and 2 extra days.", role: "SELLER" as const },
-            { text: "Ask AI Referee: Verify if milestone 2 acceptance criteria is ambiguous", role: "BUYER" as const },
-          ].map((s, idx) => (
+          {(isViewerHirer
+            ? [
+                "Can you add dark mode support as well?",
+                "Please verify milestone acceptance criteria details.",
+                "Let me know when the code is ready for test verification.",
+              ]
+            : [
+                "I can deliver dark mode for $100 and 2 extra days.",
+                "Milestone implementation is ready for verification.",
+                "Currently working on test coverage for the authentication flow.",
+              ]
+          ).map((s, idx) => (
             <button
               key={idx}
               onClick={() => {
-                setSenderRole(s.role);
-                setInputText(s.text);
+                setInputText(s);
               }}
               style={{
                 whiteSpace: "nowrap",
@@ -2645,12 +2656,12 @@ function ChatTab({
                 e.currentTarget.style.color = "var(--color-text-secondary)";
               }}
             >
-              {s.text}
+              {s}
             </button>
           ))}
         </div>
 
-        {/* Send Input Bar & Sender Role Switcher */}
+        {/* Send Input Bar & Sender Identity */}
         <div
           style={{
             padding: "16px 20px",
@@ -2661,51 +2672,37 @@ function ChatTab({
             gap: 12,
           }}
         >
-          {/* Identity switcher */}
+          {/* Identity badge & Hirer-only Escrow key */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>
-                Send as:
+                Chatting as:
               </span>
               <div
                 style={{
                   display: "inline-flex",
-                  borderRadius: 10,
-                  background: "rgba(255,255,255,0.04)",
-                  padding: 3,
-                  border: "1px solid rgba(255,255,255,0.08)",
+                  alignItems: "center",
+                  gap: 6,
+                  borderRadius: 20,
+                  background: isViewerHirer ? "rgba(0,102,255,0.12)" : "rgba(16,185,129,0.12)",
+                  border: `1px solid ${isViewerHirer ? "rgba(0,102,255,0.3)" : "rgba(16,185,129,0.3)"}`,
+                  padding: "4px 14px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: isViewerHirer ? "#60A5FA" : "#34D399",
                 }}
               >
-                {[
-                  { role: "BUYER" as const, label: `👔 ${activeContract?.buyer_name || "Hirer"}` },
-                  { role: "SELLER" as const, label: `🧑‍💻 ${activeContract?.seller_name || "Freelancer"}` },
-                  { role: "AI_REFEREE" as const, label: "🤖 AI Referee" },
-                ].map((item) => (
-                  <button
-                    key={item.role}
-                    type="button"
-                    onClick={() => setSenderRole(item.role)}
-                    style={{
-                      padding: "4px 12px",
-                      borderRadius: 7,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      border: "none",
-                      background: senderRole === item.role ? "#0066FF" : "transparent",
-                      color: senderRole === item.role ? "white" : "var(--color-text-muted)",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+                <span>{isViewerHirer ? "👔" : "🧑‍💻"}</span>
+                <span>{mySenderName} ({isViewerHirer ? "Hirer" : "Freelancer"})</span>
               </div>
             </div>
 
-            <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
-              Escrow Key: <code style={{ color: "#60A5FA" }}>pactpal_chat_v1_{contractId}</code>
-            </span>
+            {/* Escrow Key: STRICTLY visible to Hirer only */}
+            {isViewerHirer && (
+              <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                Escrow Key: <code style={{ color: "#60A5FA" }}>pactpal_chat_v1_{contractId}</code>
+              </span>
+            )}
           </div>
 
           {/* Form input */}
@@ -2719,13 +2716,7 @@ function ChatTab({
             <input
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder={`Type a negotiation message as ${
-                senderRole === "BUYER"
-                  ? `${activeContract?.buyer_name || "Hirer"}`
-                  : senderRole === "SELLER"
-                  ? `${activeContract?.seller_name || "Freelancer"}`
-                  : "AI Referee"
-              }...`}
+              placeholder={`Type a negotiation message as ${mySenderName}...`}
               style={{
                 flex: 1,
                 background: "rgba(255,255,255,0.05)",
