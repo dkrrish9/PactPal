@@ -35,13 +35,17 @@ export default function FreelancerDashboardPage() {
     setCurrentUser(user);
     const all = mockApi.getContracts();
     if (user && !user.is_demo && user.id !== "usr_seller_01" && !user.email.includes("alex")) {
-      const userContracts = all.filter(
-        (c) =>
+      const visibleContracts = all.filter((c) => {
+        const isFreelancer =
           c.seller_id === user.id ||
           c.seller_email?.toLowerCase() === user.email.toLowerCase() ||
-          c.seller_name?.toLowerCase() === user.name.toLowerCase()
-      );
-      setContracts(userContracts);
+          c.seller_name?.toLowerCase() === user.name?.toLowerCase();
+        const isOwnPosted =
+          c.buyer_id === user.id ||
+          c.buyer_email?.toLowerCase() === user.email.toLowerCase();
+        return isFreelancer || !isOwnPosted;
+      });
+      setContracts(visibleContracts);
     } else {
       setContracts(all);
     }
