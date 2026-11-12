@@ -143,6 +143,7 @@ export default function FreelancerDashboardPage() {
         if (isUserBuyer(c, user)) return false;
         const isSeller = isUserSeller(c, user);
         const isFundedOrActive =
+          c.status === "SIGNED" ||
           c.status === "FUNDED" ||
           c.status === "IN_PROGRESS" ||
           c.status === "SUBMITTED" ||

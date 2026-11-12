@@ -150,9 +150,9 @@ export default function ContractReviewPage() {
       });
       if (updated) {
         setContract({ ...updated });
-        setSuccessToast("Agreement terms confirmed & application submitted! The Hirer has been notified to approve & sign.");
-        setTimeout(() => setSuccessToast(null), 6000);
       }
+      setSuccessToast("Agreement terms confirmed! Opening contract dashboard...");
+      setTimeout(() => router.push(`/contracts/${contract.id}`), 800);
     } else {
       const updated = await backendClient.approveAndSignContract(contract.id, {
         id: user?.id,
@@ -162,7 +162,7 @@ export default function ContractReviewPage() {
       if (updated) {
         setContract({ ...updated });
         setSuccessToast("Freelancer approved & contract dual-signed! Redirecting to PayPal Escrow authorization...");
-        setTimeout(() => router.push(`/contracts/${contract.id}/fund`), 1200);
+        setTimeout(() => router.push(`/contracts/${contract.id}/fund`), 800);
       }
     }
   };
@@ -177,9 +177,9 @@ export default function ContractReviewPage() {
       });
       if (updated) {
         setContract({ ...updated });
-        setSuccessToast("Application confirmed & terms signed from Freelancer side! Awaiting Hirer approval.");
-        setTimeout(() => setSuccessToast(null), 5000);
       }
+      setSuccessToast("Agreement terms confirmed! Opening contract dashboard...");
+      setTimeout(() => router.push(`/contracts/${contract.id}`), 800);
     } else {
       const updated = await backendClient.approveAndSignContract(contract.id, {
         id: user?.id,
@@ -188,8 +188,8 @@ export default function ContractReviewPage() {
       });
       if (updated) {
         setContract({ ...updated });
-        setSuccessToast("Freelancer approved & contract signed by both parties! It has moved to Active Contracts.");
-        setTimeout(() => setSuccessToast(null), 5000);
+        setSuccessToast("Freelancer approved & contract signed by both parties! Moving to dashboard...");
+        setTimeout(() => router.push(`/contracts/${contract.id}`), 800);
       }
     }
   };
@@ -797,6 +797,24 @@ export default function ContractReviewPage() {
                     >
                       <Clock size={16} /> Terms Signed · Awaiting Hirer&apos;s PayPal Escrow Deposit
                     </div>
+                    <Link
+                      href={`/contracts/${contract.id}`}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        background: "linear-gradient(135deg, #0066FF, #00A3E0)",
+                        color: "white",
+                        borderRadius: 50,
+                        padding: "12px 24px",
+                        fontSize: 14,
+                        fontWeight: 700,
+                        textDecoration: "none",
+                        boxShadow: "0 0 20px rgba(0,102,255,0.4)",
+                      }}
+                    >
+                      Open Contract Dashboard →
+                    </Link>
                     <Link
                       href="/dashboard/freelancer"
                       style={{

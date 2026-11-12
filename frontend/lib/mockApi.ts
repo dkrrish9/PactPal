@@ -1050,9 +1050,13 @@ export const mockApi = {
     if (freelancer.name) contracts[idx].seller_name = freelancer.name;
     if (freelancer.email) contracts[idx].seller_email = freelancer.email;
     contracts[idx].seller_confirmed_at = now;
-    if (contracts[idx].status === "DRAFT") {
-      contracts[idx].status = "REVIEW";
+    if (!contracts[idx].buyer_confirmed_at) {
+      contracts[idx].buyer_confirmed_at = contracts[idx].created_at || now;
     }
+    contracts[idx].status = "SIGNED";
+    contracts[idx].checklist_locked = true;
+    contracts[idx].is_locked = true;
+    saveContracts(contracts);
 
     // Add chat message audit log
     this.sendMessage(id, {

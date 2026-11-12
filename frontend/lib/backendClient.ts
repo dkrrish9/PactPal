@@ -612,22 +612,25 @@ export const backendClient = {
     const sellerEmail = freelancer.email || "freelancer@example.com";
     const sellerName = freelancer.name || sellerEmail.split("@")[0];
 
+    const now = new Date().toISOString();
     try {
       await supabase.from("users").upsert({
         id: sellerUUID,
         role: "SELLER",
         name: sellerName,
         email: sellerEmail,
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       }, { onConflict: "id" });
 
       await supabase
         .from("contracts")
         .update({
           seller_id: sellerUUID,
-          status: "REVIEW",
-          seller_confirmed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          status: "SIGNED",
+          seller_confirmed_at: now,
+          buyer_confirmed_at: now,
+          is_locked: true,
+          updated_at: now,
         })
         .or(`id.eq.${id},id.eq.${targetUuid}`);
 
