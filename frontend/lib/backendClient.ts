@@ -187,6 +187,12 @@ export const backendClient = {
     deadline: string;
     figma_url?: string;
     repo_url?: string;
+    buyer_id?: string;
+    buyer_email?: string;
+    buyer_name?: string;
+    seller_id?: string;
+    seller_email?: string;
+    seller_name?: string;
     features: Array<{
       title: string;
       acceptance_test: string;
@@ -203,8 +209,12 @@ export const backendClient = {
       () => mockApi.createContract({
         title: payload.title,
         description: payload.description || payload.title,
-        buyer_email: "alice@buyer.example.com",
-        seller_email: "bob@seller.example.com",
+        buyer_id: payload.buyer_id,
+        buyer_name: payload.buyer_name,
+        buyer_email: payload.buyer_email || "alice@buyer.example.com",
+        seller_id: payload.seller_id,
+        seller_name: payload.seller_name,
+        seller_email: payload.seller_email || "bob@seller.example.com",
         total_amount: payload.total_amount,
         deadline: payload.deadline,
         figma_url: payload.figma_url,

@@ -159,6 +159,7 @@ export default function CreateContractPage() {
       }
 
       // 2. Proceed with contract creation via backend client
+      const activeUser = getCurrentUser();
       const created = await backendClient.createContract({
         title: form.title,
         description: form.description,
@@ -166,6 +167,10 @@ export default function CreateContractPage() {
         deadline: new Date(form.deadline || Date.now() + 14 * 86400000).toISOString(),
         figma_url: form.figmaUrl,
         repo_url: form.repoUrl,
+        buyer_id: activeUser?.id,
+        buyer_name: activeUser?.name,
+        buyer_email: activeUser?.email || form.buyerEmail,
+        seller_email: form.sellerEmail,
         features: features.map((f) => ({
           title: f.name || "Untitled Feature",
           acceptance_test: f.test || "Acceptance test passed",

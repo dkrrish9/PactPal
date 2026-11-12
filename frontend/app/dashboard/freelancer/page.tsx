@@ -34,7 +34,7 @@ export default function FreelancerDashboardPage() {
     const user = getCurrentUser();
     setCurrentUser(user);
     const all = mockApi.getContracts();
-    if (user && !user.is_demo && user.id !== "usr_seller_01" && !user.email.includes("alex")) {
+    if (user && !user.is_demo && user.id !== "usr_seller_01") {
       const visibleContracts = all.filter((c) => {
         const isFreelancer =
           c.seller_id === user.id ||

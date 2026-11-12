@@ -30,7 +30,7 @@ export default function HirerDashboardPage() {
     setCurrentUser(user);
 
     const all = mockApi.getContracts();
-    if (user && !user.is_demo && user.id !== "usr_buyer_01" && !user.email.includes("priya")) {
+    if (user && !user.is_demo && user.id !== "usr_buyer_01") {
       const userContracts = all.filter(
         (c) =>
           c.buyer_id === user.id ||
@@ -60,7 +60,7 @@ export default function HirerDashboardPage() {
 
   const displayName = currentUser?.name || "Hirer";
   const userPayPalEmail = currentUser?.paypal_email || "";
-  const isPersonalized = currentUser && !currentUser.is_demo && !currentUser.email.includes("priya");
+  const isPersonalized = currentUser && !currentUser.is_demo;
 
   return (
     <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
