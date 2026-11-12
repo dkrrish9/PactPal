@@ -381,16 +381,7 @@ export const backendClient = {
         seller_id: sellerUUID,
         title: payload.title,
         description: payload.description || payload.title,
-<<<<<<< HEAD
         status: "DRAFT",
-=======
-        buyer_id: payload.buyer_id,
-        buyer_name: payload.buyer_name,
-        buyer_email: payload.buyer_email || "",
-        seller_id: payload.seller_id,
-        seller_name: payload.seller_name,
-        seller_email: payload.seller_email || "",
->>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
         total_amount: payload.total_amount,
         currency: "USD",
         deadline: payload.deadline,

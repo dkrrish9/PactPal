@@ -724,18 +724,13 @@ export const mockApi = {
   },
 
   /**
-<<<<<<< HEAD
-   * Get negotiation chat messages (C40: persists in localStorage/Supabase)
-=======
-   * Get negotiation chat messages (: persists in localStorage)
->>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
+   * Get negotiation chat messages (persists in localStorage/Supabase)
    */
   getMessages(contractId: string): ChatMessage[] {
     return loadMessages(contractId);
   },
 
   /**
-<<<<<<< HEAD
    * Sync chat messages from Supabase DB into local cache
    */
   syncMessagesFromSupabase(contractId: string, messages: ChatMessage[]): void {
@@ -755,10 +750,7 @@ export const mockApi = {
   },
 
   /**
-   * Send negotiation chat message (C40: AI, Buyer, Seller)
-=======
-   * Send negotiation chat message (: AI, Buyer, Seller)
->>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
+   * Send negotiation chat message (AI, Buyer, Seller)
    */
   sendMessage(
     contractId: string,
@@ -861,7 +853,6 @@ export const mockApi = {
   },
 
   /**
-<<<<<<< HEAD
    * Sync contracts list from Supabase into local memory / localStorage
    */
   syncContractsFromSupabase(supaContracts: Contract[]): void {
@@ -879,10 +870,7 @@ export const mockApi = {
   },
 
   /**
-   * Submit deliverable for verification (C25)
-=======
    * Submit deliverable for verification
->>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
    * Captures repo link, commit SHA, build note, and computes late flag vs deadline
    */
   submitDeliverable(
