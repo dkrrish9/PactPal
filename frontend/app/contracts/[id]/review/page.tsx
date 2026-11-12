@@ -31,13 +31,21 @@ function isUserHirer(c: Contract | null, user: any): boolean {
   const userName = (user.name || "").trim().toLowerCase();
   const userId = user.id || "";
 
+  // If user is explicitly the seller/freelancer, they cannot be the hirer
+  const sellerEmail = (c.seller_email || "").trim().toLowerCase();
+  const sellerName = (c.seller_name || "").trim().toLowerCase();
+  const sellerId = c.seller_id || "";
+  if (userId && sellerId && userId === sellerId) return false;
+  if (userEmail && sellerEmail && userEmail === sellerEmail) return false;
+  if (userName && sellerName && userName === sellerName) return false;
+
   const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
   const buyerName = (c.buyer_name || "").trim().toLowerCase();
   const buyerId = c.buyer_id || "";
 
   if (userId && buyerId && userId === buyerId) return true;
   if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
-  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  if (userName && buyerName && (userName === buyerName || userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
 }
 
@@ -268,7 +276,7 @@ export default function ContractReviewPage() {
                   color: "#60A5FA",
                 }}
               >
-                👔 Viewing as Hirer
+                Viewing as Hirer
               </div>
             ) : (
               <div
@@ -285,7 +293,7 @@ export default function ContractReviewPage() {
                   color: "#FF9800",
                 }}
               >
-                🧑‍💻 Viewing as Freelancer
+                Viewing as Freelancer
               </div>
             )}
           </div>
@@ -430,7 +438,7 @@ export default function ContractReviewPage() {
           </div>
         </div>
 
-        {/* Dual Confirmation Status (C17 & C19) */}
+        {/* Dual Confirmation Status (& ) */}
         <div
           style={{
             background: "rgba(255, 255, 255, 0.02)",
@@ -610,7 +618,7 @@ export default function ContractReviewPage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
             <div>
               <h2 style={{ fontSize: 22, fontWeight: 900, color: "white", display: "flex", alignItems: "center", gap: 10 }}>
-                📋 Priced Deliverable Checklist
+                 Priced Deliverable Checklist
               </h2>
               <p style={{ fontSize: 14, color: "var(--color-text-secondary)", marginTop: 4 }}>
                 Each feature has a dedicated acceptance test and escrow weight. Funds release automatically upon passing.
@@ -719,7 +727,7 @@ export default function ContractReviewPage() {
           </div>
         </div>
 
-        {/* Action Bar (C17 Core Requirements) */}
+        {/* Action Bar (Core Requirements) */}
         <div
           style={{
             background: "rgba(12, 18, 34, 0.95)",

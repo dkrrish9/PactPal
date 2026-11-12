@@ -45,13 +45,21 @@ function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
   const userId = user.id || "";
   const userUuid = toUUID(userId);
 
+  // If user is explicitly the seller/freelancer, they cannot be the hirer
+  const sellerEmail = (c.seller_email || "").trim().toLowerCase();
+  const sellerName = (c.seller_name || "").trim().toLowerCase();
+  const sellerId = c.seller_id || "";
+  if (userId && sellerId && userId === sellerId) return false;
+  if (userEmail && sellerEmail && userEmail === sellerEmail) return false;
+  if (userName && sellerName && userName === sellerName) return false;
+
   const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
   const buyerName = (c.buyer_name || "").trim().toLowerCase();
   const buyerId = c.buyer_id || "";
 
   if (userId && buyerId && (userId === buyerId || userUuid === buyerId)) return true;
   if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
-  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  if (userName && buyerName && (userName === buyerName || userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
 }
 
@@ -140,7 +148,7 @@ export default function ContractDashboardPage() {
     if (res) {
       setSimulatedStatus("SETTLED");
       setContract({ ...res.contract });
-      setDeadlineAlert(`⚡ [DEADLINE WATCHER FIRED (C49/C50)] Simulated deadline elapsed! Automated final verification completed. $${res.payoutAmount} USD disbursed to freelancer, $${res.refundAmount} USD refunded to hirer. Status transitioned to SETTLED.`);
+      setDeadlineAlert(` [DEADLINE WATCHER FIRED ] Simulated deadline elapsed! Automated final verification completed. $${res.payoutAmount} USD disbursed to freelancer, $${res.refundAmount} USD refunded to hirer. Status transitioned to SETTLED.`);
       setTimeout(() => setDeadlineAlert(null), 7000);
     }
   };
@@ -288,7 +296,7 @@ export default function ContractDashboardPage() {
                   boxShadow: "0 0 20px rgba(0,163,224,0.4)",
                 }}
               >
-                Review & Counter (C17) →
+                Review & Counter →
               </Link>
             ) : activeContract.status === "SIGNED" ? (
               isViewerHirer ? (
@@ -308,7 +316,7 @@ export default function ContractDashboardPage() {
                     boxShadow: "0 0 20px rgba(255,152,0,0.4)",
                   }}
                 >
-                  Fund Escrow with PayPal (C20) →
+                  Authorize Escrow Hold with PayPal →
                 </Link>
               ) : (
                 <div
@@ -345,7 +353,7 @@ export default function ContractDashboardPage() {
                   boxShadow: "0 0 20px rgba(239,68,68,0.4)",
                 }}
               >
-                Dispute Room (C56) ⚖️
+                Dispute Room 
               </Link>
             ) : activeContract.status === "SETTLED" ? (
               <Link
@@ -364,7 +372,7 @@ export default function ContractDashboardPage() {
                   boxShadow: "0 0 20px rgba(16,185,129,0.4)",
                 }}
               >
-                Settlement Receipt (C45) 🧾
+                Settlement Receipt 
               </Link>
             ) : (
               <Link
@@ -383,13 +391,13 @@ export default function ContractDashboardPage() {
                   gap: 8,
                 }}
               >
-                Review Checklist 📋
+                Review Checklist 
               </Link>
             )}
           </div>
         </div>
 
-        {/* The 10 Contract Lifecycle State Stepper (C33 Core Requirement) */}
+        {/* The 10 Contract Lifecycle State Stepper (Lifecycle Management) */}
         <div
           style={{
             background: "rgba(255, 255, 255, 0.02)",
@@ -405,7 +413,7 @@ export default function ContractDashboardPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Sparkles size={16} color="#60A5FA" />
               <span style={{ fontSize: 13, fontWeight: 800, color: "white", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                10-State Contract Lifecycle Stepper (C33)
+                Contract Lifecycle Stepper
               </span>
               <span
                 style={{
@@ -448,7 +456,7 @@ export default function ContractDashboardPage() {
                 ))}
               </select>
 
-              {/* Admin Simulate Deadline Button (C50) */}
+              {/* Admin Simulate Deadline Button */}
               <button
                 onClick={handleAdminSimulateDeadline}
                 style={{
@@ -465,15 +473,15 @@ export default function ContractDashboardPage() {
                   cursor: "pointer",
                   transition: "all 0.15s ease",
                 }}
-                title="Admin C50: Simulate deadline elapsed (triggers C49 deadline watcher, final verification & partial payout)"
+                title="Admin: Simulate deadline elapsed (triggers deadline watcher, final verification & partial payout)"
               >
                 <Zap size={13} color="#FBBF24" />
-                Simulate Deadline (Admin C50)
+                Simulate Deadline (Admin Simulation)
               </button>
             </div>
           </div>
 
-          {/* Deadline Alert Banner (C50) */}
+          {/* Deadline Alert Banner */}
           {deadlineAlert && (
             <div
               style={{
@@ -670,9 +678,9 @@ export default function ContractDashboardPage() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 24 }}>🤖</span>
+              <span style={{ fontSize: 24 }}></span>
               <div>
-                <strong style={{ color: "white", fontSize: 15 }}>C29 AI Referee Verification Results</strong>
+                <strong style={{ color: "white", fontSize: 15 }}>AI Referee Verification Results</strong>
                 <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
                   Review per-feature verdicts, test suite evidence, and side-by-side Figma vs headless browser screenshots.
                 </p>
@@ -691,12 +699,12 @@ export default function ContractDashboardPage() {
                 boxShadow: "0 0 20px rgba(122,92,255,0.4)",
               }}
             >
-              View Verification Results (C29) →
+              View Verification Results →
             </Link>
           </div>
         )}
 
-        {/* C56 Dispute Notification Banner */}
+        {/* Dispute Notification Banner */}
         {activeContract.status === "DISPUTE" && (
           <div
             style={{
@@ -713,9 +721,9 @@ export default function ContractDashboardPage() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 24 }}>⚖️</span>
+              <span style={{ fontSize: 24 }}></span>
               <div>
-                <strong style={{ color: "white", fontSize: 15 }}>C56 Dispute Mediation Active (Funds Stay Held)</strong>
+                <strong style={{ color: "white", fontSize: 15 }}>Dispute Mediation Active (Funds Stay Held)</strong>
                 <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
                   Automated AST cheat scan flagged Feature 2. Review checklist, verification report, provisional receipt, and negotiation chat.
                 </p>
@@ -734,12 +742,12 @@ export default function ContractDashboardPage() {
                 boxShadow: "0 0 20px rgba(239,68,68,0.3)",
               }}
             >
-              Open Dispute Room (C56) →
+              Open Dispute Room →
             </Link>
           </div>
         )}
 
-        {/* C45 Settled Receipt Notification Banner */}
+        {/* Settled Receipt Notification Banner */}
         {activeContract.status === "SETTLED" && (
           <div
             style={{
@@ -756,9 +764,9 @@ export default function ContractDashboardPage() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 24 }}>🧾</span>
+              <span style={{ fontSize: 24 }}></span>
               <div>
-                <strong style={{ color: "white", fontSize: 15 }}>C45 Cryptographic Settlement Receipt Sealed</strong>
+                <strong style={{ color: "white", fontSize: 15 }}>Cryptographic Settlement Receipt Sealed</strong>
                 <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
                   This contract has concluded. View the full proof-of-work summary, SHA-256 hash, timestamps, and evidence links.
                 </p>
@@ -777,7 +785,7 @@ export default function ContractDashboardPage() {
                 boxShadow: "0 0 20px rgba(16,185,129,0.3)",
               }}
             >
-              Open Official Receipt Page (C45) →
+              Open Official Receipt Page →
             </Link>
           </div>
         )}
@@ -952,7 +960,7 @@ function OverviewTab({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Latest Seller Submission Card (C25 Core Requirement) */}
+      {/* Latest Seller Submission Card (Core Requirement) */}
       {submission && (
         <div
           style={{
@@ -967,13 +975,13 @@ function OverviewTab({
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 14, marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 28 }}>📦</span>
+              <span style={{ fontSize: 28 }}></span>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <h3 style={{ fontSize: 17, fontWeight: 800, color: "white", margin: 0 }}>
                     Freelancer Submission (Version {submission.version_number})
                   </h3>
-                  {/* Late Flag Badge (C25) */}
+                  {/* Late Flag Badge */}
                   <span
                     style={{
                       background: submission.is_late ? "rgba(244, 67, 54, 0.15)" : "rgba(76, 175, 80, 0.15)",
@@ -1016,7 +1024,7 @@ function OverviewTab({
               }}
               aria-label="View verification report"
             >
-              <span>Verification report (C29)</span>
+              <span>Verification report</span>
               <ShieldCheck size={14} aria-hidden />
             </Link>
 
@@ -1333,7 +1341,7 @@ function OverviewTab({
               }}
               aria-label="View verification report"
             >
-              <span>Verification report (C29)</span>
+              <span>Verification report</span>
               <ShieldCheck size={14} aria-hidden />
             </Link>
 
@@ -1454,7 +1462,7 @@ function GanttTab({
       });
       const updated = mockApi.getContract(contractId);
       setTasksList(updated?.features || []);
-      setChangeToast("✓ Scope change accepted! Task '[CR-01] Dark Mode Theme Support' automatically appeared in Bryntum Gantt (C48).");
+      setChangeToast("✓ Scope change accepted! Task '[CR-01] Dark Mode Theme Support' automatically appeared in Bryntum Gantt.");
     }
     setTimeout(() => setChangeToast(null), 5000);
   };
@@ -1554,15 +1562,14 @@ function GanttTab({
                 fontWeight: 600,
               }}
             >
-              #bryntum-gantt · C48
-            </span>
+              #bryntum-gantt · </span>
           </div>
           <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "3px 0 0" }}>
             Feature milestone tasks, 29-day hold expiry, and delivery deadline
           </p>
         </div>
 
-        {/* Action Controls & Change Request Simulator (C48 Done When) */}
+        {/* Action Controls & Change Request Simulator (Done When) */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {/* Zoom controls */}
           <div
@@ -1621,7 +1628,7 @@ function GanttTab({
             ))}
           </div>
 
-          {/* C48 Requirement: Accept Change Request -> New task appears automatically */}
+          {/* Requirement: Accept Change Request -> New task appears automatically */}
           <button
             onClick={handleToggleScopeChange}
             style={{
@@ -1641,7 +1648,7 @@ function GanttTab({
               boxShadow: hasAcceptedChange ? "none" : "0 0 16px rgba(255,152,0,0.3)",
               transition: "all 0.2s ease",
             }}
-            title="C48: Simulate an accepted mini-agreement change request to see new task appear automatically in Gantt"
+            title=": Simulate an accepted mini-agreement change request to see new task appear automatically in Gantt"
           >
             {hasAcceptedChange ? (
               <>
@@ -1991,7 +1998,7 @@ function GanttTab({
                     transform: "translateX(-50%)",
                     cursor: "pointer",
                   }}
-                  title="29-Day PayPal Escrow Authorization Expiry Point (C20/C48)"
+                  title="29-Day PayPal Escrow Authorization Expiry Point "
                 >
                   <div
                     style={{
@@ -2041,7 +2048,7 @@ function GanttTab({
                     transform: "translateX(-50%)",
                     cursor: "pointer",
                   }}
-                  title="Final Deliverable Submission Deadline (C48/C50)"
+                  title="Final Deliverable Submission Deadline "
                 >
                   <div
                     style={{
@@ -2731,7 +2738,7 @@ function ChatTab({
                   color: isViewerHirer ? "#60A5FA" : "#34D399",
                 }}
               >
-                <span>{isViewerHirer ? "👔" : "🧑‍💻"}</span>
+                <span>{isViewerHirer ? "" : ""}</span>
                 <span>{mySenderName} ({isViewerHirer ? "Hirer" : "Freelancer"})</span>
               </div>
             </div>
@@ -3019,7 +3026,7 @@ function ActivityTab({ submission }: { submission?: Submission | null }) {
             }}
           />
           <span style={{ fontWeight: 800, fontSize: 15, color: "white" }}>
-            Live Verification Pipeline — Stages A to F (C33)
+            Live Verification Pipeline — Stages A to F
           </span>
           <span
             style={{
@@ -3255,7 +3262,7 @@ function ActivityTab({ submission }: { submission?: Submission | null }) {
         })}
       </div>
 
-      {/* Live Event Log Stream (C33 Core Requirement) */}
+      {/* Live Event Log Stream (Lifecycle Management) */}
       <div
         style={{
           borderTop: "1px solid rgba(255,255,255,0.08)",
@@ -3466,7 +3473,7 @@ function ReceiptTab({
             </div>
           ))}
 
-          {/* Direct link to dedicated C45 standalone receipt page */}
+          {/* Direct link to dedicated standalone receipt page */}
           <Link
             href={`/contracts/${activeContract.id}/receipt`}
             style={{
@@ -3485,7 +3492,7 @@ function ReceiptTab({
               marginTop: 6,
             }}
           >
-            Open Dedicated Proof-of-Work Receipt Page (C45) →
+            Open Dedicated Proof-of-Work Receipt Page →
           </Link>
 
           {/* PayPal link */}

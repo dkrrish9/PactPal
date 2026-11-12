@@ -206,7 +206,7 @@ export default function ReceiptPage() {
                 cursor: "pointer",
               }}
             >
-              Mark Settled & Seal Receipt (C45)
+              Mark Settled & Seal Receipt
             </button>
           </div>
         )}
@@ -457,7 +457,7 @@ export default function ReceiptPage() {
                 alignItems: "center",
                 gap: 6,
               }}
-              title="Test C44 rule: changing 1 character changes the entire hash"
+              title="Test rule: changing 1 character changes the entire hash"
             >
               <RefreshCw size={12} />
               {tamperSimulation ? "Reset to Genuine Canonical Hash" : "Simulate Tamper (Change 1 Char)"}
@@ -591,19 +591,19 @@ export default function ReceiptPage() {
                   label: "Code Deliverables Pinned",
                   time: deliverable.submitted_at,
                   desc: `Git commit SHA ${deliverable.commit_sha.substring(0, 10)} pinned from ${deliverable.branch} branch.`,
-                  icon: "🐙",
+                  icon: "",
                 },
                 {
                   label: "Autonomous Referee Verification Concluded",
                   time: receipt.generated_at,
                   desc: `gVisor sandbox container passed ${verification_metrics.tests_passed}/${verification_metrics.tests_total} assertions (Coverage: ${verification_metrics.coverage_percent}%).`,
-                  icon: "🔬",
+                  icon: "",
                 },
                 {
                   label: "Settlement Disbursed & Receipt Sealed",
                   time: receipt.settled_at,
                   desc: `Final release executed. SHA-256 fingerprint attached to settlement record.`,
-                  icon: "🧾",
+                  icon: "",
                 },
               ].map((step, idx) => {
                 const formattedDate = step.time
@@ -698,7 +698,7 @@ export default function ReceiptPage() {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#60A5FA" }}>🐙 GitHub Repository & Commit</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#60A5FA" }}> GitHub Repository & Commit</span>
                 <ExternalLink size={14} color="var(--color-text-muted)" />
               </div>
               <strong style={{ color: "white", fontSize: 14 }}>
@@ -733,7 +733,7 @@ export default function ReceiptPage() {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#C084FC" }}>🔬 Full Verification Report</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#C084FC" }}> Full Verification Report</span>
                 <ExternalLink size={14} color="var(--color-text-muted)" />
               </div>
               <strong style={{ color: "white", fontSize: 14 }}>
@@ -768,7 +768,7 @@ export default function ReceiptPage() {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#34D399" }}>🎨 Visual Comparison Evidence</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#34D399" }}> Visual Comparison Evidence</span>
                 <ExternalLink size={14} color="var(--color-text-muted)" />
               </div>
               <strong style={{ color: "white", fontSize: 14 }}>

@@ -149,7 +149,7 @@ export default function FreelancerDashboardPage() {
               Freelancer Dashboard
             </div>
             <h1 style={{ fontSize: "clamp(28px, 4vw, 48px)", fontWeight: 900, letterSpacing: "-0.025em", color: "white" }}>
-              Welcome back, <span className="gradient-text-orange">{displayName}</span> 👋
+              Welcome back, <span className="gradient-text-orange">{displayName}</span> 
             </h1>
             {userPayPalEmail && (
               <div
@@ -241,10 +241,10 @@ export default function FreelancerDashboardPage() {
           aria-label="Earnings statistics"
         >
           {[
-            { label: "Total earned", value: `$${totalEarned.toLocaleString()}`, color: "#FF9800", icon: "💰" },
-            { label: "My active contracts", value: `${myContracts.length}`, color: "#0066FF", icon: "📋" },
-            { label: "Open projects to apply", value: `${availableProjects.length}`, color: "#4CAF50", icon: "⚡" },
-            { label: "On-time delivery", value: "100%", color: "#7A5CFF", icon: "🛡️" },
+            { label: "Total earned", value: `$${totalEarned.toLocaleString()}`, color: "#FF9800", icon: "" },
+            { label: "My active contracts", value: `${myContracts.length}`, color: "#0066FF", icon: "" },
+            { label: "Open projects to apply", value: `${availableProjects.length}`, color: "#4CAF50", icon: "" },
+            { label: "On-time delivery", value: "100%", color: "#7A5CFF", icon: "" },
           ].map((s) => (
             <div
               key={s.label}
@@ -314,7 +314,7 @@ export default function FreelancerDashboardPage() {
                   textAlign: "center",
                 }}
               >
-                <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+                <div style={{ fontSize: 36, marginBottom: 12 }}></div>
                 <h3 style={{ fontSize: 18, fontWeight: 800, color: "white", marginBottom: 6 }}>
                   No active contracts yet
                 </h3>
@@ -566,7 +566,7 @@ export default function FreelancerDashboardPage() {
                                 fontWeight: 700,
                               }}
                             >
-                              ⚡ Applied · Awaiting Hirer Approval
+                               Applied · Awaiting Hirer Approval
                             </span>
                           ) : (
                             <span

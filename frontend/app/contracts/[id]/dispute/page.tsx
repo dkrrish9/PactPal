@@ -35,13 +35,21 @@ function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
   const userName = (user.name || "").trim().toLowerCase();
   const userId = user.id || "";
 
+  // If user is explicitly the seller/freelancer, they cannot be the hirer
+  const sellerEmail = (c.seller_email || "").trim().toLowerCase();
+  const sellerName = (c.seller_name || "").trim().toLowerCase();
+  const sellerId = c.seller_id || "";
+  if (userId && sellerId && userId === sellerId) return false;
+  if (userEmail && sellerEmail && userEmail === sellerEmail) return false;
+  if (userName && sellerName && userName === sellerName) return false;
+
   const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
   const buyerName = (c.buyer_name || "").trim().toLowerCase();
   const buyerId = c.buyer_id || "";
 
   if (userId && buyerId && userId === buyerId) return true;
   if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
-  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  if (userName && buyerName && (userName === buyerName || userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
 }
 
@@ -95,8 +103,11 @@ export default function DisputePage() {
   ];
 
   const totalHeld = contract.total_amount || 1500;
-  const passedAmount = 1125;
-  const refundAmount = 375;
+  const passedFeatures = features.filter((f) => f.status === "PASSED");
+  const passedAmount = passedFeatures.length > 0
+    ? passedFeatures.reduce((sum, f) => sum + (f.allocated_amount || (totalHeld * f.price_weight) / 100), 0)
+    : Math.round(totalHeld * 0.75);
+  const refundAmount = Math.max(0, totalHeld - passedAmount);
 
   const isViewerHirer = isUserHirer(contract, currentUser);
   const mySenderRole: "BUYER" | "SELLER" = isViewerHirer ? "BUYER" : "SELLER";
@@ -164,7 +175,7 @@ export default function DisputePage() {
           <ArrowLeft size={16} /> Back to Contract Overview ({contract.id})
         </Link>
 
-        {/* C56 Requirement 1: Funds Stay Held Banner */}
+        {/* Requirement 1: Funds Stay Held Banner */}
         <div
           style={{
             padding: "20px 24px",
@@ -336,7 +347,7 @@ export default function DisputePage() {
                   href={`/contracts/${contract.id}/verification`}
                   style={{ fontSize: 12, color: "#60A5FA", textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}
                 >
-                  Full Report (C29) <ExternalLink size={12} />
+                  Full Report <ExternalLink size={12} />
                 </Link>
               </div>
 
@@ -395,7 +406,7 @@ export default function DisputePage() {
                   href={`/contracts/${contract.id}/receipt`}
                   style={{ fontSize: 12, color: "#34D399", textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4 }}
                 >
-                  Receipt View (C45) <ExternalLink size={12} />
+                  Receipt View <ExternalLink size={12} />
                 </Link>
               </div>
 
@@ -595,7 +606,7 @@ export default function DisputePage() {
                     border: `1px solid ${isViewerHirer ? "rgba(0,102,255,0.3)" : "rgba(16,185,129,0.3)"}`,
                   }}
                 >
-                  {isViewerHirer ? "👔" : "🧑‍💻"} {mySenderName} ({isViewerHirer ? "Hirer" : "Freelancer"})
+                  {isViewerHirer ? "" : ""} {mySenderName} ({isViewerHirer ? "Hirer" : "Freelancer"})
                 </span>
               </div>
 

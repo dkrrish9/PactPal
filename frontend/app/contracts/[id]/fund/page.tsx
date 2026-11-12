@@ -28,13 +28,21 @@ function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
   const userName = (user.name || "").trim().toLowerCase();
   const userId = user.id || "";
 
+  // If user is explicitly the seller/freelancer, they cannot be the hirer
+  const sellerEmail = (c.seller_email || "").trim().toLowerCase();
+  const sellerName = (c.seller_name || "").trim().toLowerCase();
+  const sellerId = c.seller_id || "";
+  if (userId && sellerId && userId === sellerId) return false;
+  if (userEmail && sellerEmail && userEmail === sellerEmail) return false;
+  if (userName && sellerName && userName === sellerName) return false;
+
   const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
   const buyerName = (c.buyer_name || "").trim().toLowerCase();
   const buyerId = c.buyer_id || "";
 
   if (userId && buyerId && userId === buyerId) return true;
   if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
-  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  if (userName && buyerName && (userName === buyerName || userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
 }
 
@@ -307,7 +315,7 @@ function ContractFundContent() {
           {" / "}
           <Link href={`/contracts/${contract.id}`} style={{ color: "#60A5FA", textDecoration: "none" }}>{contract.id}</Link>
           {" / "}
-          <span style={{ color: "white" }}>{isHirer ? "Authorize Escrow Hold (C20)" : "Escrow Funding Status"}</span>
+          <span style={{ color: "white" }}>{isHirer ? "Authorize Escrow Hold" : "Escrow Funding Status"}</span>
         </div>
 
         {/* Success Banner if Funded */}

@@ -168,7 +168,7 @@ export default function SettlementSummaryPage() {
               }}
             >
               <FileText size={15} />
-              Official Receipt (C45) →
+              Official Receipt →
             </Link>
           </div>
         </div>

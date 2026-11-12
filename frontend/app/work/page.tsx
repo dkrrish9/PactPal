@@ -11,9 +11,9 @@ import { backendClient } from "@/lib/backendClient";
 
 const perks = [
   { icon: "🔒", title: "Get paid before you start", desc: "Money is locked in escrow the moment you accept a contract. No more chasing invoices." },
-  { icon: "📋", title: "Crystal-clear requirements", desc: "Every contract has weighted acceptance tests. You know exactly what 'done' looks like." },
-  { icon: "⚖", title: "Fair partial payouts", desc: "Built 3 of 4 features? Get paid for 3 of 4. No all-or-nothing drama." },
-  { icon: "🧾", title: "Proof-of-work receipt", desc: "Every job ends with a signed SHA-256 receipt you can share with any future client." },
+  { icon: "", title: "Crystal-clear requirements", desc: "Every contract has weighted acceptance tests. You know exactly what 'done' looks like." },
+  { icon: "", title: "Fair partial payouts", desc: "Built 3 of 4 features? Get paid for 3 of 4. No all-or-nothing drama." },
+  { icon: "", title: "Proof-of-work receipt", desc: "Every job ends with a signed SHA-256 receipt you can share with any future client." },
 ];
 
 const fallbackJobs = [

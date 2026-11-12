@@ -5,10 +5,10 @@ import { ArrowRight, CheckCircle, Clock, Shield } from "lucide-react";
 import Link from "next/link";
 
 const steps = [
-  { icon: "📋", title: "Post your project", desc: "Describe your requirements, set features with weighted acceptance tests." },
+  { icon: "", title: "Post your project", desc: "Describe your requirements, set features with weighted acceptance tests." },
   { icon: "🔒", title: "Fund the escrow", desc: "Authorize payment via PayPal — money is held, not charged yet." },
-  { icon: "🤖", title: "AI verifies the work", desc: "Our Referee runs 6 stages of automated verification on delivery." },
-  { icon: "💸", title: "Pay for what passes", desc: "Passed features release automatically. Failed features are refunded." },
+  { icon: "", title: "AI verifies the work", desc: "Our Referee runs 6 stages of automated verification on delivery." },
+  { icon: "", title: "Pay for what passes", desc: "Passed features release automatically. Failed features are refunded." },
 ];
 
 export default function HirePage() {
@@ -128,7 +128,7 @@ export default function HirePage() {
                 transition: "all 0.2s",
               }}
             >
-              Hirer Dashboard (Active Contracts) 📋
+              Hirer Dashboard (Active Contracts) 
             </Link>
 
             <Link

@@ -82,7 +82,7 @@ export default function SchedulePage() {
       id: "res_seller_01",
       name: "Alex Mercer",
       role: "SELLER",
-      avatar: "🧑‍💻",
+      avatar: "",
       specialty: "Full-Stack TypeScript & Web3 Escrow",
       activeContractsCount: 3,
       totalVolume: 7800,
@@ -92,7 +92,7 @@ export default function SchedulePage() {
       id: "res_seller_02",
       name: "Elena Rostova",
       role: "SELLER",
-      avatar: "👩‍💻",
+      avatar: "",
       specialty: "AI Multi-Agent Workflows & Python",
       activeContractsCount: 1,
       totalVolume: 2400,
@@ -102,7 +102,7 @@ export default function SchedulePage() {
       id: "res_seller_03",
       name: "Kenji Sato",
       role: "SELLER",
-      avatar: "🧑‍💻",
+      avatar: "",
       specialty: "Mobile Checkout & Apple Pay Systems",
       activeContractsCount: 1,
       totalVolume: 2100,
@@ -116,7 +116,7 @@ export default function SchedulePage() {
       id: "res_buyer_01",
       name: "Priya Sharma",
       role: "BUYER",
-      avatar: "👔",
+      avatar: "",
       specialty: "Fintech VC & Storefront Operations",
       activeContractsCount: 3,
       totalVolume: 5400,
@@ -126,7 +126,7 @@ export default function SchedulePage() {
       id: "res_buyer_02",
       name: "Marcus Vance",
       role: "BUYER",
-      avatar: "👔",
+      avatar: "",
       specialty: "ScaleUp Analytics Executive",
       activeContractsCount: 1,
       totalVolume: 2400,
@@ -136,7 +136,7 @@ export default function SchedulePage() {
       id: "res_buyer_03",
       name: "David Chen",
       role: "BUYER",
-      avatar: "👔",
+      avatar: "",
       specialty: "Crypto Ventures Managing Partner",
       activeContractsCount: 1,
       totalVolume: 4500,
@@ -151,16 +151,40 @@ export default function SchedulePage() {
     const sched = getContractSchedule(c);
 
     // Seller
-    const sellerName = c.seller_name || "Alex Mercer";
-    if (sellersMap[sellerName]) {
-      sellersMap[sellerName].contracts.push({ contract: c, ...sched });
+    const sellerName = c.seller_name || "Unassigned Freelancer";
+    if (!sellersMap[sellerName]) {
+      sellersMap[sellerName] = {
+        id: `res_seller_${sellerName.toLowerCase().replace(/\s+/g, '_')}`,
+        name: sellerName,
+        role: "SELLER",
+        avatar: "",
+        specialty: "Software & Web Development",
+        activeContractsCount: 0,
+        totalVolume: 0,
+        contracts: [],
+      };
     }
+    sellersMap[sellerName].contracts.push({ contract: c, ...sched });
+    sellersMap[sellerName].activeContractsCount++;
+    sellersMap[sellerName].totalVolume += c.total_amount || 0;
 
     // Buyer
-    const buyerName = c.buyer_name || "Priya Sharma";
-    if (buyersMap[buyerName]) {
-      buyersMap[buyerName].contracts.push({ contract: c, ...sched });
+    const buyerName = c.buyer_name || "Project Hirer";
+    if (!buyersMap[buyerName]) {
+      buyersMap[buyerName] = {
+        id: `res_buyer_${buyerName.toLowerCase().replace(/\s+/g, '_')}`,
+        name: buyerName,
+        role: "BUYER",
+        avatar: "",
+        specialty: "Project Sponsor",
+        activeContractsCount: 0,
+        totalVolume: 0,
+        contracts: [],
+      };
     }
+    buyersMap[buyerName].contracts.push({ contract: c, ...sched });
+    buyersMap[buyerName].activeContractsCount++;
+    buyersMap[buyerName].totalVolume += c.total_amount || 0;
   });
 
   const activeResources = Object.values(groupBy === "SELLER" ? sellersMap : buyersMap);
@@ -215,7 +239,7 @@ export default function SchedulePage() {
                   textTransform: "uppercase",
                 }}
               >
-                BRYNTUM SCHEDULER &bull; C57
+                RESOURCE SCHEDULER
               </span>
               <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
                 Multi-Contract Timeline Visualization
@@ -255,7 +279,7 @@ export default function SchedulePage() {
                   transition: "all 0.15s ease",
                 }}
               >
-                🧑‍💻 Freelancers
+                 Freelancers
               </button>
               <button
                 onClick={() => setGroupBy("BUYER")}
@@ -271,7 +295,7 @@ export default function SchedulePage() {
                   transition: "all 0.15s ease",
                 }}
               >
-                👔 Hirers
+                 Hirers
               </button>
             </div>
 

@@ -175,7 +175,7 @@ export default function ContractSubmitPage() {
               }}
             >
               <ShieldCheck size={14} />
-              C25 • SELLER SUBMISSION & VERIFICATION INTAKE
+              SELLER SUBMISSION & VERIFICATION INTAKE
             </div>
 
             {/* Test Toggle for Late Flag */}
@@ -205,7 +205,7 @@ export default function ContractSubmitPage() {
           </p>
         </div>
 
-        {/* Real-time Late Flag Status Callout (C25 Core Requirement) */}
+        {/* Real-time Late Flag Status Callout (Core Requirement) */}
         <div
           style={{
             background: isPastDeadline ? "rgba(244, 67, 54, 0.08)" : "rgba(76, 175, 80, 0.08)",
@@ -372,7 +372,7 @@ export default function ContractSubmitPage() {
               />
             </div>
 
-            {/* Build Notes (C25 Core Requirement) */}
+            {/* Build Notes (Core Requirement) */}
             <div>
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.06em", marginBottom: 8 }}>
                 <Info size={14} color="#A78BFA" />
@@ -502,7 +502,7 @@ export default function ContractSubmitPage() {
               }}
             >
               <Sparkles size={16} />
-              {isSubmitting ? "Dispatching to AI Referee..." : "Dispatch Submission to AI Referee (C25) →"}
+              {isSubmitting ? "Dispatching to AI Referee..." : "Dispatch Submission to AI Referee →"}
             </button>
           </div>
         </form>

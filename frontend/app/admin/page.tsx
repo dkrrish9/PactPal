@@ -103,7 +103,7 @@ export default function AdminPage() {
   });
 
   const simulateDeadline = (id: string) => {
-    // Invoke mockApi watcher flow (C49/C50)
+    // Invoke mockApi watcher flow 
     mockApi.simulateDeadlineWatcher(id);
 
     setContracts((prev) =>
@@ -119,7 +119,7 @@ export default function AdminPage() {
         return c;
       })
     );
-    const logEntry = `[DEADLINE WATCHER C49/C50] Simulated deadline elapsed for ${id}. Auto-triggered final verification and proportional payout settlement.`;
+    const logEntry = `[DEADLINE WATCHER ] Simulated deadline elapsed for ${id}. Auto-triggered final verification and proportional payout settlement.`;
     setLogs((prev) => [logEntry, ...prev]);
     setBannerAlert(`Deadline watcher simulation executed for ${id}. Proportional payout disbursed.`);
     setTimeout(() => setBannerAlert(null), 5000);

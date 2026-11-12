@@ -9,7 +9,7 @@ const stages = [
     id: "A",
     title: "Intake & Git clone",
     color: "#0066FF",
-    icon: "📥",
+    icon: "",
     desc: "The Referee clones the submitted repository into an isolated Render Workflow container. It records the exact commit SHA, timestamp, and repo URL — all hashed into the receipt.",
     detail: ["Git clone into ephemeral container", "Commit SHA locked to receipt", "No local environment access", "Timestamp verified against contract deadline"],
   },
@@ -17,7 +17,7 @@ const stages = [
     id: "B",
     title: "Clean sandbox build",
     color: "#00A3E0",
-    icon: "🔨",
+    icon: "",
     desc: "Dependencies are installed fresh. The build must succeed with zero external data sources — no cached databases, no live APIs. If it fails to build, the contract cannot pass.",
     detail: ["Fresh npm / pip install", "No network access during build", "Build timeout: 10 minutes", "Output artifacts fingerprinted"],
   },
@@ -25,7 +25,7 @@ const stages = [
     id: "C",
     title: "Automated test suite",
     color: "#7A5CFF",
-    icon: "🧪",
+    icon: "",
     desc: "The existing test suite is executed. PactPal maps each test to the feature it covers, calculating a per-feature pass rate that directly determines the payout weight.",
     detail: ["Unit + integration tests", "Per-feature test mapping", "Coverage report generated", "Flaky test detection"],
   },
@@ -33,7 +33,7 @@ const stages = [
     id: "D",
     title: "Cheat & loophole scan",
     color: "#FF9800",
-    icon: "🔍",
+    icon: "",
     desc: "The most critical stage. The Referee scans for hardcoded responses, mock returns, environment flags that bypass real logic, and any code that would only work in test mode.",
     detail: ["Hardcoded response detection", "Mock/stub abuse scan", "Environment flag analysis", "Severity: HIGH / MED / LOW"],
   },
@@ -41,7 +41,7 @@ const stages = [
     id: "E",
     title: "Figma visual diff",
     color: "#F44336",
-    icon: "🎨",
+    icon: "",
     desc: "If a Figma design was provided, headless browser screenshots are captured and compared pixel-by-pixel against the reference. A similarity score per screen is calculated.",
     detail: ["Headless Chromium screenshots", "Pixel-level diff computation", "Per-screen similarity %", "Annotated diff image in receipt"],
   },
@@ -49,7 +49,7 @@ const stages = [
     id: "F",
     title: "QA multimodal report",
     color: "#4CAF50",
-    icon: "📋",
+    icon: "",
     desc: "All results are compiled into a structured report. The AI Referee applies transparent rules to compute the final pass/fail per feature, offer amount, and negotiation options.",
     detail: ["Structured JSON report", "Per-feature pass/fail map", "Referee offer calculation", "Receipt hash generated"],
   },
@@ -102,7 +102,7 @@ export default function RefereePage() {
             marginBottom: 32,
           }}
         >
-          ⚖ The AI Referee
+           The AI Referee
         </div>
 
         <h1

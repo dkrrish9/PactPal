@@ -98,7 +98,7 @@ export default function HirerDashboardPage() {
               Hirer Dashboard {isPersonalized && <span style={{ color: "#60A5FA" }}>• Authenticated Account</span>}
             </div>
             <h1 style={{ fontSize: "clamp(28px, 4vw, 48px)", fontWeight: 900, letterSpacing: "-0.025em", color: "white" }}>
-              Welcome back, <span className="gradient-text">{displayName}</span> 👋
+              Welcome back, <span className="gradient-text">{displayName}</span> 
             </h1>
             {userPayPalEmail && (
               <div
@@ -207,9 +207,9 @@ export default function HirerDashboardPage() {
         >
           {[
             { label: "In escrow now", value: `$${totalHeld.toLocaleString()}`, color: "#FF9800", icon: "🔒" },
-            { label: "Active contracts", value: activeCount.toString(), color: "#0066FF", icon: "📋" },
+            { label: "Active contracts", value: activeCount.toString(), color: "#0066FF", icon: "" },
             { label: "Completed / Settled", value: settledCount.toString(), color: "#4CAF50", icon: "✅" },
-            { label: "Total registered", value: contracts.length.toString(), color: "#7A5CFF", icon: "💼" },
+            { label: "Total registered", value: contracts.length.toString(), color: "#7A5CFF", icon: "" },
           ].map((s) => (
             <div
               key={s.label}
@@ -308,7 +308,7 @@ export default function HirerDashboardPage() {
                   marginBottom: 16,
                 }}
               >
-                ✨
+                
               </div>
               <h3 style={{ fontSize: 20, fontWeight: 800, color: "white", marginBottom: 6 }}>
                 No contracts registered yet
@@ -381,7 +381,7 @@ export default function HirerDashboardPage() {
                       <div>{c.seller_name || c.seller_email || "Open for application"}</div>
                       {c.seller_confirmed_at && !c.buyer_confirmed_at && (
                         <div style={{ fontSize: 11, color: "#34D399", fontWeight: 700, marginTop: 2 }}>
-                          ⚡ Applied &amp; Signed Terms
+                           Applied &amp; Signed Terms
                         </div>
                       )}
                     </td>
@@ -429,7 +429,7 @@ export default function HirerDashboardPage() {
                             boxShadow: "0 0 12px rgba(16,185,129,0.25)",
                           }}
                         >
-                          ⚡ Approve &amp; Sign →
+                           Approve &amp; Sign →
                         </Link>
                       ) : c.status === "REVIEW" ? (
                         <Link
@@ -480,7 +480,7 @@ export default function HirerDashboardPage() {
                             display: "inline-block",
                           }}
                         >
-                          View Receipt (C45) →
+                          View Receipt →
                         </Link>
                       ) : (
                         <Link

@@ -101,7 +101,7 @@ export default function VerificationResultPage() {
             {" / "}
             <Link href={`/contracts/${contract.id}`} style={{ color: "#60A5FA", textDecoration: "none" }}>{contract.id}</Link>
             {" / "}
-            <span style={{ color: "white" }}>AI Referee Verification Results (C29)</span>
+            <span style={{ color: "white" }}>AI Referee Verification Results</span>
           </div>
 
           <div style={{ display: "flex", gap: 10 }}>
@@ -297,12 +297,12 @@ export default function VerificationResultPage() {
           </div>
         </div>
 
-        {/* SECTION 1: PER-FEATURE VERDICT & EVIDENCE (C29 Requirement 1) */}
+        {/* SECTION 1: PER-FEATURE VERDICT & EVIDENCE (Requirement 1) */}
         <div style={{ marginBottom: 40 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <div>
               <h2 style={{ fontSize: 22, fontWeight: 900, color: "white", display: "flex", alignItems: "center", gap: 10 }}>
-                📋 Per-Feature Verdicts &amp; Test Evidence
+                 Per-Feature Verdicts &amp; Test Evidence
               </h2>
               <p style={{ fontSize: 14, color: "var(--color-text-secondary)", marginTop: 2 }}>
                 Individual milestone pass/fail breakdown mapping directly to the shared JSON report shape.
@@ -401,12 +401,12 @@ export default function VerificationResultPage() {
           </div>
         </div>
 
-        {/* SECTION 2: SIDE-BY-SIDE VISUAL DIFF SCREENSHOTS (C29 Requirement 2) */}
+        {/* SECTION 2: SIDE-BY-SIDE VISUAL DIFF SCREENSHOTS (Requirement 2) */}
         <div style={{ marginBottom: 40 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 14 }}>
             <div>
               <h2 style={{ fontSize: 22, fontWeight: 900, color: "white", display: "flex", alignItems: "center", gap: 10 }}>
-                🖼️ Side-by-Side Visual Regression (Figma vs Render)
+                 Side-by-Side Visual Regression (Figma vs Render)
               </h2>
               <p style={{ fontSize: 14, color: "var(--color-text-secondary)", marginTop: 2 }}>
                 Headless browser screenshot captured in sandbox compared directly with hirer&apos;s Figma design specification.
@@ -631,7 +631,7 @@ export default function VerificationResultPage() {
         {report.cheat_scan_findings.length > 0 && (
           <div style={{ marginBottom: 40 }}>
             <h2 style={{ fontSize: 22, fontWeight: 900, color: "white", marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}>
-              🛡️ AST Cheat &amp; Hardcode Scan Findings
+               AST Cheat &amp; Hardcode Scan Findings
             </h2>
             <p style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: 20 }}>
               Automated abstract syntax tree inspection to detect mock bypasses, skipped assertions, or hardcoded API constants.
@@ -778,7 +778,7 @@ export default function VerificationResultPage() {
           </div>
         </div>
 
-        {/* RAW REPORT JSON INSPECTOR MODAL (C07 & C29 Compliance) */}
+        {/* RAW REPORT JSON INSPECTOR MODAL ( Compliance) */}
         {isJsonModalOpen && (
           <div
             style={{
@@ -813,7 +813,7 @@ export default function VerificationResultPage() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                 <div>
                   <h3 style={{ fontSize: 18, fontWeight: 800, color: "white", margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                    <Code2 size={18} color="#60A5FA" /> Shared Verification Report JSON (C07 / C29)
+                    <Code2 size={18} color="#60A5FA" /> Shared Verification Report JSON (/ )
                   </h3>
                   <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 2 }}>
                     Strict implementation of shared verification report schema

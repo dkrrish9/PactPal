@@ -118,7 +118,7 @@ export default function LoginPage() {
               boxShadow: "0 0 24px rgba(0,102,255,0.4)",
             }}
           >
-            ⚖
+            
           </div>
           <span style={{ fontWeight: 800, fontSize: 22, color: "white" }}>PactPal</span>
         </Link>

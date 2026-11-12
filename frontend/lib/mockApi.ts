@@ -724,13 +724,18 @@ export const mockApi = {
   },
 
   /**
+<<<<<<< HEAD
    * Get negotiation chat messages (C40: persists in localStorage/Supabase)
+=======
+   * Get negotiation chat messages (: persists in localStorage)
+>>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
    */
   getMessages(contractId: string): ChatMessage[] {
     return loadMessages(contractId);
   },
 
   /**
+<<<<<<< HEAD
    * Sync chat messages from Supabase DB into local cache
    */
   syncMessagesFromSupabase(contractId: string, messages: ChatMessage[]): void {
@@ -751,6 +756,9 @@ export const mockApi = {
 
   /**
    * Send negotiation chat message (C40: AI, Buyer, Seller)
+=======
+   * Send negotiation chat message (: AI, Buyer, Seller)
+>>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
    */
   sendMessage(
     contractId: string,
@@ -853,6 +861,7 @@ export const mockApi = {
   },
 
   /**
+<<<<<<< HEAD
    * Sync contracts list from Supabase into local memory / localStorage
    */
   syncContractsFromSupabase(supaContracts: Contract[]): void {
@@ -871,6 +880,9 @@ export const mockApi = {
 
   /**
    * Submit deliverable for verification (C25)
+=======
+   * Submit deliverable for verification
+>>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
    * Captures repo link, commit SHA, build note, and computes late flag vs deadline
    */
   submitDeliverable(
@@ -905,17 +917,25 @@ export const mockApi = {
       deadline: contracts[idx].deadline,
     };
 
-    contracts[idx].status = "SUBMITTED";
+    contracts[idx].status = "DECISION";
     contracts[idx].repo_url = data.repo_url;
     contracts[idx].commit_sha = data.commit_sha;
     contracts[idx].submission = submission;
+
+    // Dynamically verify and pass contract milestones
+    if (contracts[idx].features && contracts[idx].features.length > 0) {
+      contracts[idx].features = contracts[idx].features.map((f, i) => ({
+        ...f,
+        status: (!isLate || i < contracts[idx].features.length - 1) ? ("PASSED" as const) : ("FAILED" as const),
+      }));
+    }
 
     saveContracts(contracts);
     return { contract: contracts[idx], submission };
   },
 
   /**
-   * Update contract status across the 10 lifecycle states (C33)
+   * Update contract status across the 10 lifecycle states
    */
   updateContractStatus(id: string, status: ContractStatus): Contract | null {
     const contracts = loadContracts();
@@ -1029,7 +1049,7 @@ export const mockApi = {
   },
 
   /**
-   * Dual checklist confirmation (C17 & C19)
+   * Dual checklist confirmation (& )
    */
   confirmChecklist(
     id: string,
@@ -1067,7 +1087,7 @@ export const mockApi = {
   },
 
   /**
-   * Counter terms (C17: Seller or Buyer counters price, deadline, or features)
+   * Counter terms (: Seller or Buyer counters price, deadline, or features)
    */
   counterContract(
     id: string,
@@ -1196,11 +1216,11 @@ export const mockApi = {
   },
 
   /**
-   * Get verification report following shared JSON shape (C07 & C29)
+   * Get verification report following shared JSON shape 
    */
   getVerificationReport(contractId: string): VerificationReport {
     const contract = this.getContract(contractId) || SEED_CONTRACTS[0];
-    const features = contract.features || [];
+    const features = contract.features && contract.features.length > 0 ? contract.features : SEED_CONTRACTS[0].features;
 
     const perFeatureMap: Record<string, {
       feature_id: string;
@@ -1215,24 +1235,70 @@ export const mockApi = {
 
     let passedCount = 0;
     features.forEach((f) => {
-      const isPassed = f.status === "PASSED";
+      const isPassed = f.status === "PASSED" || (Boolean(contract.submission) && f.status !== "FAILED" && f.status !== "DISPUTED");
       if (isPassed) passedCount++;
 
       perFeatureMap[f.id] = {
         feature_id: f.id,
         feature_title: f.title,
-        status: f.status === "DISPUTED" ? "FAILED" : f.status,
+        status: isPassed ? "PASSED" : "FAILED",
         price_weight: f.price_weight,
-        allocated_amount: f.allocated_amount,
-        severity: isPassed ? "NONE" : (f.title.toLowerCase().includes("login") ? "HIGH" : "MEDIUM"),
+        allocated_amount: f.allocated_amount || (contract.total_amount * f.price_weight) / 100,
+        severity: isPassed ? "NONE" : "MEDIUM",
         evidence: isPassed
-          ? `Unit tests passed: 100% assertions met. Acceptance criteria verified against '${f.acceptance_test.substring(0, 40)}...'.`
-          : `Automated test runner detected failure: Acceptance criteria '${f.acceptance_test.substring(0, 40)}...' failed during headless container execution.`,
-        reason: isPassed ? null : "AST scanner detected hardcoded fallback or skipped assertion in test runner suite.",
+          ? `Unit tests passed: 100% assertions met. Acceptance criteria verified against '${(f.acceptance_test || f.title).substring(0, 45)}...'.`
+          : `Automated test runner detected failure: Acceptance criteria '${(f.acceptance_test || f.title).substring(0, 45)}...' failed during headless container execution.`,
+        reason: isPassed ? null : "Acceptance criteria assertion not fully satisfied in automated test runner suite.",
       };
     });
 
-    const overallScore = features.length > 0 ? Math.round((passedCount / features.length) * 100) : 75;
+    const totalFeatures = features.length || 1;
+    const allPassed = passedCount === totalFeatures;
+    const overallScore = Math.round((passedCount / totalFeatures) * 100);
+    const totalTests = totalFeatures * 8;
+    const passedTests = passedCount * 8;
+    const failedTests = totalTests - passedTests;
+
+    const cheatScanFindings = allPassed
+      ? []
+      : [
+          {
+            finding_id: `ast_${contract.id}_01`,
+            feature_id: features.find((f) => f.status === "FAILED")?.id || features[0]?.id || "feat_01",
+            rule_violated: "ACCEPTANCE_TEST_COVERAGE",
+            severity: "MEDIUM" as const,
+            description: `Automated verification detected incomplete assertion coverage for milestone requirement.`,
+            file_path: "src/feature.ts",
+            line_number: 28,
+          },
+        ];
+
+    const visualDiff = allPassed
+      ? {
+          status: "MATCHED",
+          similarity_score: 98.4,
+          threshold: 90.0,
+          passed: true,
+          diff_image_url: "/placeholder-diff.png",
+          notes: "Visual snapshot matches design specification across desktop and mobile viewports.",
+        }
+      : {
+          status: "DIFF_DETECTED",
+          similarity_score: 87.5,
+          threshold: 90.0,
+          passed: false,
+          diff_image_url: "/placeholder-diff.png",
+          notes: "Visual mismatch on layout padding compared to specification.",
+        };
+
+    const buildLogs = `[gVisor Container Sandbox v2.4]
+Cloning git repo: ${contract.repo_url || contract.submission?.repo_url || "https://github.com/freelancer/pactpal-storefront"}
+Commit pinned: ${contract.commit_sha || contract.submission?.commit_sha || "a1b8c9d4e5f6"}
+Branch: ${contract.submission?.branch || "main"}
+Running: npm install --frozen-lockfile... Done (1.9s)
+Running: npm run build... Succeeded with 0 syntax errors.
+Running test runner: ${passedTests}/${totalTests} test assertions passed.
+Container isolation intact: 0 platform secrets exposed.`;
 
     return {
       id: `rep_${contract.id}`,
@@ -1240,53 +1306,27 @@ export const mockApi = {
       contract_id: contract.id,
       render_job_id: `rnd_gvisor_${Math.random().toString(36).substring(2, 8)}`,
       build_succeeded: true,
-      build_logs: `[gVisor Container Sandbox v2.4]\nCloning git repo: ${contract.repo_url || "https://github.com/freelancer/pactpal-storefront"}\nCommit pinned: ${contract.commit_sha || "a1b8c9d4e5f6"}\nRunning: npm install --frozen-lockfile... Done (2.1s)\nRunning: npm run build... Succeeded with 0 syntax errors.\nContainer isolation intact: 0 platform secrets exposed.`,
+      build_logs: buildLogs,
       overall_score: overallScore,
       next_state: overallScore >= 75 ? "DECISION" : "DISPUTE",
       completed_at: new Date().toISOString(),
       test_suite_results: {
-        status: passedCount === features.length ? "PASSED" : "PARTIAL",
-        total_tests: 42,
-        passed_tests: 35,
-        failed_tests: 7,
+        status: allPassed ? "PASSED" : "PARTIAL",
+        total_tests: totalTests,
+        passed_tests: passedTests,
+        failed_tests: failedTests,
         skipped_tests: 0,
-        coverage_percent: 88.5,
-        duration_ms: 12450,
+        coverage_percent: allPassed ? 98.4 : 88.5,
+        duration_ms: 11200,
       },
-      cheat_scan_findings: [
-        {
-          finding_id: "ast_jwt_mock_01",
-          feature_id: features[1]?.id || "feat_02",
-          rule_violated: "NO_HARDCODED_AUTH_RESPONSES",
-          severity: "HIGH",
-          description: "Hardcoded fake JWT token in /app/api/auth/route.ts bypasses real credential hashing and database validation.",
-          file_path: "app/api/auth/route.ts",
-          line_number: 42,
-        },
-        {
-          finding_id: "ast_dead_code_02",
-          feature_id: features[0]?.id || "feat_01",
-          rule_violated: "CLEAN_DEPENDENCY_AUDIT",
-          severity: "LOW",
-          description: "Unused debug console.log statement found in mobile drawer event listener.",
-          file_path: "components/MobileNav.tsx",
-          line_number: 88,
-        },
-      ],
-      visual_diff_summary: {
-        status: "DIFF_DETECTED",
-        similarity_score: 89.2,
-        threshold: 90.0,
-        passed: false,
-        diff_image_url: "/placeholder-diff.png",
-        notes: "Figma button padding was 16px horizontal, implementation measured 24px. Visual mismatch on mobile header.",
-      },
+      cheat_scan_findings: cheatScanFindings,
+      visual_diff_summary: visualDiff,
       per_feature_results: perFeatureMap,
     };
   },
 
   /**
-   * Settle contract: transitions to SETTLED and generates proof-of-work receipt (C45)
+   * Settle contract: transitions to SETTLED and generates proof-of-work receipt
    */
   settleContract(id: string, passedAmount?: number): Contract | null {
     const contracts = loadContracts();
@@ -1299,7 +1339,7 @@ export const mockApi = {
   },
 
   /**
-   * Get cryptographic proof-of-work receipt (Commit C44/C45)
+   * Get cryptographic proof-of-work receipt (Proof of Work Receipt)
    */
   getReceipt(contractId: string): ProofOfWorkReceipt {
     const contract = this.getContract(contractId) || SEED_CONTRACTS[0];
@@ -1310,17 +1350,19 @@ export const mockApi = {
 
     // Feature settlement calculation
     const featuresList = contract.features && contract.features.length > 0 ? contract.features : [
-      { id: "feat_01", contract_id: id, title: "Landing Page & Responsive Navigation", acceptance_test: "All 12 sections render, mobile drawer opens, 100% responsive", price_weight: 25, allocated_amount: 375, status: "PASSED" as const, sort_order: 1 },
-      { id: "feat_02", contract_id: id, title: "Login & Session Management", acceptance_test: "Login/logout with JWT, session persists across refresh", price_weight: 20, allocated_amount: 300, status: "FAILED" as const, sort_order: 2 },
-      { id: "feat_03", contract_id: id, title: "Interactive Dashboard & Bryntum Gantt", acceptance_test: "Gantt timeline renders with status colors and today line", price_weight: 30, allocated_amount: 450, status: "PASSED" as const, sort_order: 3 },
-      { id: "feat_04", contract_id: id, title: "PayPal Escrow Webhook Listeners", acceptance_test: "Order authorization and capture webhook listeners respond with 200", price_weight: 25, allocated_amount: 375, status: "PASSED" as const, sort_order: 4 },
+      { id: "feat_01", contract_id: id, title: "Milestone Deliverable 1", acceptance_test: "Acceptance criteria verified", price_weight: 50, allocated_amount: total * 0.5, status: "PASSED" as const, sort_order: 1 },
+      { id: "feat_02", contract_id: id, title: "Milestone Deliverable 2", acceptance_test: "Acceptance criteria verified", price_weight: 50, allocated_amount: total * 0.5, status: "PASSED" as const, sort_order: 2 },
     ];
 
     const passedFeatures = featuresList.filter((f) => f.status === "PASSED");
-    const passedWeight = passedFeatures.reduce((acc, f) => acc + (f.price_weight || 0), 0);
-    const sellerPayout = passedFeatures.reduce((acc, f) => acc + (f.allocated_amount || 0), 0);
+    const passedWeight = passedFeatures.length > 0
+      ? passedFeatures.reduce((acc, f) => acc + (f.price_weight || 0), 0)
+      : 100;
+    const sellerPayout = passedFeatures.length > 0
+      ? passedFeatures.reduce((acc, f) => acc + (f.allocated_amount || (total * f.price_weight) / 100), 0)
+      : total;
     const buyerRefund = Math.max(0, total - sellerPayout);
-    const failedWeight = 100 - passedWeight;
+    const failedWeight = Math.max(0, 100 - passedWeight);
 
     const repoUrl = contract.repo_url || contract.submission?.repo_url || "https://github.com/freelancer/pactpal-storefront";
     const commitSha = contract.commit_sha || contract.submission?.commit_sha || "a1b8c9d4e5f67890123456789abcdef012345678";
@@ -1363,22 +1405,22 @@ export const mockApi = {
         is_late: contract.submission?.is_late || false,
       },
       verification_metrics: {
-        overall_score: Math.round(passedWeight * 0.95),
+        overall_score: Math.round(passedWeight * 0.98),
         test_suite_status: passedWeight >= 70 ? "PASSED" : "FAILED",
-        tests_passed: passedFeatures.length * 3 + 2,
-        tests_total: featuresList.length * 3 + 2,
-        coverage_percent: 88.5,
-        visual_similarity_score: 94.3,
+        tests_passed: (passedFeatures.length || featuresList.length) * 8,
+        tests_total: featuresList.length * 8,
+        coverage_percent: passedWeight === 100 ? 98.4 : 88.5,
+        visual_similarity_score: passedWeight === 100 ? 98.6 : 94.3,
         cheat_scan_findings_count: featuresList.some((f) => f.status === "FAILED") ? 1 : 0,
       },
       features: featuresList.map((f) => ({
         id: f.id,
         title: f.title,
         price_weight: f.price_weight,
-        allocated_amount: f.allocated_amount,
+        allocated_amount: f.allocated_amount || (total * f.price_weight) / 100,
         status: f.status as any,
         severity: f.status === "FAILED" ? "HIGH" : "NONE",
-        evidence: f.status === "PASSED" ? "Unit tests passed + visual match confirmed" : "Hardcoded mock response flagged in AST scan",
+        evidence: f.status === "PASSED" ? "Unit tests passed + visual match confirmed" : "Milestone assertion incomplete in test run",
       })),
       evidence_links: {
         github_commit_url: `${repoUrl}/commit/${commitSha}`,
@@ -1397,7 +1439,7 @@ export const mockApi = {
   },
 
   /**
-   * Accept a scope change / mini-agreement (C48: new task appears automatically in Gantt)
+   * Accept a scope change / mini-agreement (: new task appears automatically in Gantt)
    */
   acceptScopeChange(
     contractId: string, 
@@ -1457,7 +1499,7 @@ export const mockApi = {
   },
 
   /**
-   * Scheduled deadline watcher simulation (C49/C50: triggers final verification & payout)
+   * Scheduled deadline watcher simulation (: triggers final verification & payout)
    */
   simulateDeadlineWatcher(contractId: string): { contract: Contract; logEntry: string; payoutAmount: number; refundAmount: number } | null {
     const contracts = loadContracts();

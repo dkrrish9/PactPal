@@ -44,13 +44,13 @@ export default function CreateContractPage() {
   const [form, setForm] = useState<FormState>({
     title: "",
     description: "",
-    buyerEmail: "priya@fintech.io",
-    sellerEmail: "alex.dev@code.io",
+    buyerEmail: "",
+    sellerEmail: "",
     deadline: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
     totalAmount: "1500",
     currency: "USD",
-    figmaUrl: "https://figma.com/design/sample-project-spec",
-    repoUrl: "https://github.com/freelancer/pactpal-storefront",
+    figmaUrl: "",
+    repoUrl: "",
   });
 
   useEffect(() => {
@@ -64,15 +64,15 @@ export default function CreateContractPage() {
   }, []);
 
   const [features, setFeatures] = useState<Feature[]>([
-    { name: "Landing page", weight: 25, test: "All 12 sections render, CTA links work, mobile drawer opens" },
-    { name: "Login system", weight: 20, test: "Login/logout with JWT, session persists across refresh" },
-    { name: "Dashboard", weight: 30, test: "Data loads from API, Bryntum Gantt chart renders, 100% responsive" },
-    { name: "Payment flow", weight: 25, test: "PayPal escrow webhook listeners respond with 200" },
+    { name: "Landing page", weight: 25, test: "All sections render, navigation links work, mobile responsive" },
+    { name: "Core functionality", weight: 35, test: "Primary business logic and workflows functional" },
+    { name: "Dashboard & reporting", weight: 25, test: "Data visualization and interactive overview renders" },
+    { name: "Verification & delivery", weight: 15, test: "All tests pass, code repository build succeeds" },
   ]);
 
   const totalWeight = features.reduce((s, f) => s + (Number(f.weight) || 0), 0);
   const weightOk = totalWeight === 100;
-  const basicInfoOk = form.title.trim() !== "" && form.buyerEmail.trim() !== "" && form.sellerEmail.trim() !== "" && form.totalAmount.trim() !== "";
+  const basicInfoOk = form.title.trim() !== "" && form.totalAmount.trim() !== "";
 
   // Phase 1 / Agreement Reader Rule: Every feature must have a measurable acceptance test
   const featureIssues = features.map((f, idx) => {
@@ -482,7 +482,7 @@ export default function CreateContractPage() {
               </div>
               <div>
                 <h3 style={{ fontSize: 19, fontWeight: 700, color: "white", margin: 0 }}>
-                  🤝 AI Referee Clarification Request
+                   AI Referee Clarification Request
                 </h3>
                 <div style={{ fontSize: 13, color: "#94A3B8", marginTop: 2 }}>
                   Zero-Trust Pre-Validation Rule • Prohibits Guessing
@@ -527,7 +527,7 @@ export default function CreateContractPage() {
                     {c.issue}
                   </div>
                   <div style={{ fontSize: 12, color: "#93C5FD", display: "flex", alignItems: "center", gap: 6 }}>
-                    <span>👉</span> <strong>Suggested Action:</strong> {c.suggested_action}
+                    <span></span> <strong>Suggested Action:</strong> {c.suggested_action}
                   </div>
                 </div>
               ))}
@@ -560,7 +560,7 @@ export default function CreateContractPage() {
                   gap: 6,
                 }}
               >
-                ⚖️ Auto-Balance Weights to 100%
+                 Auto-Balance Weights to 100%
               </button>
 
               <button
@@ -580,7 +580,7 @@ export default function CreateContractPage() {
                   gap: 6,
                 }}
               >
-                ✨ Adopt AI Test Criteria
+                 Adopt AI Test Criteria
               </button>
 
               <button
@@ -601,7 +601,7 @@ export default function CreateContractPage() {
                   marginLeft: "auto",
                 }}
               >
-                ✏️ Edit Manually
+                 Edit Manually
               </button>
             </div>
           </div>
