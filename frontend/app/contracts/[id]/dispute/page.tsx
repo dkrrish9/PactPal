@@ -26,25 +26,57 @@ import {
   Check
 } from "lucide-react";
 import { mockApi, Contract, Feature, ChatMessage, ProofOfWorkReceipt } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
+import { getCurrentUser, UserProfile } from "@/lib/supabase";
+
+function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
+  if (!c || !user) return false;
+  const userEmail = (user.email || "").trim().toLowerCase();
+  const userName = (user.name || "").trim().toLowerCase();
+  const userId = user.id || "";
+
+  const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
+  const buyerName = (c.buyer_name || "").trim().toLowerCase();
+  const buyerId = c.buyer_id || "";
+
+  if (userId && buyerId && userId === buyerId) return true;
+  if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
+  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  return false;
+}
 
 export default function DisputePage() {
   const params = useParams();
   const rawId = (params?.id as string) || "pct_099e77";
 
   const [contract, setContract] = useState<Contract | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [receipt, setReceipt] = useState<ProofOfWorkReceipt | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [senderRole, setSenderRole] = useState<"BUYER" | "SELLER" | "AI_REFEREE">("SELLER");
   const [selectedResolution, setSelectedResolution] = useState<string>("partial");
   const [evidenceSubmitted, setEvidenceSubmitted] = useState(false);
   const [resolutionConfirmed, setResolutionConfirmed] = useState(false);
 
   useEffect(() => {
-    const c = mockApi.getContract(rawId) || mockApi.getContracts()[0];
-    setContract(c);
-    setReceipt(mockApi.getReceipt(c?.id || rawId));
-    setMessages(mockApi.getMessages(c?.id || rawId));
+    setCurrentUser(getCurrentUser());
+    async function loadDisputeData() {
+      try {
+        const live = await backendClient.getContract(rawId);
+        if (live) setContract(live as unknown as Contract);
+        const liveMsgs = await backendClient.getMessages(rawId);
+        if (liveMsgs && liveMsgs.length > 0) setMessages(liveMsgs);
+        else setMessages(mockApi.getMessages(rawId));
+        setReceipt(mockApi.getReceipt(rawId));
+        return;
+      } catch {}
+
+      const c = mockApi.getContract(rawId) || mockApi.getContracts()[0];
+      setContract(c);
+      setReceipt(mockApi.getReceipt(c?.id || rawId));
+      setMessages(mockApi.getMessages(c?.id || rawId));
+    }
+    loadDisputeData();
   }, [rawId]);
 
   if (!contract) {
@@ -66,34 +98,39 @@ export default function DisputePage() {
   const passedAmount = 1125;
   const refundAmount = 375;
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const isViewerHirer = isUserHirer(contract, currentUser);
+  const mySenderRole: "BUYER" | "SELLER" = isViewerHirer ? "BUYER" : "SELLER";
+  const mySenderName = isViewerHirer
+    ? (currentUser?.name || contract.buyer_name || "Hirer")
+    : (currentUser?.name || contract.seller_name || "Freelancer");
+
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
 
-    let senderName = "AI Referee";
-    if (senderRole === "BUYER") senderName = contract.buyer_name || "Priya Sharma";
-    if (senderRole === "SELLER") senderName = contract.seller_name || "Alex Mercer";
+    const content = `[DISPUTE MEDIATION] ${chatInput.trim()}`;
+    setChatInput("");
 
-    mockApi.sendMessage(contract.id, {
-      sender_type: senderRole,
-      sender_name: senderName,
-      content: `[DISPUTE MEDIATION] ${chatInput.trim()}`,
+    const newMsg = await backendClient.sendMessage(contract.id, {
+      sender_type: mySenderRole,
+      sender_name: mySenderName,
+      content,
       metadata: { action: "DISPUTE_RAISED" },
+      sender_id: currentUser?.id,
     });
 
-    setMessages([...mockApi.getMessages(contract.id)]);
-    setChatInput("");
+    setMessages((prev) => [...prev, newMsg]);
   };
 
-  const handleConfirmResolution = () => {
+  const handleConfirmResolution = async () => {
     setResolutionConfirmed(true);
-    mockApi.sendMessage(contract.id, {
+    const newMsg = await backendClient.sendMessage(contract.id, {
       sender_type: "AI_REFEREE",
       sender_name: "AI Referee",
       content: `Arbitration Decision Formally Accepted: Selected resolution pathway '${selectedResolution.toUpperCase()}'. Funds release initiated.`,
       metadata: { action: "VERDICT_SUMMARY", proposed_amount: passedAmount },
     });
-    setMessages([...mockApi.getMessages(contract.id)]);
+    setMessages((prev) => [...prev, newMsg]);
   };
 
   return (
@@ -540,29 +577,26 @@ export default function DisputePage() {
               })}
             </div>
 
-            {/* Chat Input & Sender Switcher */}
+            {/* Chat Input & Sender Indicator */}
             <div style={{ padding: "14px 16px", borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.015)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Send as:</span>
-                {(["SELLER", "BUYER", "AI_REFEREE"] as const).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setSenderRole(r)}
-                    style={{
-                      padding: "2px 8px",
-                      borderRadius: 6,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      border: "none",
-                      cursor: "pointer",
-                      background: senderRole === r ? "#0066FF" : "rgba(255,255,255,0.05)",
-                      color: senderRole === r ? "white" : "var(--color-text-muted)",
-                    }}
-                  >
-                    {r === "SELLER" ? "🧑‍💻 Freelancer" : r === "BUYER" ? "👔 Hirer" : "🤖 Referee"}
-                  </button>
-                ))}
+                <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Sending as:</span>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "3px 12px",
+                    borderRadius: 20,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: isViewerHirer ? "rgba(0,102,255,0.15)" : "rgba(16,185,129,0.15)",
+                    color: isViewerHirer ? "#60A5FA" : "#34D399",
+                    border: `1px solid ${isViewerHirer ? "rgba(0,102,255,0.3)" : "rgba(16,185,129,0.3)"}`,
+                  }}
+                >
+                  {isViewerHirer ? "👔" : "🧑‍💻"} {mySenderName} ({isViewerHirer ? "Hirer" : "Freelancer"})
+                </span>
               </div>
 
               <form onSubmit={handleSendMessage} style={{ display: "flex", gap: 8 }}>

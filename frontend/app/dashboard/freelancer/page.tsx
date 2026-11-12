@@ -5,7 +5,8 @@ import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { ArrowRight, Clock, CheckCircle, Circle, Briefcase, FileSignature, CheckCircle2, Sparkles, User, ExternalLink } from "lucide-react";
 import { mockApi, Contract, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
-import { getCurrentUser, UserProfile } from "@/lib/supabase";
+import { getCurrentUser, UserProfile, toUUID } from "@/lib/supabase";
+import { backendClient } from "@/lib/backendClient";
 
 const statusColors: Record<string, { color: string; bg: string; label: string }> = {
   DRAFT:       { color: "#7C89A8", bg: "rgba(124,137,168,0.1)", label: "Draft" },
@@ -25,14 +26,15 @@ function isUserBuyer(c: Contract, user: UserProfile | null): boolean {
   const userEmail = (user.email || "").trim().toLowerCase();
   const userName = (user.name || "").trim().toLowerCase();
   const userId = user.id || "";
+  const userUuid = toUUID(userId);
 
   const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
   const buyerName = (c.buyer_name || "").trim().toLowerCase();
   const buyerId = c.buyer_id || "";
 
-  if (userId && buyerId === userId) return true;
+  if (userId && (buyerId === userId || buyerId === userUuid)) return true;
   if (userEmail && buyerEmail === userEmail) return true;
-  if (userName && buyerName === userName) return true;
+  if (userName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
 }
 
@@ -41,14 +43,15 @@ function isUserSeller(c: Contract, user: UserProfile | null): boolean {
   const userEmail = (user.email || "").trim().toLowerCase();
   const userName = (user.name || "").trim().toLowerCase();
   const userId = user.id || "";
+  const userUuid = toUUID(userId);
 
   const sellerEmail = (c.seller_email || "").trim().toLowerCase();
   const sellerName = (c.seller_name || "").trim().toLowerCase();
   const sellerId = c.seller_id || "";
 
-  if (userId && sellerId === userId) return true;
+  if (userId && (sellerId === userId || sellerId === userUuid)) return true;
   if (userEmail && sellerEmail === userEmail) return true;
-  if (userName && sellerName === userName) return true;
+  if (userName && (userName.includes(sellerName) || sellerName.includes(userName))) return true;
   return false;
 }
 
@@ -58,50 +61,73 @@ export default function FreelancerDashboardPage() {
   const [availableProjects, setAvailableProjects] = useState<Contract[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  useEffect(() => {
+  const fetchContracts = async () => {
     const user = getCurrentUser();
     setCurrentUser(user);
 
-    const all = mockApi.getContracts();
+    try {
+      const all = await backendClient.getContracts();
 
-    // 1. My Contracts: Only contracts where the current user is the SELLER and contract has been funded (Active Contracts)
-    const mine = all.filter((c) => {
-      if (isUserBuyer(c, user)) return false;
-      const isSeller = isUserSeller(c, user);
-      const isFundedOrActive =
-        c.status === "FUNDED" ||
-        c.status === "IN_PROGRESS" ||
-        c.status === "SUBMITTED" ||
-        c.status === "VERIFYING" ||
-        c.status === "DECISION" ||
-        c.status === "SETTLED";
-      return isSeller && isFundedOrActive;
-    });
-
-    // 2. Available Projects: Open projects posted by OTHER hirers, or pending approval/funding
-    const available = all.filter((c) => {
-      // Must NOT be posted by current user
-      if (isUserBuyer(c, user)) return false;
-
-      // If already funded & current user is seller, it belongs in myContracts, not available
-      const isAlreadyFundedActive =
-        isUserSeller(c, user) &&
-        (c.status === "FUNDED" ||
+      // 1. My Contracts: Only contracts where the current user is the SELLER and contract has been funded (Active Contracts)
+      const mine = all.filter((c) => {
+        if (isUserBuyer(c, user)) return false;
+        const isSeller = isUserSeller(c, user);
+        const isFundedOrActive =
+          c.status === "FUNDED" ||
           c.status === "IN_PROGRESS" ||
           c.status === "SUBMITTED" ||
           c.status === "VERIFYING" ||
           c.status === "DECISION" ||
-          c.status === "SETTLED");
+          c.status === "SETTLED";
+        return isSeller && isFundedOrActive;
+      });
 
-      if (isAlreadyFundedActive) return false;
+      // 2. Available Projects: Open projects posted by OTHER hirers, or pending approval/funding
+      const available = all.filter((c) => {
+        // Must NOT be posted by current user
+        if (isUserBuyer(c, user)) return false;
 
-      // Available if in DRAFT, REVIEW, or SIGNED (awaiting hirer escrow payment)
-      return c.status === "DRAFT" || c.status === "REVIEW" || c.status === "SIGNED";
-    });
+        // If already funded & current user is seller, it belongs in myContracts, not available
+        const isAlreadyFundedActive =
+          isUserSeller(c, user) &&
+          (c.status === "FUNDED" ||
+            c.status === "IN_PROGRESS" ||
+            c.status === "SUBMITTED" ||
+            c.status === "VERIFYING" ||
+            c.status === "DECISION" ||
+            c.status === "SETTLED");
 
-    setMyContracts(mine);
-    setAvailableProjects(available);
-    setIsLoaded(true);
+        if (isAlreadyFundedActive) return false;
+
+        // Available if in DRAFT, REVIEW, or SIGNED (awaiting hirer escrow payment)
+        return c.status === "DRAFT" || c.status === "REVIEW" || c.status === "SIGNED";
+      });
+
+      setMyContracts(mine);
+      setAvailableProjects(available);
+    } catch (err) {
+      console.error("Failed to load freelancer contracts from Supabase:", err);
+      const all = mockApi.getContracts();
+      setMyContracts(all.filter((c) => isUserSeller(c, user) && c.status !== "DRAFT"));
+      setAvailableProjects(all.filter((c) => !isUserBuyer(c, user) && c.status === "DRAFT"));
+    } finally {
+      setIsLoaded(true);
+    }
+  };
+
+  useEffect(() => {
+    fetchContracts();
+
+    const handleUpdate = () => fetchContracts();
+    window.addEventListener("pactpal_contract_created", handleUpdate);
+    window.addEventListener("pactpal_contract_updated", handleUpdate);
+    window.addEventListener("pactpal_auth_change", handleUpdate);
+
+    return () => {
+      window.removeEventListener("pactpal_contract_created", handleUpdate);
+      window.removeEventListener("pactpal_contract_updated", handleUpdate);
+      window.removeEventListener("pactpal_auth_change", handleUpdate);
+    };
   }, []);
 
   const totalEarned = myContracts

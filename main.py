@@ -139,6 +139,85 @@ def extract_actor(x_actor_id: Optional[str] = None, default_role: UserRole = Use
         id="usr_buyer_01", name="Alice Buyer", email="alice.buyer@example.com", role=UserRole.BUYER
     )
 
+def sync_to_supabase_db(contract: dict, features: list = None):
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        return
+    try:
+        import psycopg2
+        import uuid
+
+        def to_uuid(val):
+            if not val:
+                return None
+            try:
+                return str(uuid.UUID(str(val)))
+            except:
+                return str(uuid.uuid5(uuid.NAMESPACE_DNS, str(val)))
+
+        conn = psycopg2.connect(db_url, connect_timeout=5)
+        cur = conn.cursor()
+
+        cid = to_uuid(contract.get("id"))
+        bid = to_uuid(contract.get("buyer_id")) or to_uuid("usr_buyer_01")
+        sid = to_uuid(contract.get("seller_id")) if contract.get("seller_id") else None
+
+        cur.execute("""
+            INSERT INTO users (id, role, name, email)
+            VALUES (%s, 'BUYER', 'Buyer', %s)
+            ON CONFLICT (id) DO NOTHING;
+        """, (bid, f"user_{bid[:8]}@example.com"))
+
+        if sid:
+            cur.execute("""
+                INSERT INTO users (id, role, name, email)
+                VALUES (%s, 'SELLER', 'Seller', %s)
+                ON CONFLICT (id) DO NOTHING;
+            """, (sid, f"seller_{sid[:8]}@example.com"))
+
+        cur.execute("""
+            INSERT INTO contracts (id, buyer_id, seller_id, title, description, status, total_amount, currency, deadline, figma_url, repo_url, is_locked, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                status = EXCLUDED.status,
+                seller_id = COALESCE(EXCLUDED.seller_id, contracts.seller_id),
+                is_locked = EXCLUDED.is_locked,
+                updated_at = NOW();
+        """, (
+            cid, bid, sid,
+            contract.get("title", "Untitled"),
+            contract.get("description", ""),
+            contract.get("status", "DRAFT"),
+            float(contract.get("total_amount", 0)),
+            contract.get("currency", "USD"),
+            contract.get("deadline", datetime.now(timezone.utc).isoformat()),
+            contract.get("figma_url"),
+            contract.get("repo_url"),
+            bool(contract.get("is_locked", False))
+        ))
+
+        if features:
+            for feat in features:
+                fid = to_uuid(feat.get("id")) or str(uuid.uuid4())
+                cur.execute("""
+                    INSERT INTO features (id, contract_id, title, acceptance_test, price_weight, allocated_amount, status, sort_order, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    ON CONFLICT (id) DO NOTHING;
+                """, (
+                    fid, cid,
+                    feat.get("title", ""),
+                    feat.get("acceptance_test", ""),
+                    float(feat.get("price_weight", 0)),
+                    float(feat.get("allocated_amount", 0)),
+                    feat.get("status", "PENDING"),
+                    int(feat.get("sort_order", 0))
+                ))
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Supabase Sync] Note: {e}")
+
 # --- Routes ---
 
 @app.get("/api/v1/health", summary="System Health & Diagnostics")
@@ -228,7 +307,9 @@ def create_contract(payload: CreateContractRequest, x_actor_id: Optional[str] = 
             feature_id=feat.id
         )
 
-    return repository.get_contract(cid)
+    full_contract = repository.get_contract(cid)
+    sync_to_supabase_db(full_contract, full_contract.get("features", []))
+    return full_contract
 
 @app.get("/api/v1/contracts/{contract_id}", summary="Get Contract Detail")
 def get_contract(contract_id: str):
@@ -241,11 +322,13 @@ def get_contract(contract_id: str):
 def submit_review(contract_id: str, x_actor_id: Optional[str] = Header(None)):
     actor = extract_actor(x_actor_id, default_role=UserRole.BUYER)
     try:
-        return repository.transition_contract(
+        res = repository.transition_contract(
             contract_id=contract_id,
             actor=actor,
             target_state=ContractState.REVIEW
         )
+        sync_to_supabase_db(res)
+        return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -270,6 +353,7 @@ def sign_contract(contract_id: str, payload: SignContractRequest, x_actor_id: Op
                     actor=seller_user,
                     target_state=ContractState.SIGNED
                 )
+        sync_to_supabase_db(confirmed)
         return confirmed
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -289,12 +373,14 @@ def fund_contract(contract_id: str, payload: FundContractRequest, x_actor_id: Op
             cursor.execute("UPDATE contracts SET paypal_auth_id = ? WHERE id = ?", (payload.paypal_auth_id, contract_id))
         repository.conn.commit()
 
-        return repository.transition_contract(
+        funded = repository.transition_contract(
             contract_id=contract_id,
             actor=actor,
             target_state=ContractState.FUNDED,
             metadata=payload.model_dump()
         )
+        sync_to_supabase_db(funded)
+        return funded
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

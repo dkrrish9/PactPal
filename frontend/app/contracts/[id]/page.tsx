@@ -35,19 +35,21 @@ import {
   Copy
 } from "lucide-react";
 import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META, ChatMessage } from "@/lib/mockApi";
-import { getCurrentUser, UserProfile } from "@/lib/supabase";
+import { getCurrentUser, UserProfile, toUUID } from "@/lib/supabase";
+import { backendClient } from "@/lib/backendClient";
 
 function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
   if (!c || !user) return false;
   const userEmail = (user.email || "").trim().toLowerCase();
   const userName = (user.name || "").trim().toLowerCase();
   const userId = user.id || "";
+  const userUuid = toUUID(userId);
 
   const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
   const buyerName = (c.buyer_name || "").trim().toLowerCase();
   const buyerId = c.buyer_id || "";
 
-  if (userId && buyerId && userId === buyerId) return true;
+  if (userId && buyerId && (userId === buyerId || userUuid === buyerId)) return true;
   if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
   if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
@@ -90,11 +92,34 @@ export default function ContractDashboardPage() {
 
   useEffect(() => {
     setCurrentUser(getCurrentUser());
-    const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
-    if (loaded) {
-      setContract(loaded);
-      setHoldInfo(mockApi.getHoldInfo(loaded.id));
+    let isMounted = true;
+
+    async function loadContractData() {
+      try {
+        const live = await backendClient.getContract(contractId);
+        if (live && isMounted) {
+          setContract(live as unknown as Contract);
+          setHoldInfo(mockApi.getHoldInfo(live.id));
+          return;
+        }
+      } catch (err) {
+        console.warn("Failed to load contract from Supabase:", err);
+      }
+      const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+      if (loaded && isMounted) {
+        setContract(loaded);
+        setHoldInfo(mockApi.getHoldInfo(loaded.id));
+      }
     }
+
+    loadContractData();
+
+    const handleUpdate = () => loadContractData();
+    window.addEventListener("pactpal_contract_updated", handleUpdate);
+    return () => {
+      isMounted = false;
+      window.removeEventListener("pactpal_contract_updated", handleUpdate);
+    };
   }, [contractId]);
 
   const activeContract = contract || mockApi.getContracts()[0];
@@ -127,8 +152,8 @@ export default function ContractDashboardPage() {
 
   const daysLeft = holdInfo?.days_remaining ?? 18;
 
-  const handleConfirmDisburse = () => {
-    mockApi.settleContract(activeContract.id, passedAmount);
+  const handleConfirmDisburse = async () => {
+    await backendClient.settleContract(activeContract.id, passedAmount);
     setIsReleased(true);
     setReleaseModalOpen(false);
   };
@@ -2110,45 +2135,66 @@ function ChatTab({
   const contractId = activeContract?.id || "pct_099e77";
   const displayFeatures = features.length > 0 ? features : (activeContract?.features || []);
 
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");
-  const [senderRole, setSenderRole] = useState<"BUYER" | "SELLER" | "AI_REFEREE">("BUYER");
   const [roleFilter, setRoleFilter] = useState<"ALL" | "BUYER" | "SELLER" | "AI_REFEREE">("ALL");
   const [isAiThinking, setIsAiThinking] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Load persisted messages from mockApi
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setMessages(mockApi.getMessages(contractId));
+    setCurrentUser(getCurrentUser());
+  }, []);
+
+  const isViewerHirer = isUserHirer(activeContract, currentUser);
+  const mySenderRole: "BUYER" | "SELLER" = isViewerHirer ? "BUYER" : "SELLER";
+  const mySenderName = isViewerHirer
+    ? (currentUser?.name || activeContract?.buyer_name || "Hirer")
+    : (currentUser?.name || activeContract?.seller_name || "Freelancer");
+
+  // Load persisted messages from Supabase DB with mockApi fallback
+  useEffect(() => {
+    let isMounted = true;
+    async function loadChatMessages() {
+      try {
+        const live = await backendClient.getMessages(contractId);
+        if (live && live.length > 0 && isMounted) {
+          setMessages(live);
+          return;
+        }
+      } catch (err) {
+        console.warn("Failed to load messages from backend:", err);
+      }
+      if (isMounted) {
+        setMessages(mockApi.getMessages(contractId));
+      }
     }
+    loadChatMessages();
+    return () => { isMounted = false; };
   }, [contractId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAiThinking]);
 
-  const handleSendMessage = (contentToSend?: string, roleOverride?: "BUYER" | "SELLER" | "AI_REFEREE") => {
+  const handleSendMessage = async (contentToSend?: string) => {
     const text = (contentToSend || inputText).trim();
     if (!text) return;
 
-    const role = roleOverride || senderRole;
-    let senderName = "AI Referee";
-    if (role === "BUYER") senderName = activeContract?.buyer_name || "Priya Sharma";
-    if (role === "SELLER") senderName = activeContract?.seller_name || "Alex Mercer";
+    if (!contentToSend) setInputText("");
 
-    mockApi.sendMessage(contractId, {
-      sender_type: role,
-      sender_name: senderName,
+    const newMsg = await backendClient.sendMessage(contractId, {
+      sender_type: mySenderRole,
+      sender_name: mySenderName,
       content: text,
+      sender_id: currentUser?.id,
     });
 
-    setMessages([...mockApi.getMessages(contractId)]);
-    if (!contentToSend) setInputText("");
+    setMessages((prev) => [...prev, newMsg]);
 
     // Simulate smart AI Referee response if a user triggers scope, weight, or terms discussion
     const lower = text.toLowerCase();
-    if (role !== "AI_REFEREE" && (
+    if (
       lower.includes("scope") ||
       lower.includes("weight") ||
       lower.includes("price") ||
@@ -2157,26 +2203,24 @@ function ChatTab({
       lower.includes("test") ||
       lower.includes("add") ||
       lower.includes("change")
-    )) {
+    ) {
       setIsAiThinking(true);
-      setTimeout(() => {
-        mockApi.sendMessage(contractId, {
+      setTimeout(async () => {
+        const aiMsg = await backendClient.sendMessage(contractId, {
           sender_type: "AI_REFEREE",
           sender_name: "AI Referee",
           content: `AI Referee Analysis: Scope alteration noted for "${activeContract?.title}". In accordance with PactPal arbitration rules, any modification to milestone weights or deadline requires dual-party confirmation before funding hold adjustment.`,
           metadata: { action: "SCOPE_ADVISORY" },
         });
-        setMessages([...mockApi.getMessages(contractId)]);
+        setMessages((prev) => [...prev, aiMsg]);
         setIsAiThinking(false);
       }, 900);
     }
   };
 
-  const handleResetChat = () => {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(`pactpal_chat_v1_${contractId}`);
-      setMessages(mockApi.getMessages(contractId));
-    }
+  const handleResetChat = async () => {
+    await backendClient.resetMessages(contractId);
+    setMessages(mockApi.getMessages(contractId));
   };
 
   const filteredMessages = messages.filter((m) => {
@@ -2614,16 +2658,22 @@ function ChatTab({
           <span style={{ fontSize: 11, color: "var(--color-text-muted)", whiteSpace: "nowrap" }}>
             Suggested:
           </span>
-          {[
-            { text: "Can you add dark mode support as well?", role: "BUYER" as const },
-            { text: "I can deliver dark mode for $100 and 2 extra days.", role: "SELLER" as const },
-            { text: "Ask AI Referee: Verify if milestone 2 acceptance criteria is ambiguous", role: "BUYER" as const },
-          ].map((s, idx) => (
+          {(isViewerHirer
+            ? [
+                "Can you add dark mode support as well?",
+                "Please verify milestone acceptance criteria details.",
+                "Let me know when the code is ready for test verification.",
+              ]
+            : [
+                "I can deliver dark mode for $100 and 2 extra days.",
+                "Milestone implementation is ready for verification.",
+                "Currently working on test coverage for the authentication flow.",
+              ]
+          ).map((s, idx) => (
             <button
               key={idx}
               onClick={() => {
-                setSenderRole(s.role);
-                setInputText(s.text);
+                setInputText(s);
               }}
               style={{
                 whiteSpace: "nowrap",
@@ -2645,12 +2695,12 @@ function ChatTab({
                 e.currentTarget.style.color = "var(--color-text-secondary)";
               }}
             >
-              {s.text}
+              {s}
             </button>
           ))}
         </div>
 
-        {/* Send Input Bar & Sender Role Switcher */}
+        {/* Send Input Bar & Sender Identity */}
         <div
           style={{
             padding: "16px 20px",
@@ -2661,51 +2711,37 @@ function ChatTab({
             gap: 12,
           }}
         >
-          {/* Identity switcher */}
+          {/* Identity badge & Hirer-only Escrow key */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-muted)" }}>
-                Send as:
+                Chatting as:
               </span>
               <div
                 style={{
                   display: "inline-flex",
-                  borderRadius: 10,
-                  background: "rgba(255,255,255,0.04)",
-                  padding: 3,
-                  border: "1px solid rgba(255,255,255,0.08)",
+                  alignItems: "center",
+                  gap: 6,
+                  borderRadius: 20,
+                  background: isViewerHirer ? "rgba(0,102,255,0.12)" : "rgba(16,185,129,0.12)",
+                  border: `1px solid ${isViewerHirer ? "rgba(0,102,255,0.3)" : "rgba(16,185,129,0.3)"}`,
+                  padding: "4px 14px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: isViewerHirer ? "#60A5FA" : "#34D399",
                 }}
               >
-                {[
-                  { role: "BUYER" as const, label: `👔 ${activeContract?.buyer_name || "Hirer"}` },
-                  { role: "SELLER" as const, label: `🧑‍💻 ${activeContract?.seller_name || "Freelancer"}` },
-                  { role: "AI_REFEREE" as const, label: "🤖 AI Referee" },
-                ].map((item) => (
-                  <button
-                    key={item.role}
-                    type="button"
-                    onClick={() => setSenderRole(item.role)}
-                    style={{
-                      padding: "4px 12px",
-                      borderRadius: 7,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      border: "none",
-                      background: senderRole === item.role ? "#0066FF" : "transparent",
-                      color: senderRole === item.role ? "white" : "var(--color-text-muted)",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+                <span>{isViewerHirer ? "👔" : "🧑‍💻"}</span>
+                <span>{mySenderName} ({isViewerHirer ? "Hirer" : "Freelancer"})</span>
               </div>
             </div>
 
-            <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
-              Escrow Key: <code style={{ color: "#60A5FA" }}>pactpal_chat_v1_{contractId}</code>
-            </span>
+            {/* Escrow Key: STRICTLY visible to Hirer only */}
+            {isViewerHirer && (
+              <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                Escrow Key: <code style={{ color: "#60A5FA" }}>pactpal_chat_v1_{contractId}</code>
+              </span>
+            )}
           </div>
 
           {/* Form input */}
@@ -2719,13 +2755,7 @@ function ChatTab({
             <input
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder={`Type a negotiation message as ${
-                senderRole === "BUYER"
-                  ? `${activeContract?.buyer_name || "Hirer"}`
-                  : senderRole === "SELLER"
-                  ? `${activeContract?.seller_name || "Freelancer"}`
-                  : "AI Referee"
-              }...`}
+              placeholder={`Type a negotiation message as ${mySenderName}...`}
               style={{
                 flex: 1,
                 background: "rgba(255,255,255,0.05)",

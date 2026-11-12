@@ -135,7 +135,7 @@ export default function ContractReviewPage() {
   const handleAcceptAndSign = async () => {
     const user = getCurrentUser();
     if (role === "SELLER") {
-      const updated = mockApi.applyToContract(contract.id, {
+      const updated = await backendClient.applyToContract(contract.id, {
         id: user?.id,
         name: user?.name,
         email: user?.email,
@@ -146,7 +146,7 @@ export default function ContractReviewPage() {
         setTimeout(() => setSuccessToast(null), 6000);
       }
     } else {
-      const updated = mockApi.approveAndSignContract(contract.id, {
+      const updated = await backendClient.approveAndSignContract(contract.id, {
         id: user?.id,
         name: user?.name,
         email: user?.email,
@@ -162,7 +162,7 @@ export default function ContractReviewPage() {
   const handleConfirmRole = async () => {
     const user = getCurrentUser();
     if (role === "SELLER") {
-      const updated = mockApi.applyToContract(contract.id, {
+      const updated = await backendClient.applyToContract(contract.id, {
         id: user?.id,
         name: user?.name,
         email: user?.email,
@@ -173,7 +173,7 @@ export default function ContractReviewPage() {
         setTimeout(() => setSuccessToast(null), 5000);
       }
     } else {
-      const updated = mockApi.approveAndSignContract(contract.id, {
+      const updated = await backendClient.approveAndSignContract(contract.id, {
         id: user?.id,
         name: user?.name,
         email: user?.email,
@@ -193,7 +193,7 @@ export default function ContractReviewPage() {
     setIsCounterModalOpen(true);
   };
 
-  const handleSubmitCounter = (e: React.FormEvent) => {
+  const handleSubmitCounter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (totalWeight !== 100) {
       alert("Feature weights must total exactly 100% before submitting counter.");
@@ -206,7 +206,7 @@ export default function ContractReviewPage() {
       allocated_amount: (counterPrice * (featureWeights[f.id] ?? f.price_weight)) / 100,
     }));
 
-    const updated = mockApi.counterContract(contract.id, {
+    const updated = await backendClient.counterContract(contract.id, {
       proposed_by: role,
       total_amount: Number(counterPrice),
       deadline: new Date(counterDeadline).toISOString(),
@@ -222,8 +222,8 @@ export default function ContractReviewPage() {
     }
   };
 
-  const handleAcceptCounter = () => {
-    const updated = mockApi.acceptCounter(contract.id, role);
+  const handleAcceptCounter = async () => {
+    const updated = await backendClient.acceptCounter(contract.id, role);
     if (updated) {
       setContract({ ...updated });
       setSuccessToast("Counter-offer accepted! Contract is now SIGNED.");

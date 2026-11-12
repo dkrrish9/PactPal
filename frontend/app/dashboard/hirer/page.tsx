@@ -4,7 +4,8 @@ import Navbar from "@/components/Navbar";
 import Link from "next/link";
 import { Plus, Shield, Clock, CheckCircle, AlertCircle, Circle, FileText, ArrowRight } from "lucide-react";
 import { mockApi, Contract, ContractStatus, CONTRACT_STATES_META } from "@/lib/mockApi";
-import { getCurrentUser, UserProfile } from "@/lib/supabase";
+import { getCurrentUser, UserProfile, toUUID } from "@/lib/supabase";
+import { backendClient } from "@/lib/backendClient";
 
 const statusMeta: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
   DRAFT:       { color: "#7C89A8", bg: "rgba(124,137,168,0.1)", label: "Draft", icon: <Circle size={12} /> },
@@ -25,23 +26,46 @@ export default function HirerDashboardPage() {
   const [filter, setFilter] = useState("ALL");
   const [isLoaded, setIsLoaded] = useState(false);
 
-  useEffect(() => {
+  const fetchContracts = async () => {
     const user = getCurrentUser();
     setCurrentUser(user);
 
-    const all = mockApi.getContracts();
-    if (user && !user.is_demo && user.id !== "usr_buyer_01") {
-      const userContracts = all.filter(
-        (c) =>
-          c.buyer_id === user.id ||
-          c.buyer_email?.toLowerCase() === user.email.toLowerCase() ||
-          c.buyer_name?.toLowerCase() === user.name.toLowerCase()
-      );
-      setContracts(userContracts);
-    } else {
-      setContracts(all);
+    try {
+      const all = await backendClient.getContracts();
+      if (user && !user.is_demo && user.id !== "usr_buyer_01" && user.id !== "55e7ebaa-8e27-5409-82ae-2d1b224463c1") {
+        const userUuid = toUUID(user.id);
+        const userContracts = all.filter(
+          (c) =>
+            c.buyer_id === user.id ||
+            c.buyer_id === userUuid ||
+            c.buyer_email?.toLowerCase() === user.email.toLowerCase() ||
+            c.buyer_name?.toLowerCase() === user.name.toLowerCase()
+        );
+        setContracts(userContracts);
+      } else {
+        setContracts(all);
+      }
+    } catch (err) {
+      console.error("Failed to load contracts from Supabase:", err);
+      setContracts(mockApi.getContracts());
+    } finally {
+      setIsLoaded(true);
     }
-    setIsLoaded(true);
+  };
+
+  useEffect(() => {
+    fetchContracts();
+
+    const handleUpdate = () => fetchContracts();
+    window.addEventListener("pactpal_contract_created", handleUpdate);
+    window.addEventListener("pactpal_contract_updated", handleUpdate);
+    window.addEventListener("pactpal_auth_change", handleUpdate);
+
+    return () => {
+      window.removeEventListener("pactpal_contract_created", handleUpdate);
+      window.removeEventListener("pactpal_contract_updated", handleUpdate);
+      window.removeEventListener("pactpal_auth_change", handleUpdate);
+    };
   }, []);
 
   const totalHeld = contracts

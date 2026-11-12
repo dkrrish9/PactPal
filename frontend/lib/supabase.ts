@@ -38,6 +38,53 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   },
 });
 
+export function isUUID(str?: string | null): boolean {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str.trim());
+}
+
+export function toUUID(input?: string | null): string {
+  if (!input) return "00000000-0000-4000-8000-000000000000";
+  const trimmed = input.trim();
+  if (isUUID(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+
+  const KNOWN_MAP: Record<string, string> = {
+    "usr_buyer_01": "55e7ebaa-8e27-5409-82ae-2d1b224463c1",
+    "usr_seller_01": "b1962b5f-caf1-58a7-8bf8-48b385cc1e16",
+    "usr_admin_01": "2dfec994-0856-51d5-aeda-4096294e3dc5",
+    "pct_099e77": "48fa64dd-d9b1-5cc9-aec1-446b2a2816d3",
+    "pct_draft_01": "68059eda-2a4f-59df-ac40-d66fdfa41eb1",
+    "pct_review_02": "72ef3312-e828-5b73-97d0-de3027a3f33c",
+    "pct_signed_03": "ba10c243-a402-5d84-bb46-8a95b7cc4224",
+    "pct_settled_04": "2a5adf14-d746-56b1-bee1-0ce42536be1a",
+    "priya@techventures.io": "55e7ebaa-8e27-5409-82ae-2d1b224463c1",
+    "alex.dev@code.io": "b1962b5f-caf1-58a7-8bf8-48b385cc1e16",
+    "alice.buyer@example.com": "55e7ebaa-8e27-5409-82ae-2d1b224463c1",
+    "bob.dev@example.com": "b1962b5f-caf1-58a7-8bf8-48b385cc1e16",
+  };
+
+  if (KNOWN_MAP[trimmed]) return KNOWN_MAP[trimmed];
+  if (KNOWN_MAP[trimmed.toLowerCase()]) return KNOWN_MAP[trimmed.toLowerCase()];
+
+  // Deterministic 128-bit hash formatted as valid UUID v4
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57, h3 = 0x12345678, h4 = 0x87654321;
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+    h3 = Math.imul(h3 ^ ch, 3812041927);
+    h4 = Math.imul(h4 ^ ch, 2860486313);
+  }
+  const p1 = (h1 >>> 0).toString(16).padStart(8, "0");
+  const p2 = ((h2 >>> 16) & 0xffff).toString(16).padStart(4, "0");
+  const p3 = (((h2 & 0x0fff) | 0x4000) >>> 0).toString(16).padStart(4, "0");
+  const p4 = (((h3 >>> 16) & 0x3fff | 0x8000) >>> 0).toString(16).padStart(4, "0");
+  const p5 = (((h3 & 0xffff) >>> 0).toString(16).padStart(4, "0") + (h4 >>> 0).toString(16).padStart(8, "0")).slice(0, 12);
+  return `${p1}-${p2}-${p3}-${p4}-${p5}`.toLowerCase();
+}
+
 const STORAGE_KEY_USER = "pactpal_current_user";
 const STORAGE_KEY_ALL_USERS = "pactpal_users_registry";
 const STORAGE_KEY_CREDENTIALS = "pactpal_user_credentials";
@@ -126,6 +173,17 @@ export function setCurrentUser(user: UserProfile | null): void {
         all.push(user);
       }
       localStorage.setItem(STORAGE_KEY_ALL_USERS, JSON.stringify(all));
+
+      // Asynchronously sync to Supabase public.users table
+      const userUUID = toUUID(user.id || user.email);
+      supabase.from("users").upsert({
+        id: userUUID,
+        role: user.role === "freelancer" ? "SELLER" : "BUYER",
+        name: user.name,
+        email: user.email.toLowerCase(),
+        paypal_email: user.paypal_email || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "id" }).then(() => {}).catch(() => {});
     } else {
       localStorage.removeItem(STORAGE_KEY_USER);
     }
@@ -154,6 +212,47 @@ export function getAllUsers(): UserProfile[] {
     console.error("Failed to read user registry:", e);
   }
   return [DEMO_HIRER, DEMO_FREELANCER];
+}
+
+/**
+ * Fetch all registered users directly from Supabase DB, falling back to cached list
+ */
+export async function fetchAllUsers(): Promise<UserProfile[]> {
+  try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, role, name, email, paypal_email, created_at")
+      .order("created_at", { ascending: false });
+
+    if (!error && data && data.length > 0) {
+      const mapped: UserProfile[] = data.map((u: any) => ({
+        id: u.id,
+        name: u.name || u.email.split("@")[0],
+        email: u.email,
+        role: u.role === "SELLER" ? "freelancer" : "hirer",
+        paypal_email: u.paypal_email || undefined,
+        created_at: u.created_at,
+        is_demo: false,
+      }));
+
+      if (!mapped.some((u) => u.email.toLowerCase() === DEMO_HIRER.email.toLowerCase())) {
+        mapped.push(DEMO_HIRER);
+      }
+      if (!mapped.some((u) => u.email.toLowerCase() === DEMO_FREELANCER.email.toLowerCase())) {
+        mapped.push(DEMO_FREELANCER);
+      }
+
+      if (isBrowser()) {
+        try {
+          localStorage.setItem(STORAGE_KEY_ALL_USERS, JSON.stringify(mapped));
+        } catch {}
+      }
+      return mapped;
+    }
+  } catch (err) {
+    console.warn("Supabase fetchAllUsers note:", err);
+  }
+  return getAllUsers();
 }
 
 export interface AuthResponse {
@@ -202,7 +301,22 @@ export async function signUpUser(params: {
   const { name, email, password, role, paypal_email, paypal_payer_id, paypal_connected } = params;
   const emailClean = email.trim().toLowerCase();
 
-  // Check if account already exists
+  // Check if account already exists in Supabase DB
+  try {
+    const { data: dbExisting } = await supabase
+      .from("users")
+      .select("id, email")
+      .eq("email", emailClean)
+      .maybeSingle();
+
+    if (dbExisting) {
+      return { user: null, error: "An account with this email already exists. Please sign in." };
+    }
+  } catch (checkErr) {
+    console.warn("Supabase user existence check note:", checkErr);
+  }
+
+  // Check local accounts fallback
   const allUsers = getAllUsers();
   const existing = allUsers.find((u) => u.email.toLowerCase() === emailClean);
   if (existing && !existing.is_demo) {
@@ -238,9 +352,24 @@ export async function signUpUser(params: {
   // 2. Persist password credential for strict authentication validation
   saveUserCredential(emailClean, password);
 
-  // 3. Create the authenticated user profile
+  // 3. Upsert user record into Supabase public.users table for relational integrity
+  const userUUID = toUUID(supabaseId);
+  try {
+    await supabase.from("users").upsert({
+      id: userUUID,
+      role: role === "freelancer" ? "SELLER" : "BUYER",
+      name: name.trim(),
+      email: emailClean,
+      paypal_email: paypal_email || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "id" });
+  } catch (dbErr) {
+    console.warn("Supabase public.users sync note:", dbErr);
+  }
+
+  // 4. Create the authenticated user profile
   const newUser: UserProfile = {
-    id: supabaseId,
+    id: userUUID,
     name: name.trim(),
     email: emailClean,
     role,
@@ -287,7 +416,7 @@ export async function signInUser(params: {
     if (supaData?.user && !supaErr) {
       const userMeta = supaData.user.user_metadata || {};
       const activeUser: UserProfile = {
-        id: supaData.user.id,
+        id: toUUID(supaData.user.id),
         name: userMeta.full_name || userMeta.name || emailClean.split("@")[0],
         email: emailClean,
         role: userMeta.role === "freelancer" ? "freelancer" : "hirer",
@@ -295,6 +424,19 @@ export async function signInUser(params: {
         created_at: supaData.user.created_at,
         is_demo: false,
       };
+
+      try {
+        const { data: dbUser } = await supabase.from("users").select("*").eq("email", emailClean).maybeSingle();
+        if (dbUser) {
+          activeUser.id = dbUser.id;
+          activeUser.name = dbUser.name || activeUser.name;
+          activeUser.role = dbUser.role === "SELLER" ? "freelancer" : "hirer";
+          activeUser.paypal_email = dbUser.paypal_email || activeUser.paypal_email;
+        }
+      } catch (dbErr) {
+        console.warn("Supabase public.users load note:", dbErr);
+      }
+
       saveUserCredential(emailClean, inputPassword);
       setCurrentUser(activeUser);
       return { user: activeUser, error: null };
@@ -339,14 +481,26 @@ export async function signInUser(params: {
   }
 
   // Password matched!
-  const active: UserProfile = found || {
-    id: `usr_${Math.random().toString(36).substring(2, 9)}`,
+  const active: UserProfile = found ? { ...found, id: toUUID(found.id) } : {
+    id: toUUID(emailClean),
     name: emailClean.split("@")[0].replace(/[._-]/g, " "),
     email: emailClean,
     role: "hirer",
     created_at: new Date().toISOString(),
     is_demo: false,
   };
+
+  try {
+    const { data: dbUser } = await supabase.from("users").select("*").eq("email", emailClean).maybeSingle();
+    if (dbUser) {
+      active.id = dbUser.id;
+      active.name = dbUser.name || active.name;
+      active.role = dbUser.role === "SELLER" ? "freelancer" : "hirer";
+      active.paypal_email = dbUser.paypal_email || active.paypal_email;
+    }
+  } catch (e) {
+    // fallback
+  }
 
   setCurrentUser(active);
   return { user: active, error: null };

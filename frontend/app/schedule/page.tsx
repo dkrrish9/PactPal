@@ -18,6 +18,7 @@ import {
   DollarSign
 } from "lucide-react";
 import { mockApi, Contract, CONTRACT_STATES_META, ContractStatus } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 
 interface ResourceSchedule {
   id: string;
@@ -44,7 +45,17 @@ export default function SchedulePage() {
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
   useEffect(() => {
-    setContracts(mockApi.getContracts());
+    async function loadScheduleContracts() {
+      try {
+        const live = await backendClient.getContracts();
+        if (live && live.length > 0) {
+          setContracts(live as unknown as Contract[]);
+          return;
+        }
+      } catch {}
+      setContracts(mockApi.getContracts());
+    }
+    loadScheduleContracts();
   }, []);
 
   // Compute contract time schedules relative to timeline

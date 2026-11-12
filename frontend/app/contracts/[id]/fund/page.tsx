@@ -5,6 +5,7 @@ import Footer from "@/components/Footer";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { mockApi, Contract, HoldInfo } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 import { getCurrentUser, UserProfile } from "@/lib/supabase";
 import { 
   ShieldCheck, 
@@ -58,15 +59,31 @@ export default function ContractFundPage() {
     const user = getCurrentUser();
     setCurrentUser(user);
 
-    const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
-    if (loaded) {
-      setContract(loaded);
-      const hold = mockApi.getHoldInfo(loaded.id);
-      setHoldInfo(hold);
-      if (loaded.status === "FUNDED" && hold) {
-        setAuthSuccess(true);
+    async function loadFundData() {
+      try {
+        const live = await backendClient.getContract(contractId);
+        if (live) {
+          setContract(live as unknown as Contract);
+          const hold = mockApi.getHoldInfo(live.id);
+          setHoldInfo(hold);
+          if (live.status === "FUNDED" && hold) {
+            setAuthSuccess(true);
+          }
+          return;
+        }
+      } catch {}
+
+      const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+      if (loaded) {
+        setContract(loaded);
+        const hold = mockApi.getHoldInfo(loaded.id);
+        setHoldInfo(hold);
+        if (loaded.status === "FUNDED" && hold) {
+          setAuthSuccess(true);
+        }
       }
     }
+    loadFundData();
   }, [contractId]);
 
   // Live countdown ticker every 1 second
@@ -99,20 +116,16 @@ export default function ContractFundPage() {
     );
   }
 
-  const handlePayPalApprove = () => {
+  const handlePayPalApprove = async () => {
     setIsAuthorizing(true);
-
-    // Simulate PayPal Sandbox modal & authorization flow
-    setTimeout(() => {
-      const updated = mockApi.fundContract(contract.id);
-      if (updated) {
-        setContract({ ...updated });
-        const newHold = mockApi.getHoldInfo(updated.id);
-        setHoldInfo(newHold);
-        setIsAuthorizing(false);
-        setAuthSuccess(true);
-      }
-    }, 1200);
+    const updated = await backendClient.fundContract(contract.id);
+    if (updated) {
+      setContract({ ...(updated as unknown as Contract) });
+      const newHold = mockApi.getHoldInfo(updated.id);
+      setHoldInfo(newHold);
+      setIsAuthorizing(false);
+      setAuthSuccess(true);
+    }
   };
 
   const isFunded = contract.status === "FUNDED" || authSuccess;
