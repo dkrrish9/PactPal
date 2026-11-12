@@ -917,9 +917,82 @@ export const mockApi = {
   },
 
   /**
+   * Freelancer applies & signs agreement terms
+   */
+  applyToContract(
+    id: string,
+    freelancer: { id?: string; name?: string; email?: string; note?: string }
+  ): Contract | null {
+    const contracts = loadContracts();
+    const idx = contracts.findIndex((c) => c.id === id);
+    if (idx === -1) return null;
+
+    const now = new Date().toISOString();
+    if (freelancer.id) contracts[idx].seller_id = freelancer.id;
+    if (freelancer.name) contracts[idx].seller_name = freelancer.name;
+    if (freelancer.email) contracts[idx].seller_email = freelancer.email;
+    contracts[idx].seller_confirmed_at = now;
+    if (contracts[idx].status === "DRAFT") {
+      contracts[idx].status = "REVIEW";
+    }
+
+    // Add chat message audit log
+    this.sendMessage(id, {
+      sender_type: "SELLER",
+      sender_name: freelancer.name || "Freelancer",
+      content: `Hello! I have reviewed the specifications, agreed to all acceptance tests, and confirmed terms. ${freelancer.note || "Ready to build this project."}`,
+    });
+
+    this.sendMessage(id, {
+      sender_type: "AI_REFEREE",
+      sender_name: "AI Referee",
+      content: `Application Registered: Freelancer ${freelancer.name || "Applicant"} (${freelancer.email || ""}) has signed and confirmed milestone terms. Awaiting Hirer approval.`,
+    });
+
+    saveContracts(contracts);
+    return contracts[idx];
+  },
+
+  /**
+   * Hirer approves freelancer and dual-signs contract
+   */
+  approveAndSignContract(
+    id: string,
+    buyer?: { id?: string; name?: string; email?: string }
+  ): Contract | null {
+    const contracts = loadContracts();
+    const idx = contracts.findIndex((c) => c.id === id);
+    if (idx === -1) return null;
+
+    const now = new Date().toISOString();
+    contracts[idx].buyer_confirmed_at = now;
+    if (buyer?.id) contracts[idx].buyer_id = buyer.id;
+    if (buyer?.name) contracts[idx].buyer_name = buyer.name;
+    if (buyer?.email) contracts[idx].buyer_email = buyer.email;
+
+    if (contracts[idx].seller_confirmed_at) {
+      contracts[idx].checklist_locked = true;
+      contracts[idx].status = "SIGNED";
+
+      this.sendMessage(id, {
+        sender_type: "AI_REFEREE",
+        sender_name: "AI Referee",
+        content: `Contract Fully Signed! Both Hirer and Freelancer have stamped approval. Status transitioned to SIGNED. Contract has moved to active contracts.`,
+      });
+    }
+
+    saveContracts(contracts);
+    return contracts[idx];
+  },
+
+  /**
    * Dual checklist confirmation (C17 & C19)
    */
-  confirmChecklist(id: string, role: "BUYER" | "SELLER"): Contract | null {
+  confirmChecklist(
+    id: string,
+    role: "BUYER" | "SELLER",
+    actor?: { id?: string; name?: string; email?: string }
+  ): Contract | null {
     const contracts = loadContracts();
     const idx = contracts.findIndex((c) => c.id === id);
     if (idx === -1) return null;
@@ -927,16 +1000,23 @@ export const mockApi = {
     const now = new Date().toISOString();
     if (role === "BUYER") {
       contracts[idx].buyer_confirmed_at = now;
+      if (actor?.id) contracts[idx].buyer_id = actor.id;
+      if (actor?.name) contracts[idx].buyer_name = actor.name;
+      if (actor?.email) contracts[idx].buyer_email = actor.email;
     } else {
       contracts[idx].seller_confirmed_at = now;
+      if (actor?.id) contracts[idx].seller_id = actor.id;
+      if (actor?.name) contracts[idx].seller_name = actor.name;
+      if (actor?.email) contracts[idx].seller_email = actor.email;
+      if (contracts[idx].status === "DRAFT") {
+        contracts[idx].status = "REVIEW";
+      }
     }
 
     // If both have confirmed, lock checklist and mark SIGNED
     if (contracts[idx].buyer_confirmed_at && contracts[idx].seller_confirmed_at) {
       contracts[idx].checklist_locked = true;
-      if (contracts[idx].status === "DRAFT" || contracts[idx].status === "REVIEW") {
-        contracts[idx].status = "SIGNED";
-      }
+      contracts[idx].status = "SIGNED";
     }
 
     saveContracts(contracts);

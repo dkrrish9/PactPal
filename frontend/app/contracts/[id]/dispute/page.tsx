@@ -405,13 +405,13 @@ export default function DisputePage() {
                   {
                     id: "partial",
                     title: "Accept 75% Partial Release Now",
-                    desc: `Disburse $${passedAmount}.00 USD to seller for 3 passed milestones, and refund $${refundAmount}.00 USD to buyer.`,
+                    desc: `Disburse $${passedAmount}.00 USD to freelancer for 3 passed milestones, and refund $${refundAmount}.00 USD to hirer.`,
                     recommended: true,
                   },
                   {
                     id: "cure",
                     title: "Grant 48-Hour Cure Window",
-                    desc: "Allow seller 48 hours to fix JWT credential logic and resubmit without penalties.",
+                    desc: "Allow freelancer 48 hours to fix JWT credential logic and resubmit without penalties.",
                     recommended: false,
                   },
                   {
@@ -495,7 +495,7 @@ export default function DisputePage() {
                 </h3>
               </div>
               <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "4px 0 0" }}>
-                Multi-party arbitration thread (Buyer, Seller, AI Referee)
+                Multi-party arbitration thread (Hirer, Freelancer, AI Referee)
               </p>
             </div>
 
@@ -560,7 +560,7 @@ export default function DisputePage() {
                       color: senderRole === r ? "white" : "var(--color-text-muted)",
                     }}
                   >
-                    {r === "SELLER" ? "🧑‍💻 Seller" : r === "BUYER" ? "👔 Buyer" : "🤖 Referee"}
+                    {r === "SELLER" ? "🧑‍💻 Freelancer" : r === "BUYER" ? "👔 Hirer" : "🤖 Referee"}
                   </button>
                 ))}
               </div>

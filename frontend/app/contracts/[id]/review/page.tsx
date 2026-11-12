@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { mockApi, Contract, Feature } from "@/lib/mockApi";
 import { backendClient } from "@/lib/backendClient";
+import { getCurrentUser } from "@/lib/supabase";
 import { 
   ShieldCheck, 
   CheckCircle2, 
@@ -23,6 +24,22 @@ import {
   Sparkles,
   FileSignature
 } from "lucide-react";
+
+function isUserHirer(c: Contract | null, user: any): boolean {
+  if (!c || !user) return false;
+  const userEmail = (user.email || "").trim().toLowerCase();
+  const userName = (user.name || "").trim().toLowerCase();
+  const userId = user.id || "";
+
+  const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
+  const buyerName = (c.buyer_name || "").trim().toLowerCase();
+  const buyerId = c.buyer_id || "";
+
+  if (userId && buyerId && userId === buyerId) return true;
+  if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
+  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  return false;
+}
 
 export default function ContractReviewPage() {
   const params = useParams();
@@ -84,6 +101,14 @@ export default function ContractReviewPage() {
     return () => { isMounted = false; };
   }, [contractId]);
 
+  useEffect(() => {
+    const user = getCurrentUser();
+    if (contract && user) {
+      const isHirer = isUserHirer(contract, user);
+      setRole(isHirer ? "BUYER" : "SELLER");
+    }
+  }, [contract]);
+
   if (!contract) {
     return (
       <main style={{ background: "var(--color-bg)", minHeight: "100vh" }}>
@@ -108,44 +133,56 @@ export default function ContractReviewPage() {
   };
 
   const handleAcceptAndSign = async () => {
-    try {
-      const updated = await backendClient.signContract(contract.id, role);
+    const user = getCurrentUser();
+    if (role === "SELLER") {
+      const updated = mockApi.applyToContract(contract.id, {
+        id: user?.id,
+        name: user?.name,
+        email: user?.email,
+      });
       if (updated) {
-        setContract(updated as unknown as Contract);
-        setSuccessToast("Contract accepted & signed! Dual confirmation registered.");
-        setTimeout(() => setSuccessToast(null), 5000);
-        return;
+        setContract({ ...updated });
+        setSuccessToast("Agreement terms confirmed & application submitted! The Hirer has been notified to approve & sign.");
+        setTimeout(() => setSuccessToast(null), 6000);
       }
-    } catch {
-      // Fallback
-    }
-
-    const updated = mockApi.signContract(contract.id);
-    if (updated) {
-      setContract({ ...updated });
-      setSuccessToast("Contract accepted & signed! Checklist is now locked.");
-      setTimeout(() => setSuccessToast(null), 5000);
+    } else {
+      const updated = mockApi.approveAndSignContract(contract.id, {
+        id: user?.id,
+        name: user?.name,
+        email: user?.email,
+      });
+      if (updated) {
+        setContract({ ...updated });
+        setSuccessToast("Freelancer approved & contract dual-signed! Redirecting to PayPal Escrow authorization...");
+        setTimeout(() => router.push(`/contracts/${contract.id}/fund`), 1200);
+      }
     }
   };
 
   const handleConfirmRole = async () => {
-    try {
-      const updated = await backendClient.confirmChecklist(contract.id, role);
+    const user = getCurrentUser();
+    if (role === "SELLER") {
+      const updated = mockApi.applyToContract(contract.id, {
+        id: user?.id,
+        name: user?.name,
+        email: user?.email,
+      });
       if (updated) {
-        setContract(updated as unknown as Contract);
-        setSuccessToast(`Checklist confirmed by ${role === "SELLER" ? "Seller" : "Buyer"}! Status: ${updated.status}`);
-        setTimeout(() => setSuccessToast(null), 4000);
-        return;
+        setContract({ ...updated });
+        setSuccessToast("Application confirmed & terms signed from Freelancer side! Awaiting Hirer approval.");
+        setTimeout(() => setSuccessToast(null), 5000);
       }
-    } catch {
-      // Fallback
-    }
-
-    const updated = mockApi.confirmChecklist(contract.id, role);
-    if (updated) {
-      setContract({ ...updated });
-      setSuccessToast(`Checklist confirmed by ${role === "SELLER" ? "Seller" : "Buyer"}!`);
-      setTimeout(() => setSuccessToast(null), 4000);
+    } else {
+      const updated = mockApi.approveAndSignContract(contract.id, {
+        id: user?.id,
+        name: user?.name,
+        email: user?.email,
+      });
+      if (updated) {
+        setContract({ ...updated });
+        setSuccessToast("Freelancer approved & contract signed by both parties! It has moved to Active Contracts.");
+        setTimeout(() => setSuccessToast(null), 5000);
+      }
     }
   };
 
@@ -203,56 +240,54 @@ export default function ContractReviewPage() {
         {/* Breadcrumb & Navigation */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
           <div style={{ fontSize: 13, color: "var(--color-text-muted)" }}>
-            <Link href="/dashboard/freelancer" style={{ color: "#60A5FA", textDecoration: "none" }}>Freelancer Dashboard</Link>
+            <Link href={role === "BUYER" ? "/dashboard/hirer" : "/dashboard/freelancer"} style={{ color: "#60A5FA", textDecoration: "none" }}>
+              {role === "BUYER" ? "Hirer Dashboard" : "Freelancer Dashboard"}
+            </Link>
             {" / "}
             <Link href={`/contracts/${contract.id}`} style={{ color: "#60A5FA", textDecoration: "none" }}>{contract.id}</Link>
             {" / "}
-            <span style={{ color: "white" }}>Seller Review & Confirmation</span>
+            <span style={{ color: "white" }}>
+              {role === "BUYER" ? "Hirer Review & Approval" : "Freelancer Review & Confirmation"}
+            </span>
           </div>
 
-          {/* Interactive Role Switcher for verification */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 30,
-              padding: "4px",
-            }}
-          >
-            <button
-              onClick={() => setRole("SELLER")}
-              style={{
-                background: role === "SELLER" ? "linear-gradient(135deg, #0066FF, #00A3E0)" : "transparent",
-                color: "white",
-                border: "none",
-                borderRadius: 24,
-                padding: "6px 16px",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}
-            >
-              🧑‍💻 Seller Mode
-            </button>
-            <button
-              onClick={() => setRole("BUYER")}
-              style={{
-                background: role === "BUYER" ? "linear-gradient(135deg, #7A5CFF, #0066FF)" : "transparent",
-                color: "white",
-                border: "none",
-                borderRadius: 24,
-                padding: "6px 16px",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}
-            >
-              👔 Buyer Mode
-            </button>
+          {/* Locked Role Badge (Viewing identity strictly bound to login) */}
+          <div>
+            {role === "BUYER" ? (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "rgba(0,102,255,0.12)",
+                  border: "1px solid rgba(0,102,255,0.35)",
+                  borderRadius: 30,
+                  padding: "6px 16px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "#60A5FA",
+                }}
+              >
+                👔 Viewing as Hirer
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "rgba(255,152,0,0.12)",
+                  border: "1px solid rgba(255,152,0,0.35)",
+                  borderRadius: 30,
+                  padding: "6px 16px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "#FF9800",
+                }}
+              >
+                🧑‍💻 Viewing as Freelancer
+              </div>
+            )}
           </div>
         </div>
 
@@ -354,15 +389,15 @@ export default function ContractReviewPage() {
             }}
           >
             <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 4 }}>BUYER</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 4 }}>HIRER</div>
               <div style={{ fontSize: 14, fontWeight: 700, color: "white", display: "flex", alignItems: "center", gap: 6 }}>
                 <User size={14} color="#60A5FA" /> {contract.buyer_name || contract.buyer_email}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 4 }}>SELLER / FREELANCER</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-muted)", marginBottom: 4 }}>FREELANCER</div>
               <div style={{ fontSize: 14, fontWeight: 700, color: "white", display: "flex", alignItems: "center", gap: 6 }}>
-                <User size={14} color="#34D399" /> {contract.seller_name || contract.seller_email}
+                <User size={14} color="#34D399" /> {contract.seller_name || contract.seller_email || "Open for Application"}
               </div>
             </div>
             <div>
@@ -429,8 +464,8 @@ export default function ContractReviewPage() {
               <button
                 onClick={handleConfirmRole}
                 style={{
-                  background: "rgba(255, 255, 255, 0.06)",
-                  border: "1px solid rgba(255, 255, 255, 0.15)",
+                  background: role === "BUYER" ? "rgba(0,102,255,0.12)" : "rgba(255,152,0,0.12)",
+                  border: role === "BUYER" ? "1px solid rgba(0,102,255,0.3)" : "1px solid rgba(255,152,0,0.3)",
                   color: "white",
                   padding: "8px 18px",
                   borderRadius: 30,
@@ -442,13 +477,14 @@ export default function ContractReviewPage() {
                   gap: 8,
                 }}
               >
-                <FileSignature size={14} color="#60A5FA" /> Confirm as {role === "SELLER" ? "Seller" : "Buyer"}
+                <FileSignature size={14} color={role === "BUYER" ? "#60A5FA" : "#FF9800"} />
+                {role === "BUYER" ? "Approve & Sign as Hirer" : "Confirm as Freelancer"}
               </button>
             )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
-            {/* Buyer Confirmation Box */}
+            {/* Hirer Confirmation Box */}
             <div
               style={{
                 background: contract.buyer_confirmed_at ? "rgba(76, 175, 80, 0.06)" : "rgba(255, 255, 255, 0.02)",
@@ -460,17 +496,17 @@ export default function ContractReviewPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 {contract.buyer_confirmed_at ? <CheckCircle2 size={16} color="#81C784" /> : <Clock size={16} color="#FFB74D" />}
                 <span style={{ fontSize: 13, fontWeight: 700, color: contract.buyer_confirmed_at ? "#81C784" : "#FFB74D" }}>
-                  {contract.buyer_confirmed_at ? "Buyer Confirmed" : "Pending Buyer Confirmation"}
+                  {contract.buyer_confirmed_at ? "Hirer Confirmed" : "Pending Hirer Approval"}
                 </span>
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                 {contract.buyer_confirmed_at
                   ? `Timestamped: ${new Date(contract.buyer_confirmed_at).toLocaleString()}`
-                  : "Awaiting formal checklist approval from buyer"}
+                  : "Awaiting formal checklist approval from hirer"}
               </div>
             </div>
 
-            {/* Seller Confirmation Box */}
+            {/* Freelancer Confirmation Box */}
             <div
               style={{
                 background: contract.seller_confirmed_at ? "rgba(76, 175, 80, 0.06)" : "rgba(255, 255, 255, 0.02)",
@@ -482,13 +518,13 @@ export default function ContractReviewPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 {contract.seller_confirmed_at ? <CheckCircle2 size={16} color="#81C784" /> : <Clock size={16} color="#FFB74D" />}
                 <span style={{ fontSize: 13, fontWeight: 700, color: contract.seller_confirmed_at ? "#81C784" : "#FFB74D" }}>
-                  {contract.seller_confirmed_at ? "Seller Confirmed" : "Pending Seller Confirmation"}
+                  {contract.seller_confirmed_at ? "Freelancer Confirmed" : "Pending Freelancer Application"}
                 </span>
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
                 {contract.seller_confirmed_at
                   ? `Timestamped: ${new Date(contract.seller_confirmed_at).toLocaleString()}`
-                  : "Awaiting seller checklist acceptance or counter"}
+                  : "Awaiting freelancer checklist acceptance or counter"}
               </div>
             </div>
           </div>
@@ -510,7 +546,7 @@ export default function ContractReviewPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <AlertTriangle size={18} color="#FFB74D" />
                   <span style={{ fontSize: 14, fontWeight: 800, color: "#FFB74D", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                    Active Counter-Offer from {contract.counter_offer.proposed_by === "SELLER" ? "Seller" : "Buyer"}
+                    Active Counter-Offer from {contract.counter_offer.proposed_by === "SELLER" ? "Freelancer" : "Hirer"}
                   </span>
                 </div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: "white", marginBottom: 4 }}>
@@ -708,31 +744,72 @@ export default function ContractReviewPage() {
             </div>
             <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 2 }}>
               {contract.status === "SIGNED"
-                ? "Proceed to the funding step to lock escrow funds via PayPal authorization hold (C20)."
-                : "Seller can accept the terms as outlined or counter with modified price and deadline."}
+                ? "Proceed to the funding step to lock escrow funds via PayPal authorization hold."
+                : "Both parties can review the terms as outlined or counter with modified price and deadline."}
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
             {contract.status === "SIGNED" ? (
-              <Link
-                href={`/contracts/${contract.id}/fund`}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  background: "linear-gradient(135deg, #0066FF, #00A3E0)",
-                  color: "white",
-                  borderRadius: 50,
-                  padding: "14px 32px",
-                  fontSize: 15,
-                  fontWeight: 700,
-                  textDecoration: "none",
-                  boxShadow: "0 0 25px rgba(0,102,255,0.4)",
-                }}
-              >
-                Proceed to PayPal Funding (C20) <ArrowRight size={16} />
-              </Link>
+              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                {role === "BUYER" ? (
+                  <Link
+                    href={`/contracts/${contract.id}/fund`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      background: "linear-gradient(135deg, #0066FF, #00A3E0)",
+                      color: "white",
+                      borderRadius: 50,
+                      padding: "14px 32px",
+                      fontSize: 15,
+                      fontWeight: 700,
+                      textDecoration: "none",
+                      boxShadow: "0 0 25px rgba(0,102,255,0.4)",
+                    }}
+                  >
+                    Proceed to PayPal Funding (${contract.total_amount.toLocaleString()}) <ArrowRight size={16} />
+                  </Link>
+                ) : (
+                  <>
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        background: "rgba(255,152,0,0.12)",
+                        border: "1px solid rgba(255,152,0,0.35)",
+                        color: "#FFB74D",
+                        borderRadius: 50,
+                        padding: "12px 24px",
+                        fontSize: 14,
+                        fontWeight: 700,
+                      }}
+                    >
+                      <Clock size={16} /> Terms Signed · Awaiting Hirer&apos;s PayPal Escrow Deposit
+                    </div>
+                    <Link
+                      href="/dashboard/freelancer"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        background: "rgba(255,255,255,0.06)",
+                        border: "1px solid rgba(255,255,255,0.15)",
+                        color: "white",
+                        borderRadius: 50,
+                        padding: "12px 24px",
+                        fontSize: 14,
+                        fontWeight: 600,
+                        textDecoration: "none",
+                      }}
+                    >
+                      Go to Freelancer Dashboard →
+                    </Link>
+                  </>
+                )}
+              </div>
             ) : (
               <>
                 {/* Propose Counter Terms */}
@@ -774,7 +851,14 @@ export default function ContractReviewPage() {
                     boxShadow: "0 0 30px rgba(0,102,255,0.45)",
                   }}
                 >
-                  <ShieldCheck size={18} /> Accept & Sign Checklist
+                  <ShieldCheck size={18} />
+                  {role === "SELLER"
+                    ? contract.seller_confirmed_at
+                      ? "Application Submitted (Waiting Hirer Approval)"
+                      : "Confirm Terms & Apply as Freelancer"
+                    : contract.seller_confirmed_at
+                    ? "Approve Freelancer & Sign Contract"
+                    : "Confirm & Sign as Hirer"}
                 </button>
               </>
             )}
@@ -940,7 +1024,7 @@ export default function ContractReviewPage() {
                 {/* Reason / Notes */}
                 <div style={{ marginBottom: 28 }}>
                   <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "var(--color-text-muted)", marginBottom: 6 }}>
-                    JUSTIFICATION / NOTES FOR BUYER
+                    JUSTIFICATION / NOTES FOR OTHER PARTY
                   </label>
                   <textarea
                     rows={3}

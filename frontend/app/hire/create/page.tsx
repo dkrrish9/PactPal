@@ -646,7 +646,7 @@ function StepBasicInfo({ form, setForm }: { form: FormState; setForm: React.Disp
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <div>
         <h2 style={{ fontSize: 24, fontWeight: 800, color: "white", marginBottom: 6 }}>Basic Info &amp; Parties</h2>
-        <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>Capture project parameters, buyer/seller parties, and design references.</p>
+        <p style={{ fontSize: 14, color: "var(--color-text-muted)" }}>Capture project parameters, hirer/freelancer parties, and design references.</p>
       </div>
 
       <FormGroup label="Contract title">
@@ -660,22 +660,22 @@ function StepBasicInfo({ form, setForm }: { form: FormState; setForm: React.Disp
       </FormGroup>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <FormGroup label="Buyer email (Party A)">
+        <FormGroup label="Hirer email (Party A)">
           <input 
             style={inputStyle} 
             value={form.buyerEmail} 
             onChange={(e) => setForm({ ...form, buyerEmail: e.target.value })} 
-            placeholder="buyer@email.com" 
-            aria-label="Buyer email" 
+            placeholder="hirer@email.com" 
+            aria-label="Hirer email" 
           />
         </FormGroup>
-        <FormGroup label="Seller email (Party B)">
+        <FormGroup label="Freelancer email (Party B)">
           <input 
             style={inputStyle} 
             value={form.sellerEmail} 
             onChange={(e) => setForm({ ...form, sellerEmail: e.target.value })} 
-            placeholder="seller@email.com" 
-            aria-label="Seller email" 
+            placeholder="freelancer@email.com" 
+            aria-label="Freelancer email" 
           />
         </FormGroup>
       </div>
@@ -1008,7 +1008,7 @@ function StepEscrow({ form, setForm }: { form: FormState; setForm: React.Dispatc
           </div>
           <div style={{ fontSize: 14, color: "var(--color-text-secondary)", lineHeight: 1.6, maxWidth: 440 }}>
             Funds are authorized (not captured) for 29 days. The money is reserved in the
-            buyer&apos;s PayPal account but not transferred until delivered features pass AI Referee verification.
+            hirer&apos;s PayPal account but not transferred until delivered features pass AI Referee verification.
           </div>
         </div>
       </div>
@@ -1087,8 +1087,8 @@ function StepReview({ form, features, totalWeight, weightOk }: {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {[
           ["Contract Title", form.title || "—"],
-          ["Buyer (Party A)", form.buyerEmail || "—"],
-          ["Seller (Party B)", form.sellerEmail || "—"],
+          ["Hirer (Party A)", form.buyerEmail || "—"],
+          ["Freelancer (Party B)", form.sellerEmail || "—"],
           ["Milestone Deadline", form.deadline || "—"],
           ["Total Escrow Price", form.totalAmount ? `$${form.totalAmount} USD` : "—"],
           ["Design Reference", form.figmaUrl || "—"],

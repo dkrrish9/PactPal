@@ -315,7 +315,7 @@ export default function HirerDashboardPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }} role="table" aria-label="Contracts list">
             <thead>
               <tr>
-                {["Project", "Seller", "Status", "Amount", "Features", ""].map((h) => (
+                {["Project", "Freelancer", "Status", "Amount", "Features", ""].map((h) => (
                   <th
                     key={h}
                     scope="col"
@@ -354,7 +354,12 @@ export default function HirerDashboardPage() {
                       </div>
                     </td>
                     <td style={{ padding: "16px 24px", fontSize: 14, color: "var(--color-text-secondary)" }}>
-                      {c.seller_name || c.seller_email}
+                      <div>{c.seller_name || c.seller_email || "Open for application"}</div>
+                      {c.seller_confirmed_at && !c.buyer_confirmed_at && (
+                        <div style={{ fontSize: 11, color: "#34D399", fontWeight: 700, marginTop: 2 }}>
+                          ⚡ Applied &amp; Signed Terms
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: "16px 24px" }}>
                       <span
@@ -382,7 +387,27 @@ export default function HirerDashboardPage() {
                       {c.features?.length ?? 0} features
                     </td>
                     <td style={{ padding: "16px 24px" }}>
-                      {c.status === "REVIEW" ? (
+                      {c.seller_confirmed_at && !c.buyer_confirmed_at ? (
+                        <Link
+                          href={`/contracts/${c.id}/review`}
+                          style={{
+                            fontSize: 12,
+                            color: "#34D399",
+                            background: "rgba(16,185,129,0.15)",
+                            border: "1px solid rgba(16,185,129,0.4)",
+                            padding: "6px 14px",
+                            borderRadius: 20,
+                            textDecoration: "none",
+                            fontWeight: 800,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            boxShadow: "0 0 12px rgba(16,185,129,0.25)",
+                          }}
+                        >
+                          ⚡ Approve &amp; Sign →
+                        </Link>
+                      ) : c.status === "REVIEW" ? (
                         <Link
                           href={`/contracts/${c.id}/review`}
                           style={{
@@ -397,7 +422,7 @@ export default function HirerDashboardPage() {
                             display: "inline-block",
                           }}
                         >
-                          Review & Sign →
+                          Review &amp; Sign →
                         </Link>
                       ) : c.status === "SIGNED" ? (
                         <Link

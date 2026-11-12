@@ -5,6 +5,7 @@ import Footer from "@/components/Footer";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { mockApi, Contract, HoldInfo } from "@/lib/mockApi";
+import { getCurrentUser, UserProfile } from "@/lib/supabase";
 import { 
   ShieldCheck, 
   Lock, 
@@ -16,8 +17,25 @@ import {
   DollarSign, 
   Info,
   ExternalLink,
-  RefreshCw
+  RefreshCw,
+  User
 } from "lucide-react";
+
+function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
+  if (!c || !user) return false;
+  const userEmail = (user.email || "").trim().toLowerCase();
+  const userName = (user.name || "").trim().toLowerCase();
+  const userId = user.id || "";
+
+  const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
+  const buyerName = (c.buyer_name || "").trim().toLowerCase();
+  const buyerId = c.buyer_id || "";
+
+  if (userId && buyerId && userId === buyerId) return true;
+  if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
+  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  return false;
+}
 
 export default function ContractFundPage() {
   const params = useParams();
@@ -25,6 +43,7 @@ export default function ContractFundPage() {
   const contractId = (params?.id as string) || "pct_signed_03";
 
   const [contract, setContract] = useState<Contract | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [holdInfo, setHoldInfo] = useState<HoldInfo | null>(null);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
   const [authSuccess, setAuthSuccess] = useState(false);
@@ -36,6 +55,9 @@ export default function ContractFundPage() {
   }>({ days: 29, hours: 0, minutes: 0, seconds: 0 });
 
   useEffect(() => {
+    const user = getCurrentUser();
+    setCurrentUser(user);
+
     const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
     if (loaded) {
       setContract(loaded);
@@ -94,6 +116,7 @@ export default function ContractFundPage() {
   };
 
   const isFunded = contract.status === "FUNDED" || authSuccess;
+  const isHirer = isUserHirer(contract, currentUser);
   const expiryDate = contract.auth_expires_at 
     ? new Date(contract.auth_expires_at).toLocaleDateString(undefined, { 
         weekday: "short", 
@@ -118,11 +141,13 @@ export default function ContractFundPage() {
         
         {/* Breadcrumb */}
         <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 24 }}>
-          <Link href="/dashboard/hirer" style={{ color: "#60A5FA", textDecoration: "none" }}>Hirer Dashboard</Link>
+          <Link href={isHirer ? "/dashboard/hirer" : "/dashboard/freelancer"} style={{ color: "#60A5FA", textDecoration: "none" }}>
+            {isHirer ? "Hirer Dashboard" : "Freelancer Dashboard"}
+          </Link>
           {" / "}
           <Link href={`/contracts/${contract.id}`} style={{ color: "#60A5FA", textDecoration: "none" }}>{contract.id}</Link>
           {" / "}
-          <span style={{ color: "white" }}>Authorize Escrow Hold (C20)</span>
+          <span style={{ color: "white" }}>{isHirer ? "Authorize Escrow Hold (C20)" : "Escrow Funding Status"}</span>
         </div>
 
         {/* Success Banner if Funded */}
@@ -201,10 +226,10 @@ export default function ContractFundPage() {
                   marginBottom: 10,
                 }}
               >
-                {isFunded ? "FUNDED & ACTIVE" : "PENDING AUTHORIZATION"}
+                {isFunded ? "FUNDED & ACTIVE" : isHirer ? "PENDING AUTHORIZATION" : "AWAITING HIRER DEPOSIT"}
               </span>
               <h1 style={{ fontSize: "clamp(26px, 4vw, 36px)", fontWeight: 900, color: "white", marginBottom: 6 }}>
-                Escrow Funding & Authorization Hold
+                {isHirer ? "Escrow Funding & Authorization Hold" : "Escrow Funding in Progress"}
               </h1>
               <p style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>
                 Contract: <span style={{ color: "white", fontWeight: 600 }}>{contract.title}</span> ({contract.id})
@@ -228,7 +253,7 @@ export default function ContractFundPage() {
                 ${contract.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} <span style={{ fontSize: 14, color: "#60A5FA" }}>USD</span>
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
-                Funds held safely — zero upfront charges
+                {isHirer ? "Funds held safely — zero upfront charges" : `Payable by Hirer: ${contract.buyer_name || contract.buyer_email}`}
               </div>
             </div>
           </div>
@@ -298,6 +323,26 @@ export default function ContractFundPage() {
             </div>
           </div>
 
+          {/* Freelancer Information Box: shown when freelancer is viewing an unfunded contract */}
+          {!isHirer && !isFunded && (
+            <div
+              style={{
+                background: "rgba(0, 102, 255, 0.08)",
+                border: "1px solid rgba(0, 102, 255, 0.25)",
+                borderRadius: 16,
+                padding: "20px 24px",
+                marginBottom: 28,
+              }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 700, color: "white", marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                <Clock size={16} color="#60A5FA" /> Awaiting Hirer&apos;s Escrow Payment
+              </div>
+              <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: 0, lineHeight: 1.6 }}>
+                Both parties have approved terms and dual-signed this contract. As the freelancer, you do not need to make any payment. The hirer (<strong style={{ color: "white" }}>{contract.buyer_name || contract.buyer_email}</strong>) has been prompted to authorize and hold <strong style={{ color: "#60A5FA" }}>${contract.total_amount.toLocaleString()} USD</strong> in escrow via PayPal. Once authorized, this project will automatically move to your Active Contracts and you can start development.
+              </p>
+            </div>
+          )}
+
           {/* Educational Escrow Explainer */}
           <div
             style={{
@@ -356,7 +401,7 @@ export default function ContractFundPage() {
             </div>
           </div>
 
-          {/* Action Button: PayPal Approve */}
+          {/* Action Button: PayPal Approve (HIRER ONLY) or Waiting Indicator (FREELANCER) */}
           <div
             style={{
               paddingTop: 24,
@@ -408,7 +453,7 @@ export default function ContractFundPage() {
                   Go to Contract Dashboard →
                 </Link>
               </div>
-            ) : (
+            ) : isHirer ? (
               <button
                 onClick={handlePayPalApprove}
                 disabled={isAuthorizing}
@@ -439,6 +484,43 @@ export default function ContractFundPage() {
                   </>
                 )}
               </button>
+            ) : (
+              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "rgba(255, 152, 0, 0.12)",
+                    border: "1px solid rgba(255, 152, 0, 0.35)",
+                    color: "#FFB74D",
+                    borderRadius: 50,
+                    padding: "12px 24px",
+                    fontSize: 14,
+                    fontWeight: 700,
+                  }}
+                >
+                  <Clock size={16} /> Awaiting Hirer&apos;s PayPal Escrow Deposit
+                </div>
+                <Link
+                  href="/dashboard/freelancer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.15)",
+                    color: "white",
+                    borderRadius: 50,
+                    padding: "12px 24px",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    textDecoration: "none",
+                  }}
+                >
+                  ← Back to Freelancer Dashboard
+                </Link>
+              </div>
             )}
           </div>
         </div>

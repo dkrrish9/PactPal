@@ -35,6 +35,23 @@ import {
   Copy
 } from "lucide-react";
 import { mockApi, Contract, HoldInfo, Feature, Submission, ContractStatus, CONTRACT_STATES_META, ChatMessage } from "@/lib/mockApi";
+import { getCurrentUser, UserProfile } from "@/lib/supabase";
+
+function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
+  if (!c || !user) return false;
+  const userEmail = (user.email || "").trim().toLowerCase();
+  const userName = (user.name || "").trim().toLowerCase();
+  const userId = user.id || "";
+
+  const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
+  const buyerName = (c.buyer_name || "").trim().toLowerCase();
+  const buyerId = c.buyer_id || "";
+
+  if (userId && buyerId && userId === buyerId) return true;
+  if (userEmail && buyerEmail && userEmail === buyerEmail) return true;
+  if (userName && buyerName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
+  return false;
+}
 
 type TabId = "overview" | "gantt" | "chat" | "activity" | "receipt";
 
@@ -64,6 +81,7 @@ export default function ContractDashboardPage() {
   const contractId = (params?.id as string) || "pct_099e77";
   const [tab, setTab] = useState<TabId>("overview");
   const [contract, setContract] = useState<Contract | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [holdInfo, setHoldInfo] = useState<HoldInfo | null>(null);
   const [releaseModalOpen, setReleaseModalOpen] = useState(false);
   const [isReleased, setIsReleased] = useState(false);
@@ -71,6 +89,7 @@ export default function ContractDashboardPage() {
   const [deadlineAlert, setDeadlineAlert] = useState<string | null>(null);
 
   useEffect(() => {
+    setCurrentUser(getCurrentUser());
     const loaded = mockApi.getContract(contractId) || mockApi.getContracts()[0];
     if (loaded) {
       setContract(loaded);
@@ -79,6 +98,7 @@ export default function ContractDashboardPage() {
   }, [contractId]);
 
   const activeContract = contract || mockApi.getContracts()[0];
+  const isViewerHirer = isUserHirer(activeContract, currentUser);
   const currentStatus: ContractStatus = simulatedStatus || (isReleased ? "SETTLED" : (activeContract.status || "VERIFYING"));
   const meta = CONTRACT_STATES_META[currentStatus] || CONTRACT_STATES_META["VERIFYING"];
 
@@ -95,7 +115,7 @@ export default function ContractDashboardPage() {
     if (res) {
       setSimulatedStatus("SETTLED");
       setContract({ ...res.contract });
-      setDeadlineAlert(`⚡ [DEADLINE WATCHER FIRED (C49/C50)] Simulated deadline elapsed! Automated final verification completed. $${res.payoutAmount} USD disbursed to seller, $${res.refundAmount} USD refunded to buyer. Status transitioned to SETTLED.`);
+      setDeadlineAlert(`⚡ [DEADLINE WATCHER FIRED (C49/C50)] Simulated deadline elapsed! Automated final verification completed. $${res.payoutAmount} USD disbursed to freelancer, $${res.refundAmount} USD refunded to hirer. Status transitioned to SETTLED.`);
       setTimeout(() => setDeadlineAlert(null), 7000);
     }
   };
@@ -246,24 +266,43 @@ export default function ContractDashboardPage() {
                 Review & Counter (C17) →
               </Link>
             ) : activeContract.status === "SIGNED" ? (
-              <Link
-                href={`/contracts/${activeContract.id}/fund`}
-                style={{
-                  background: "linear-gradient(135deg, #FF9800, #F57C00)",
-                  borderRadius: 50,
-                  color: "white",
-                  padding: "12px 24px",
-                  fontSize: 14,
-                  fontWeight: 700,
-                  textDecoration: "none",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  boxShadow: "0 0 20px rgba(255,152,0,0.4)",
-                }}
-              >
-                Fund Escrow with PayPal (C20) →
-              </Link>
+              isViewerHirer ? (
+                <Link
+                  href={`/contracts/${activeContract.id}/fund`}
+                  style={{
+                    background: "linear-gradient(135deg, #FF9800, #F57C00)",
+                    borderRadius: 50,
+                    color: "white",
+                    padding: "12px 24px",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    boxShadow: "0 0 20px rgba(255,152,0,0.4)",
+                  }}
+                >
+                  Fund Escrow with PayPal (C20) →
+                </Link>
+              ) : (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: "rgba(255,152,0,0.12)",
+                    border: "1px solid rgba(255,152,0,0.35)",
+                    color: "#FFB74D",
+                    borderRadius: 50,
+                    padding: "10px 20px",
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  <Clock size={15} /> Awaiting Hirer Escrow Deposit
+                </div>
+              )
             ) : activeContract.status === "DISPUTE" ? (
               <Link
                 href={`/contracts/${activeContract.id}/dispute`}
@@ -520,7 +559,7 @@ export default function ContractDashboardPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ fontSize: 24 }}>📝</span>
               <div>
-                <strong style={{ color: "white", fontSize: 15 }}>C17 Seller Review & Checklist Confirmation</strong>
+                <strong style={{ color: "white", fontSize: 15 }}>Freelancer Review & Checklist Confirmation</strong>
                 <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
                   Freelancer can accept terms, propose counter terms (price/weights/deadline), and dual-confirm the checklist.
                 </p>
@@ -538,7 +577,7 @@ export default function ContractDashboardPage() {
                 textDecoration: "none",
               }}
             >
-              Open Seller Review Page →
+              Open Terms Review Page →
             </Link>
           </div>
         )}
@@ -561,26 +600,32 @@ export default function ContractDashboardPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ fontSize: 24 }}>🔒</span>
               <div>
-                <strong style={{ color: "white", fontSize: 15 }}>C20 Escrow Funding & Authorization Hold</strong>
+                <strong style={{ color: "white", fontSize: 15 }}>
+                  {isViewerHirer ? "Escrow Funding Required" : "Awaiting Hirer's Escrow Funding"}
+                </strong>
                 <p style={{ color: "var(--color-text-secondary)", fontSize: 13, margin: 0 }}>
-                  Both parties have signed! Buyer must now authorize the 29-day PayPal hold to activate escrow.
+                  {isViewerHirer
+                    ? "Both parties have signed! You must now authorize the 29-day PayPal hold to activate escrow."
+                    : "Both parties have signed! Waiting for the hirer to authorize the 29-day PayPal escrow deposit before project work starts."}
                 </p>
               </div>
             </div>
-            <Link
-              href={`/contracts/${activeContract.id}/fund`}
-              style={{
-                background: "linear-gradient(135deg, #FF9800, #F57C00)",
-                color: "white",
-                padding: "10px 22px",
-                borderRadius: 30,
-                fontSize: 13,
-                fontWeight: 700,
-                textDecoration: "none",
-              }}
-            >
-              Open PayPal Funding Page →
-            </Link>
+            {isViewerHirer && (
+              <Link
+                href={`/contracts/${activeContract.id}/fund`}
+                style={{
+                  background: "linear-gradient(135deg, #FF9800, #F57C00)",
+                  color: "white",
+                  padding: "10px 22px",
+                  borderRadius: 30,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  textDecoration: "none",
+                }}
+              >
+                Open PayPal Funding Page →
+              </Link>
+            )}
           </div>
         )}
 
@@ -901,7 +946,7 @@ function OverviewTab({
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <h3 style={{ fontSize: 17, fontWeight: 800, color: "white", margin: 0 }}>
-                    Seller Submission (Version {submission.version_number})
+                    Freelancer Submission (Version {submission.version_number})
                   </h3>
                   {/* Late Flag Badge (C25) */}
                   <span
@@ -1033,7 +1078,7 @@ function OverviewTab({
           {/* Build Note */}
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-text-muted)", letterSpacing: "0.06em", marginBottom: 6 }}>
-              SELLER BUILD NOTE & VERIFICATION INSTRUCTIONS
+              FREELANCER BUILD NOTE & VERIFICATION INSTRUCTIONS
             </div>
             <div
               style={{
@@ -1180,7 +1225,7 @@ function OverviewTab({
           </div>
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
-              <span style={{ color: "var(--color-text-secondary)" }}>Refunded to buyer</span>
+              <span style={{ color: "var(--color-text-secondary)" }}>Refunded to hirer</span>
               <span style={{ color: "#F44336", fontWeight: 700, fontFamily: "JetBrains Mono, monospace" }}>${total - passedAmount}</span>
             </div>
             <div
@@ -2184,12 +2229,12 @@ function ChatTab({
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#3B82F6" }} />
               <span style={{ color: "white", fontWeight: 600 }}>{activeContract?.buyer_name || "Priya Sharma"}</span>
-              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Buyer)</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Hirer)</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#10B981" }} />
               <span style={{ color: "white", fontWeight: 600 }}>{activeContract?.seller_name || "Alex Mercer"}</span>
-              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Seller)</span>
+              <span style={{ color: "var(--color-text-muted)", fontSize: 11 }}>(Freelancer)</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
               <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#A855F7" }} />
@@ -2321,7 +2366,7 @@ function ChatTab({
               </span>
             </div>
             <p style={{ fontSize: 12, color: "var(--color-text-muted)", margin: "4px 0 0 0" }}>
-              Full audit trail between AI Referee, Buyer, and Seller (C40)
+              Full audit trail between AI Referee, Hirer, and Freelancer
             </p>
           </div>
 
@@ -2331,8 +2376,8 @@ function ChatTab({
             {[
               { id: "ALL", label: `All (${messages.length})` },
               { id: "AI_REFEREE", label: `AI (${aiCount})` },
-              { id: "BUYER", label: `Buyer (${buyerCount})` },
-              { id: "SELLER", label: `Seller (${sellerCount})` },
+              { id: "BUYER", label: `Hirer (${buyerCount})` },
+              { id: "SELLER", label: `Freelancer (${sellerCount})` },
             ].map((f) => (
               <button
                 key={f.id}
@@ -2425,7 +2470,7 @@ function ChatTab({
 
                     {/* Sender Name */}
                     <span style={{ fontSize: 12, fontWeight: 700, color: "white" }}>
-                      {m.sender_name || (isAi ? "AI Referee" : isBuyer ? "Buyer" : "Seller")}
+                      {m.sender_name || (isAi ? "AI Referee" : isBuyer ? "Hirer" : "Freelancer")}
                     </span>
 
                     {/* Role Pill */}
@@ -2448,7 +2493,7 @@ function ChatTab({
                         }`,
                       }}
                     >
-                      {isAi ? "Referee" : isBuyer ? "Buyer" : "Seller"}
+                      {isAi ? "Referee" : isBuyer ? "Hirer" : "Freelancer"}
                     </span>
 
                     {/* Timestamp */}
@@ -2632,8 +2677,8 @@ function ChatTab({
                 }}
               >
                 {[
-                  { role: "BUYER" as const, label: `👔 ${activeContract?.buyer_name || "Buyer"}` },
-                  { role: "SELLER" as const, label: `🧑‍💻 ${activeContract?.seller_name || "Seller"}` },
+                  { role: "BUYER" as const, label: `👔 ${activeContract?.buyer_name || "Hirer"}` },
+                  { role: "SELLER" as const, label: `🧑‍💻 ${activeContract?.seller_name || "Freelancer"}` },
                   { role: "AI_REFEREE" as const, label: "🤖 AI Referee" },
                 ].map((item) => (
                   <button
@@ -2676,9 +2721,9 @@ function ChatTab({
               onChange={(e) => setInputText(e.target.value)}
               placeholder={`Type a negotiation message as ${
                 senderRole === "BUYER"
-                  ? `${activeContract?.buyer_name || "Buyer"}`
+                  ? `${activeContract?.buyer_name || "Hirer"}`
                   : senderRole === "SELLER"
-                  ? `${activeContract?.seller_name || "Seller"}`
+                  ? `${activeContract?.seller_name || "Freelancer"}`
                   : "AI Referee"
               }...`}
               style={{
@@ -3363,8 +3408,8 @@ function ReceiptTab({
             ["Contract ID", activeContract.id],
             ["Contract Title", activeContract.title],
             ["Settlement Timestamp", new Date(receipt.settled_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })],
-            ["Hirer (Buyer)", activeContract.buyer_name || "Priya Sharma"],
-            ["Freelancer (Seller)", activeContract.seller_name || "Alex Mercer"],
+            ["Hirer", activeContract.buyer_name || "Priya Sharma"],
+            ["Freelancer", activeContract.seller_name || "Alex Mercer"],
             ["Total Held in Escrow", `$${total.toLocaleString()}.00 USD`],
             ["Features Passed", `${passedCount} of ${features.length} milestones verified`],
             ["Freelancer Disbursal", `$${sellerPayout.toLocaleString()}.00 USD`],

@@ -24,6 +24,22 @@ const fallbackJobs = [
   { id: "mock_6", title: "Shopify store customization", budget: "$350", skills: ["Liquid", "JavaScript"], days: 4, bids: 6 },
 ];
 
+function isUserBuyer(c: Contract, user: UserProfile | null): boolean {
+  if (!user) return false;
+  const userEmail = (user.email || "").trim().toLowerCase();
+  const userName = (user.name || "").trim().toLowerCase();
+  const userId = user.id || "";
+
+  const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
+  const buyerName = (c.buyer_name || "").trim().toLowerCase();
+  const buyerId = c.buyer_id || "";
+
+  if (userId && buyerId === userId) return true;
+  if (userEmail && buyerEmail === userEmail) return true;
+  if (userName && buyerName === userName) return true;
+  return false;
+}
+
 function formatContract(contract: Contract) {
   const deadline = new Date(contract.deadline);
   const now = new Date();
@@ -48,17 +64,9 @@ export default function WorkPage() {
     setCurrentUser(user);
 
     const allContracts = mockApi.getContracts();
-    if (user && !user.is_demo && user.id) {
-      // Exclude contracts where current user is the buyer (cannot bid on your own project)
-      const available = allContracts.filter(
-        (c) =>
-          c.buyer_id !== user.id &&
-          c.buyer_email?.toLowerCase() !== user.email?.toLowerCase()
-      );
-      setContracts(available);
-    } else {
-      setContracts(allContracts);
-    }
+    // Exclude contracts where current user is the buyer
+    const available = allContracts.filter((c) => !isUserBuyer(c, user));
+    setContracts(available);
     setLoaded(true);
   }, []);
 
@@ -217,7 +225,7 @@ export default function WorkPage() {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }} role="list" aria-label="Job listings">
           {jobItems.map((job, i) => {
-            const contractHref = job.id.startsWith("pct_") ? `/contracts/${job.id}` : `/contracts/pct_099e77`;
+            const contractHref = job.id.startsWith("pct_") ? `/contracts/${job.id}/review` : `/contracts/pct_099e77/review`;
             return (
               <Link
                 key={job.id || i}

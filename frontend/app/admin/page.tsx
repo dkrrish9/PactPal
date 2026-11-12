@@ -411,11 +411,11 @@ export default function AdminPage() {
 
                       <td style={{ padding: "16px", fontSize: 13 }}>
                         <div style={{ color: "var(--color-text-secondary)" }}>
-                          <span style={{ color: "var(--color-text-muted)" }}>Buyer: </span>
+                          <span style={{ color: "var(--color-text-muted)" }}>Hirer: </span>
                           {c.buyer}
                         </div>
                         <div style={{ color: "var(--color-text-secondary)", marginTop: 2 }}>
-                          <span style={{ color: "var(--color-text-muted)" }}>Seller: </span>
+                          <span style={{ color: "var(--color-text-muted)" }}>Freelancer: </span>
                           {c.seller}
                         </div>
                       </td>

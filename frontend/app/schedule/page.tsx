@@ -211,7 +211,7 @@ export default function SchedulePage() {
               </span>
             </div>
             <h1 style={{ fontSize: 32, fontWeight: 900, margin: "0 0 6px 0", letterSpacing: "-0.025em" }}>
-              Buyer &amp; Seller Schedules Across Contracts
+              Hirer &amp; Freelancer Schedules Across Contracts
             </h1>
             <p style={{ color: "var(--color-text-secondary)", fontSize: 14, margin: 0 }}>
               Track parallel milestones, active PayPal hold expiration dates, and delivery deadlines across all parties.
@@ -244,7 +244,7 @@ export default function SchedulePage() {
                   transition: "all 0.15s ease",
                 }}
               >
-                🧑‍💻 Freelancers (Sellers)
+                🧑‍💻 Freelancers
               </button>
               <button
                 onClick={() => setGroupBy("BUYER")}
@@ -260,7 +260,7 @@ export default function SchedulePage() {
                   transition: "all 0.15s ease",
                 }}
               >
-                👔 Clients (Buyers)
+                👔 Hirers
               </button>
             </div>
 
