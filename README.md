@@ -92,31 +92,30 @@ PactPal enforces strict role separation so neither party can compromise the othe
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor Hirer as 👔 Hirer (Client)
-    participant PactPal as ⚖️ PactPal Platform
-    actor Freelancer as 🧑‍💻 Freelancer
-    participant PayPal as 💳 PayPal Escrow Sandbox
-    participant Sandbox as 🛡️ Verification Sandbox
+    actor Hirer as Hirer (Client)
+    participant PactPal as PactPal Platform
+    actor Freelancer as Freelancer
+    participant PayPal as PayPal Escrow Sandbox
+    participant Sandbox as Verification Sandbox
 
     Hirer->>PactPal: 1. Posts project with priced milestone checklist
-    Freelancer->>PactPal: 2. Browses available jobs & submits proposal / application
-    Hirer->>PactPal: 3. Accepts proposal; enters Contract Review & negotiation
+    Freelancer->>PactPal: 2. Browses available jobs and applies
+    Hirer->>PactPal: 3. Accepts proposal and enters Contract Review
     Hirer->>PactPal: 4. Dual-signs contract terms
     Freelancer->>PactPal: 5. Dual-signs contract terms
     Note over PactPal: Status transitions to SIGNED
     Hirer->>PayPal: 6. Authorizes project budget via PayPal (Hold placed)
     PayPal-->>PactPal: Webhook confirms funds locked (Status: FUNDED)
-    Note over Freelancer: Contract moves to Active Contracts; dev starts
-    Freelancer->>PactPal: 7. Submits deliverable (Git Repo URL, Commit SHA, Branch)
-    Note over PactPal: Status transitions to DECISION / VERIFYING
-    PactPal->>Sandbox: 8. Spawns sandbox: builds code, runs tests, AST scan & Figma diff
+    Note over Freelancer: Contract moves to Active Contracts and dev starts
+    Freelancer->>PactPal: 7. Submits deliverable (Repo URL, Commit SHA, Branch)
+    Note over PactPal: Status transitions to DECISION or VERIFYING
+    PactPal->>Sandbox: 8. Spawns sandbox: builds code, runs tests, AST scan and Figma diff
     Sandbox-->>PactPal: 9. Returns verification verdict (% passed)
-    alt Milestones Passed (e.g. 100%)
-        PactPal->>PayPal: 10a. Executes Capture & releases payout to Freelancer
+    alt All Milestones Passed
+        PactPal->>PayPal: 10a. Executes Capture and releases payout to Freelancer
         PactPal-->>Freelancer: Funds credited to PayPal
-    else Partial / Disputed Delivery
-        PactPal->>PayPal: 10b. Releases pro-rata payout for passed items & refunds remainder to Hirer
+    else Partial Delivery or Disputed
+        PactPal->>PayPal: 10b. Releases pro-rata payout for passed items and refunds remainder to Hirer
         PactPal->>PactPal: 10c. Logs case in Dispute Arbitration Room
     end
     PactPal->>Hirer: 11. Issues cryptographic Proof-of-Work Receipt (SHA-256)
