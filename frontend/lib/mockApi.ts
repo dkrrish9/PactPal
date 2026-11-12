@@ -750,10 +750,7 @@ export const mockApi = {
   },
 
   /**
-   * Send negotiation chat message (C40: AI, Buyer, Seller)
-=======
-   * Send negotiation chat message (: AI, Buyer, Seller)
->>>>>>> 6fd1f0b (fix: make verification and contracts dynamic, clean c-tags and emojis, enforce hirer funding role)
+   * Send negotiation chat message (AI, Buyer, Seller)
    */
   sendMessage(
     contractId: string,
