@@ -128,10 +128,11 @@ export default function SignupPage() {
     }
 
     try {
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
       const res = await fetch("/api/paypal/create-auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "hirer" }),
+        body: JSON.stringify({ role: "hirer", origin }),
       });
 
       const data = await res.json();
