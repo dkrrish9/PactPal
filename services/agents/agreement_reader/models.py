@@ -20,6 +20,20 @@ class ChecklistFeature:
     change_request_id: Optional[str] = None  # Populated only if added via Price Negotiator amendment
     amended: bool = False
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "acceptance_test": self.acceptance_test,
+            "price_weight": self.price_weight,
+            "allocated_amount": self.allocated_amount,
+            "deadline": self.deadline,
+            "status": self.status,
+            "sort_order": self.sort_order,
+            "change_request_id": self.change_request_id,
+            "amended": self.amended
+        }
+
 @dataclass
 class ClarificationPrompt:
     """Actionable feedback generated when contract validation fails."""
@@ -83,3 +97,19 @@ class PricedChecklist:
     seller_confirmed_at: Optional[str] = None
     created_at: Optional[str] = None
     locked_by_dual_confirmation: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "contract_id": self.contract_id,
+            "title": self.title,
+            "total_amount": self.total_amount,
+            "currency": self.currency,
+            "deadline": self.deadline,
+            "features": [f.to_dict() for f in self.features],
+            "is_locked": self.is_locked,
+            "locked_at": self.locked_at,
+            "buyer_confirmed_at": self.buyer_confirmed_at,
+            "seller_confirmed_at": self.seller_confirmed_at,
+            "created_at": self.created_at,
+            "locked_by_dual_confirmation": self.locked_by_dual_confirmation
+        }

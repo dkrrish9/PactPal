@@ -18,6 +18,7 @@ import {
   HelpCircle
 } from "lucide-react";
 import { mockApi } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 import { getCurrentUser } from "@/lib/supabase";
 
 type Feature = { name: string; weight: number; test: string };
@@ -93,21 +94,75 @@ export default function CreateContractPage() {
   const allTestsMeasurable = featureIssues.every((fi) => fi.issues.length === 0);
   const canProceedFromFeatures = weightOk && allTestsMeasurable;
 
+  const [clarificationData, setClarificationData] = useState<{
+    summary: string;
+    conversational_message: string;
+    clarifications: Array<{
+      field: string;
+      feature_title?: string;
+      issue: string;
+      suggested_action: string;
+      options: string[];
+    }>;
+    raw_errors: string[];
+  } | null>(null);
+
+  const handleAutoBalanceWeights = () => {
+    if (features.length === 0) return;
+    const base = Math.floor(100 / features.length);
+    const remainder = 100 - base * features.length;
+    setFeatures(
+      features.map((f, i) => ({
+        ...f,
+        weight: i === features.length - 1 ? base + remainder : base,
+      }))
+    );
+    setClarificationData(null);
+  };
+
+  const handleAdoptAiTests = () => {
+    setFeatures(
+      features.map((f, i) => ({
+        ...f,
+        test:
+          f.test && f.test.trim().length >= 10
+            ? f.test
+            : `${f.name || `Feature ${i + 1}`} renders matching specifications with test suite passing cleanly.`,
+      }))
+    );
+    setClarificationData(null);
+  };
+
   const handleSubmit = async () => {
-    if (!canProceedFromFeatures || !basicInfoOk) return;
     setIsSubmitting(true);
 
     try {
-      const user = getCurrentUser();
-      const created = mockApi.createContract({
+      const payload = {
+        title: form.title || "Untitled Milestone",
+        description: form.description,
+        total_amount: parseFloat(form.totalAmount) || 1500,
+        deadline: new Date(form.deadline || Date.now() + 14 * 86400000).toISOString(),
+        currency: form.currency || "USD",
+        features: features.map((f) => ({
+          title: f.name || "Untitled Feature",
+          acceptance_test: f.test || "",
+          price_weight: Number(f.weight) || 0,
+        })),
+      };
+
+      // 1. Run Agreement Reader zero-trust validation
+      const evalRes = await backendClient.validateAgreement(payload);
+      if (evalRes.status === "NEEDS_CLARIFICATION" && evalRes.clarification_request) {
+        setClarificationData(evalRes.clarification_request);
+        setIsSubmitting(false);
+        return;
+      }
+
+      // 2. Proceed with contract creation via backend client
+      const created = await backendClient.createContract({
         title: form.title,
         description: form.description,
-        buyer_id: user?.id,
-        buyer_name: user?.name,
-        buyer_email: form.buyerEmail,
-        seller_email: form.sellerEmail,
         total_amount: parseFloat(form.totalAmount) || 1500,
-        currency: form.currency || "USD",
         deadline: new Date(form.deadline || Date.now() + 14 * 86400000).toISOString(),
         figma_url: form.figmaUrl,
         repo_url: form.repoUrl,
@@ -115,13 +170,11 @@ export default function CreateContractPage() {
           title: f.name || "Untitled Feature",
           acceptance_test: f.test || "Acceptance test passed",
           price_weight: Number(f.weight) || 0,
+          allocated_amount: (parseFloat(form.totalAmount) * Number(f.weight)) / 100,
         })),
       });
 
-      // Brief simulated state sync delay
-      setTimeout(() => {
-        router.push(`/contracts/${created.id}`);
-      }, 700);
+      router.push(`/contracts/${created.id}`);
     } catch (err) {
       console.error("Failed to create contract:", err);
       setIsSubmitting(false);
@@ -377,6 +430,178 @@ export default function CreateContractPage() {
           </div>
         </div>
       </div>
+
+      {/* AI Agreement Reader Clarification Request Modal (Phase 3) */}
+      {clarificationData && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.85)",
+            backdropFilter: "blur(8px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              background: "#0F172A",
+              border: "1px solid rgba(239, 68, 68, 0.4)",
+              borderRadius: 16,
+              maxWidth: 680,
+              width: "100%",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              padding: 32,
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 30px rgba(239, 68, 68, 0.15)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <div
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 12,
+                  background: "rgba(239, 68, 68, 0.15)",
+                  border: "1px solid rgba(239, 68, 68, 0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#EF4444",
+                }}
+              >
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: 19, fontWeight: 700, color: "white", margin: 0 }}>
+                  🤝 AI Referee Clarification Request
+                </h3>
+                <div style={{ fontSize: 13, color: "#94A3B8", marginTop: 2 }}>
+                  Zero-Trust Pre-Validation Rule • Prohibits Guessing
+                </div>
+              </div>
+            </div>
+
+            {/* AI Conversational Notice */}
+            <div
+              style={{
+                background: "rgba(255, 255, 255, 0.04)",
+                border: "1px solid rgba(255, 255, 255, 0.08)",
+                borderRadius: 10,
+                padding: "16px 18px",
+                fontSize: 13,
+                lineHeight: 1.6,
+                color: "#E2E8F0",
+                marginBottom: 20,
+                whiteSpace: "pre-line",
+                fontFamily: "var(--font-sans)",
+              }}
+            >
+              {clarificationData.conversational_message}
+            </div>
+
+            {/* Itemized Issues */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+              {clarificationData.clarifications.map((c, i) => (
+                <div
+                  key={i}
+                  style={{
+                    background: "rgba(239, 68, 68, 0.06)",
+                    border: "1px solid rgba(239, 68, 68, 0.2)",
+                    borderRadius: 10,
+                    padding: 14,
+                  }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#FCA5A5", marginBottom: 4 }}>
+                    {c.feature_title ? `Feature: ${c.feature_title}` : `Field: ${c.field}`}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#E2E8F0", marginBottom: 6 }}>
+                    {c.issue}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#93C5FD", display: "flex", alignItems: "center", gap: 6 }}>
+                    <span>👉</span> <strong>Suggested Action:</strong> {c.suggested_action}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* One-Click Resolution Actions */}
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 10,
+                paddingTop: 18,
+                borderTop: "1px solid rgba(255, 255, 255, 0.1)",
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleAutoBalanceWeights}
+                style={{
+                  background: "linear-gradient(135deg, #3B82F6, #1D4ED8)",
+                  border: "none",
+                  borderRadius: 8,
+                  color: "white",
+                  padding: "10px 16px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                ⚖️ Auto-Balance Weights to 100%
+              </button>
+
+              <button
+                type="button"
+                onClick={handleAdoptAiTests}
+                style={{
+                  background: "rgba(59, 130, 246, 0.15)",
+                  border: "1px solid rgba(59, 130, 246, 0.4)",
+                  borderRadius: 8,
+                  color: "#93C5FD",
+                  padding: "10px 16px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                ✨ Adopt AI Test Criteria
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setClarificationData(null);
+                  setStep(1);
+                }}
+                style={{
+                  background: "rgba(255, 255, 255, 0.08)",
+                  border: "1px solid rgba(255, 255, 255, 0.15)",
+                  borderRadius: 8,
+                  color: "#E2E8F0",
+                  padding: "10px 16px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  marginLeft: "auto",
+                }}
+              >
+                ✏️ Edit Manually
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

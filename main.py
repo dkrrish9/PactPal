@@ -37,6 +37,8 @@ from services.agents.referee.decision_engine import RefereeDecisionEngine
 from services.agents.referee.models import RefereeDecision, DecisionOutcome, FeatureDecision
 from services.agents.referee.negotiated_release import NegotiatedReleaseEngine, SellerChoice, SettlementOffer
 from services.agents.negotiator.price_negotiator import PriceNegotiator
+from services.agents.agreement_reader.reader import read_or_clarify, parse_contract_form, AgreementValidationError
+from services.agents.agreement_reader.lock import lock_checklist, confirm_party, assert_can_modify_checklist
 
 app = FastAPI(
     title="PactPal AI Escrow Referee API",
@@ -70,7 +72,8 @@ class FeatureInput(BaseModel):
     title: str
     acceptance_test: str
     price_weight: float = 0.0
-    allocated_amount: float = 0.0
+    allocated_amount: Optional[float] = None
+    deadline: Optional[str] = None
 
 class CreateContractRequest(BaseModel):
     title: str
@@ -162,32 +165,67 @@ def list_contracts(status: Optional[str] = Query(None)):
     contracts = repository.get_contracts_by_status(statuses)
     return {"data": contracts, "total": len(contracts)}
 
-@app.post("/api/v1/contracts", status_code=status.HTTP_201_CREATED, summary="Create a Contract Draft")
+@app.post("/api/v1/agreement-reader/validate", summary="AI Agreement Reader Pre-Validation")
+def validate_agreement(payload: CreateContractRequest):
+    form_data = payload.model_dump()
+    form_data["features"] = [f.model_dump() if hasattr(f, "model_dump") else f for f in payload.features]
+    result = read_or_clarify(form_data)
+    if result["status"] == "VALID":
+        return {
+            "status": "VALID",
+            "checklist": result["checklist"].to_dict(),
+            "clarification_request": None
+        }
+    else:
+        return {
+            "status": "NEEDS_CLARIFICATION",
+            "checklist": None,
+            "clarification_request": result["clarification_request"].to_dict()
+        }
+
+@app.post("/api/v1/contracts", status_code=status.HTTP_201_CREATED, summary="Create a Contract Draft with Agreement Reader Validation")
 def create_contract(payload: CreateContractRequest, x_actor_id: Optional[str] = Header(None)):
     actor = extract_actor(x_actor_id, default_role=UserRole.BUYER)
-    if not payload.title or payload.total_amount <= 0 or not payload.deadline:
-        raise HTTPException(status_code=400, detail="Title, total_amount > 0, and deadline are required.")
+    form_data = payload.model_dump()
+    form_data["features"] = [f.model_dump() if hasattr(f, "model_dump") else f for f in payload.features]
+
+    # Run Agreement Reader validation under zero-trust policy
+    eval_result = read_or_clarify(form_data)
+    if eval_result["status"] == "NEEDS_CLARIFICATION":
+        clarification_data = eval_result["clarification_request"].to_dict()
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "error": "CLARIFICATION_REQUIRED",
+                "message": "Agreement Reader flagged ambiguous terms. Clarification required before freezing escrow.",
+                "clarification_request": clarification_data
+            }
+        )
+
+    checklist = eval_result["checklist"]
 
     created = repository.create_contract(
         buyer=actor,
         seller_id=payload.seller_id,
-        title=payload.title,
+        title=checklist.title,
         description=payload.description,
-        total_amount=payload.total_amount,
-        deadline=payload.deadline,
+        total_amount=checklist.total_amount,
+        deadline=checklist.deadline,
         figma_url=payload.figma_url,
         repo_url=payload.repo_url
     )
     cid = created["id"]
 
-    for idx, feat in enumerate(payload.features):
+    # Add features from validated checklist with penny-rounding conservation applied
+    for feat in checklist.features:
         repository.add_feature(
             contract_id=cid,
             title=feat.title,
             acceptance_test=feat.acceptance_test,
             price_weight=feat.price_weight,
             allocated_amount=feat.allocated_amount,
-            sort_order=idx + 1
+            sort_order=feat.sort_order,
+            feature_id=feat.id
         )
 
     return repository.get_contract(cid)
@@ -211,22 +249,34 @@ def submit_review(contract_id: str, x_actor_id: Optional[str] = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.post("/api/v1/contracts/{contract_id}/sign", summary="Sign / Confirm Checklist")
+@app.post("/api/v1/contracts/{contract_id}/sign", summary="Sign Contract & Register Party Confirmation")
 def sign_contract(contract_id: str, payload: SignContractRequest, x_actor_id: Optional[str] = Header(None)):
     default_role = UserRole.SELLER if payload.role.upper() == "SELLER" else UserRole.BUYER
     actor = extract_actor(x_actor_id, default_role=default_role)
     try:
         confirmed = repository.confirm_checklist(contract_id, actor)
         if confirmed.get("buyer_confirmed_at") and confirmed.get("seller_confirmed_at"):
-            if confirmed.get("status") in (ContractState.REVIEW.value, ContractState.DRAFT.value):
+            buyer_user = repository.get_user(confirmed.get("buyer_id")) or actor
+            seller_user = repository.get_user(confirmed.get("seller_id")) or actor
+            if confirmed.get("status") == ContractState.DRAFT.value:
                 confirmed = repository.transition_contract(
                     contract_id=contract_id,
-                    actor=actor,
+                    actor=buyer_user,
+                    target_state=ContractState.REVIEW
+                )
+            if confirmed.get("status") == ContractState.REVIEW.value:
+                confirmed = repository.transition_contract(
+                    contract_id=contract_id,
+                    actor=seller_user,
                     target_state=ContractState.SIGNED
                 )
         return confirmed
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/v1/contracts/{contract_id}/confirm-checklist", summary="Dual Confirmation Checklist Lock")
+def confirm_checklist_endpoint(contract_id: str, payload: SignContractRequest, x_actor_id: Optional[str] = Header(None)):
+    return sign_contract(contract_id=contract_id, payload=payload, x_actor_id=x_actor_id)
 
 @app.post("/api/v1/contracts/{contract_id}/fund", summary="Mark Contract Funded")
 def fund_contract(contract_id: str, payload: FundContractRequest, x_actor_id: Optional[str] = Header(None)):

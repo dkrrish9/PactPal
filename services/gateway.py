@@ -40,14 +40,15 @@ from services.agents.referee.decision_engine import RefereeDecisionEngine
 from services.agents.referee.models import RefereeDecision, DecisionOutcome, FeatureDecision
 from services.agents.referee.negotiated_release import NegotiatedReleaseEngine, SellerChoice, SettlementOffer
 from services.agents.negotiator.price_negotiator import PriceNegotiator
-from services.agents.agreement_reader.reader import parse_contract_form, AgreementValidationError
+from services.agents.agreement_reader.reader import parse_contract_form, read_or_clarify, AgreementValidationError
 
 # Endpoint matching regex patterns
 HEALTH_REGEX = re.compile(r"^/api/v1/health/?$")
+AGREEMENT_VALIDATE_REGEX = re.compile(r"^/api/v1/agreement-reader/validate/?$")
 CONTRACTS_REGEX = re.compile(r"^/api/v1/contracts/?$")
 CONTRACT_DETAIL_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/?$")
 CONTRACT_SUBMIT_REVIEW_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/submit-review/?$")
-CONTRACT_SIGN_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/sign/?$")
+CONTRACT_SIGN_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/(?:sign|confirm-checklist)/?$")
 CONTRACT_FUND_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/fund/?$")
 CONTRACT_MESSAGES_REGEX = re.compile(r"^/api/v1/contracts/([^/]+)/messages/?$")
 VERIFICATION_SUBMIT_REGEX = re.compile(r"^/api/v1/verification/submit/?$")
@@ -198,7 +199,23 @@ class UnifiedGateway:
                 }
             })
 
-        # 3. GET /api/v1/contracts
+        # 3. POST /api/v1/agreement-reader/validate
+        if AGREEMENT_VALIDATE_REGEX.match(clean_path) and method == "POST":
+            res = read_or_clarify(payload)
+            if res["status"] == "VALID":
+                return self._json_response(200, {
+                    "status": "VALID",
+                    "checklist": res["checklist"].to_dict(),
+                    "clarification_request": None
+                })
+            else:
+                return self._json_response(200, {
+                    "status": "NEEDS_CLARIFICATION",
+                    "checklist": None,
+                    "clarification_request": res["clarification_request"].to_dict()
+                })
+
+        # 4. GET /api/v1/contracts
         if CONTRACTS_REGEX.match(clean_path) and method == "GET":
             statuses = None
             if "status=" in query_string:
@@ -211,51 +228,48 @@ class UnifiedGateway:
                 "total": len(contracts)
             })
 
-        # 4. POST /api/v1/contracts
+        # 4b. POST /api/v1/contracts
         if CONTRACTS_REGEX.match(clean_path) and method == "POST":
             actor = self._extract_actor(headers, default_role=UserRole.BUYER)
-            title = payload.get("title")
-            description = payload.get("description", "")
-            total_amount = float(payload.get("total_amount", 0.0))
-            deadline = payload.get("deadline")
-            seller_id = payload.get("seller_id", "usr_seller_01")
-            figma_url = payload.get("figma_url")
-            repo_url = payload.get("repo_url")
-            features = payload.get("features", [])
-
-            if not title or total_amount <= 0 or not deadline:
-                return self._json_response(400, {
-                    "error": "VALIDATION_FAILED",
-                    "message": "Title, total_amount > 0, and deadline are required."
+            # Run Agreement Reader validation under zero-trust policy
+            eval_result = read_or_clarify(payload)
+            if eval_result["status"] == "NEEDS_CLARIFICATION":
+                return self._json_response(422, {
+                    "error": "CLARIFICATION_REQUIRED",
+                    "message": "Agreement Reader flagged ambiguous terms. Clarification required before freezing escrow.",
+                    "clarification_request": eval_result["clarification_request"].to_dict()
                 })
 
+            checklist = eval_result["checklist"]
+            seller_id = payload.get("seller_id", "usr_seller_01")
+            description = payload.get("description", "")
+            figma_url = payload.get("figma_url")
+            repo_url = payload.get("repo_url")
+
             try:
-                # Create contract
+                # Create contract from validated checklist
                 created = self.repository.create_contract(
                     buyer=actor,
                     seller_id=seller_id,
-                    title=title,
+                    title=checklist.title,
                     description=description,
-                    total_amount=total_amount,
-                    deadline=deadline,
+                    total_amount=checklist.total_amount,
+                    deadline=checklist.deadline,
                     figma_url=figma_url,
                     repo_url=repo_url
                 )
                 contract_id = created["id"]
 
-                # Add features
-                for idx, feat in enumerate(features):
-                    f_title = feat.get("title", f"Feature {idx+1}")
-                    f_test = feat.get("acceptance_test", "Default acceptance test verification.")
-                    f_weight = float(feat.get("price_weight", 100.0 / max(1, len(features))))
-                    f_amount = float(feat.get("allocated_amount", round(total_amount * (f_weight / 100.0), 2)))
+                # Add features from validated checklist with penny conservation
+                for feat in checklist.features:
                     self.repository.add_feature(
                         contract_id=contract_id,
-                        title=f_title,
-                        acceptance_test=f_test,
-                        price_weight=f_weight,
-                        allocated_amount=f_amount,
-                        sort_order=idx + 1
+                        title=feat.title,
+                        acceptance_test=feat.acceptance_test,
+                        price_weight=feat.price_weight,
+                        allocated_amount=feat.allocated_amount,
+                        sort_order=feat.sort_order,
+                        feature_id=feat.id
                     )
 
                 fresh = self.repository.get_contract(contract_id)
@@ -301,10 +315,18 @@ class UnifiedGateway:
                 confirmed = self.repository.confirm_checklist(contract_id, actor)
                 # 2. Check if both signed, transition to SIGNED
                 if confirmed.get("buyer_confirmed_at") and confirmed.get("seller_confirmed_at"):
-                    if confirmed.get("status") in (ContractState.REVIEW.value, ContractState.DRAFT.value):
+                    buyer_user = self.repository.get_user(confirmed.get("buyer_id")) or actor
+                    seller_user = self.repository.get_user(confirmed.get("seller_id")) or actor
+                    if confirmed.get("status") == ContractState.DRAFT.value:
                         confirmed = self.repository.transition_contract(
                             contract_id=contract_id,
-                            actor=actor,
+                            actor=buyer_user,
+                            target_state=ContractState.REVIEW
+                        )
+                    if confirmed.get("status") == ContractState.REVIEW.value:
+                        confirmed = self.repository.transition_contract(
+                            contract_id=contract_id,
+                            actor=seller_user,
                             target_state=ContractState.SIGNED
                         )
                 return self._json_response(200, confirmed)

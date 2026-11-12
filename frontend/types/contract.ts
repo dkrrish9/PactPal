@@ -200,6 +200,8 @@ export interface Contract {
   buyer_confirmed_at?: string | null;
   seller_confirmed_at?: string | null;
   checklist_locked?: boolean;
+  is_locked?: boolean;
+  locked_at?: string | null;
   features: Feature[];
 }
 
