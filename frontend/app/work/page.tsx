@@ -5,8 +5,9 @@ import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { ArrowRight, Code } from "lucide-react";
 import Link from "next/link";
-import { getCurrentUser, UserProfile } from "@/lib/supabase";
+import { getCurrentUser, UserProfile, toUUID } from "@/lib/supabase";
 import { mockApi, Contract } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 
 const perks = [
   { icon: "🔒", title: "Get paid before you start", desc: "Money is locked in escrow the moment you accept a contract. No more chasing invoices." },
@@ -29,14 +30,15 @@ function isUserBuyer(c: Contract, user: UserProfile | null): boolean {
   const userEmail = (user.email || "").trim().toLowerCase();
   const userName = (user.name || "").trim().toLowerCase();
   const userId = user.id || "";
+  const userUuid = toUUID(userId);
 
   const buyerEmail = (c.buyer_email || "").trim().toLowerCase();
   const buyerName = (c.buyer_name || "").trim().toLowerCase();
   const buyerId = c.buyer_id || "";
 
-  if (userId && buyerId === userId) return true;
+  if (userId && (buyerId === userId || buyerId === userUuid)) return true;
   if (userEmail && buyerEmail === userEmail) return true;
-  if (userName && buyerName === userName) return true;
+  if (userName && (userName.includes(buyerName) || buyerName.includes(userName))) return true;
   return false;
 }
 
@@ -59,15 +61,36 @@ export default function WorkPage() {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => {
+  const fetchWorkContracts = async () => {
     const user = getCurrentUser();
     setCurrentUser(user);
 
-    const allContracts = mockApi.getContracts();
-    // Exclude contracts where current user is the buyer
-    const available = allContracts.filter((c) => !isUserBuyer(c, user));
-    setContracts(available);
-    setLoaded(true);
+    try {
+      const allContracts = await backendClient.getContracts();
+      const available = allContracts.filter((c) => !isUserBuyer(c, user));
+      setContracts(available);
+    } catch (err) {
+      console.error("Failed to load work contracts from Supabase:", err);
+      const all = mockApi.getContracts();
+      setContracts(all.filter((c) => !isUserBuyer(c, user)));
+    } finally {
+      setLoaded(true);
+    }
+  };
+
+  useEffect(() => {
+    fetchWorkContracts();
+
+    const handleUpdate = () => fetchWorkContracts();
+    window.addEventListener("pactpal_contract_created", handleUpdate);
+    window.addEventListener("pactpal_contract_updated", handleUpdate);
+    window.addEventListener("pactpal_auth_change", handleUpdate);
+
+    return () => {
+      window.removeEventListener("pactpal_contract_created", handleUpdate);
+      window.removeEventListener("pactpal_contract_updated", handleUpdate);
+      window.removeEventListener("pactpal_auth_change", handleUpdate);
+    };
   }, []);
 
   const jobItems = loaded && contracts.length > 0 ? contracts.map(formatContract) : fallbackJobs;

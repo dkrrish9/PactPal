@@ -16,6 +16,7 @@ import {
   ArrowRight
 } from "lucide-react";
 import { mockApi, Contract, ProofOfWorkReceipt } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 
 export default function SettlementSummaryPage() {
   const params = useParams();
@@ -26,10 +27,23 @@ export default function SettlementSummaryPage() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    const c = mockApi.getContract(contractId) || mockApi.getContracts()[0];
-    setContract(c);
-    const r = mockApi.getReceipt(c?.id || contractId);
-    setReceipt(r);
+    async function loadSettlementData() {
+      try {
+        const live = await backendClient.getContract(contractId);
+        if (live) setContract(live as unknown as Contract);
+        const liveReceipt = await backendClient.getReceipt(contractId);
+        if (liveReceipt) {
+          setReceipt(liveReceipt);
+          return;
+        }
+      } catch {}
+
+      const c = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+      setContract(c);
+      const r = mockApi.getReceipt(c?.id || contractId);
+      setReceipt(r);
+    }
+    loadSettlementData();
   }, [contractId]);
 
   const totalEscrow = contract?.total_amount || 1500;

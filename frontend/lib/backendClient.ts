@@ -4,10 +4,59 @@
  * with robust local fallback to mockApi if backend is temporarily unreachable.
  */
 
-import { Contract, Feature, ProofOfWorkReceipt, ContractStatus } from "@/types/contract";
-import { mockApi } from "@/lib/mockApi";
+import { Contract, Feature, ContractStatus, ChatMessage } from "@/types/contract";
+import { mockApi, ProofOfWorkReceipt } from "@/lib/mockApi";
+import { supabase, toUUID, isUUID } from "@/lib/supabase";
 
 const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+
+function mapSupabaseRowToContract(row: any): Contract {
+  const buyerName = row.buyer?.name || "Hirer";
+  const buyerEmail = row.buyer?.email || "";
+  const sellerName = row.seller?.name || "";
+  const sellerEmail = row.seller?.email || "";
+
+  const features: Feature[] = (row.features || [])
+    .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
+    .map((f: any, idx: number) => ({
+      id: f.id,
+      contract_id: f.contract_id || row.id,
+      title: f.title,
+      acceptance_test: f.acceptance_test,
+      price_weight: Number(f.price_weight) || 0,
+      allocated_amount: Number(f.allocated_amount) || 0,
+      status: f.status || "PENDING",
+      sort_order: f.sort_order || idx + 1,
+    }));
+
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description || "",
+    status: row.status as ContractStatus,
+    total_amount: Number(row.total_amount) || 0,
+    currency: row.currency || "USD",
+    deadline: row.deadline,
+    paypal_order_id: row.paypal_order_id,
+    paypal_auth_id: row.paypal_auth_id,
+    auth_expires_at: row.auth_expires_at,
+    figma_url: row.figma_url,
+    repo_url: row.repo_url,
+    buyer_id: row.buyer_id,
+    buyer_name: buyerName,
+    buyer_email: buyerEmail,
+    seller_id: row.seller_id,
+    seller_name: sellerName,
+    seller_email: sellerEmail,
+    is_locked: !!row.is_locked,
+    checklist_locked: !!row.is_locked,
+    buyer_confirmed_at: row.buyer_confirmed_at,
+    seller_confirmed_at: row.seller_confirmed_at,
+    locked_at: row.locked_at,
+    created_at: row.created_at,
+    features,
+  } as unknown as Contract;
+}
 
 async function safeFetch<T>(
   endpoint: string,
@@ -156,9 +205,48 @@ export const backendClient = {
   },
 
   /**
-   * List all contracts
+   * List all contracts directly from Supabase DB with local fallback
    */
   async getContracts(): Promise<Contract[]> {
+    try {
+      const { data, error } = await supabase
+        .from("contracts")
+        .select(`
+          id,
+          title,
+          description,
+          status,
+          total_amount,
+          currency,
+          deadline,
+          paypal_order_id,
+          paypal_auth_id,
+          auth_expires_at,
+          figma_url,
+          repo_url,
+          buyer_id,
+          seller_id,
+          created_at,
+          updated_at,
+          is_locked,
+          buyer_confirmed_at,
+          seller_confirmed_at,
+          locked_at,
+          features (*),
+          buyer:users!contracts_buyer_id_fkey (id, name, email, paypal_email),
+          seller:users!contracts_seller_id_fkey (id, name, email, paypal_email)
+        `)
+        .order("created_at", { ascending: false });
+
+      if (!error && data && data.length > 0) {
+        const mapped = data.map(mapSupabaseRowToContract);
+        mockApi.syncContractsFromSupabase(mapped);
+        return mapped;
+      }
+    } catch (err) {
+      console.warn("Supabase query note, falling back to local:", err);
+    }
+
     return safeFetch<{ data: Contract[]; total: number }>(
       "/api/v1/contracts",
       { method: "GET" },
@@ -167,18 +255,60 @@ export const backendClient = {
   },
 
   /**
-   * Get single contract
+   * Get single contract by ID from Supabase DB
    */
   async getContract(id: string): Promise<Contract | null> {
+    if (!id) return null;
+    const targetUuid = toUUID(id);
+
+    try {
+      const { data, error } = await supabase
+        .from("contracts")
+        .select(`
+          id,
+          title,
+          description,
+          status,
+          total_amount,
+          currency,
+          deadline,
+          paypal_order_id,
+          paypal_auth_id,
+          auth_expires_at,
+          figma_url,
+          repo_url,
+          buyer_id,
+          seller_id,
+          created_at,
+          updated_at,
+          is_locked,
+          buyer_confirmed_at,
+          seller_confirmed_at,
+          locked_at,
+          features (*),
+          buyer:users!contracts_buyer_id_fkey (id, name, email, paypal_email),
+          seller:users!contracts_seller_id_fkey (id, name, email, paypal_email)
+        `)
+        .or(`id.eq.${id},id.eq.${targetUuid}`)
+        .maybeSingle();
+
+      if (!error && data) {
+        const mapped = mapSupabaseRowToContract(data);
+        return mapped;
+      }
+    } catch (err) {
+      console.warn("Supabase getContract note:", err);
+    }
+
     return safeFetch<Contract | null>(
       `/api/v1/contracts/${id}`,
       { method: "GET" },
-      () => (mockApi.getContract(id) as unknown as Contract) || null
+      () => (mockApi.getContract(id) as unknown as Contract) || (mockApi.getContract(targetUuid) as unknown as Contract) || null
     );
   },
 
   /**
-   * Create a new draft contract
+   * Create a new contract stored directly in Supabase DB
    */
   async createContract(payload: {
     title: string;
@@ -200,42 +330,239 @@ export const backendClient = {
       allocated_amount: number;
     }>;
   }): Promise<Contract> {
-    return safeFetch<Contract>(
-      "/api/v1/contracts",
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-      () => mockApi.createContract({
+    const contractId = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : toUUID(`pct_${Date.now()}_${Math.random()}`);
+
+    const buyerRawId = payload.buyer_id || payload.buyer_email || "usr_buyer_01";
+    const buyerUUID = toUUID(buyerRawId);
+    const buyerEmail = payload.buyer_email || "alice@buyer.example.com";
+    const buyerName = payload.buyer_name || buyerEmail.split("@")[0];
+
+    try {
+      await supabase.from("users").upsert({
+        id: buyerUUID,
+        role: "BUYER",
+        name: buyerName,
+        email: buyerEmail,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "id" });
+    } catch (e) {
+      console.warn("Failed to upsert buyer in Supabase:", e);
+    }
+
+    let sellerUUID: string | null = null;
+    let sellerEmail = payload.seller_email || "";
+    let sellerName = payload.seller_name || "";
+
+    if (payload.seller_id || (sellerEmail && sellerEmail.trim())) {
+      const sellerRawId = payload.seller_id || sellerEmail || "usr_seller_01";
+      sellerUUID = toUUID(sellerRawId);
+      if (!sellerEmail) sellerEmail = "bob@seller.example.com";
+      if (!sellerName) sellerName = sellerEmail.split("@")[0];
+
+      try {
+        await supabase.from("users").upsert({
+          id: sellerUUID,
+          role: "SELLER",
+          name: sellerName,
+          email: sellerEmail,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "id" });
+      } catch (e) {
+        console.warn("Failed to upsert seller in Supabase:", e);
+      }
+    }
+
+    try {
+      const { error: contractErr } = await supabase.from("contracts").insert({
+        id: contractId,
+        buyer_id: buyerUUID,
+        seller_id: sellerUUID,
         title: payload.title,
         description: payload.description || payload.title,
-        buyer_id: payload.buyer_id,
-        buyer_name: payload.buyer_name,
-        buyer_email: payload.buyer_email || "alice@buyer.example.com",
-        seller_id: payload.seller_id,
-        seller_name: payload.seller_name,
-        seller_email: payload.seller_email || "bob@seller.example.com",
+        status: "DRAFT",
         total_amount: payload.total_amount,
+        currency: "USD",
         deadline: payload.deadline,
-        figma_url: payload.figma_url,
-        repo_url: payload.repo_url,
-        features: payload.features.map((f, i) => ({
-          id: `feat_${i + 1}`,
+        figma_url: payload.figma_url || null,
+        repo_url: payload.repo_url || null,
+        is_locked: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      if (contractErr) {
+        console.error("Supabase contract insert error:", contractErr);
+      }
+
+      if (payload.features && payload.features.length > 0) {
+        const featureRows = payload.features.map((f, i) => ({
+          id: toUUID(`${contractId}_feat_${i + 1}`),
+          contract_id: contractId,
           title: f.title,
           acceptance_test: f.acceptance_test,
-          price_weight: f.price_weight,
-          allocated_amount: f.allocated_amount,
-          status: "PENDING" as const,
+          price_weight: Number(f.price_weight) || 0,
+          allocated_amount: Number(f.allocated_amount) || ((payload.total_amount * Number(f.price_weight)) / 100),
+          status: "PENDING",
           sort_order: i + 1,
-        })),
-      }) as unknown as Contract
-    );
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }));
+
+        const { error: featErr } = await supabase.from("features").insert(featureRows);
+        if (featErr) {
+          console.error("Supabase features insert error:", featErr);
+        }
+      }
+
+      await supabase.from("messages").insert({
+        id: toUUID(`${contractId}_msg_init`),
+        contract_id: contractId,
+        sender_id: buyerUUID,
+        sender_type: "BUYER",
+        content: `Contract initiated: "${payload.title}" with total budget $${payload.total_amount.toLocaleString()}. Milestone checklist created.`,
+        metadata: { event: "CONTRACT_CREATED", total_amount: payload.total_amount },
+        sent_at: new Date().toISOString(),
+      });
+    } catch (supaErr) {
+      console.warn("Supabase contract creation exception:", supaErr);
+    }
+
+    const localContract = mockApi.createContract({
+      id: contractId,
+      title: payload.title,
+      description: payload.description || payload.title,
+      buyer_id: buyerUUID,
+      buyer_name: buyerName,
+      buyer_email: buyerEmail,
+      seller_id: sellerUUID || undefined,
+      seller_name: sellerName || undefined,
+      seller_email: sellerEmail || undefined,
+      total_amount: payload.total_amount,
+      deadline: payload.deadline,
+      figma_url: payload.figma_url,
+      repo_url: payload.repo_url,
+      features: payload.features.map((f, i) => ({
+        title: f.title,
+        acceptance_test: f.acceptance_test,
+        price_weight: f.price_weight,
+      })),
+    });
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_created"));
+    }
+
+    safeFetch("/api/v1/contracts", {
+      method: "POST",
+      body: JSON.stringify({ ...payload, id: contractId }),
+    }, () => null).catch(() => {});
+
+    return localContract as unknown as Contract;
+  },
+
+  /**
+   * Freelancer applies & signs agreement terms (stores in Supabase DB)
+   */
+  async applyToContract(
+    id: string,
+    freelancer: { id?: string; name?: string; email?: string; note?: string }
+  ): Promise<Contract | null> {
+    const targetUuid = toUUID(id);
+    const sellerUUID = toUUID(freelancer.id || freelancer.email || "usr_seller_01");
+    const sellerEmail = freelancer.email || "freelancer@example.com";
+    const sellerName = freelancer.name || sellerEmail.split("@")[0];
+
+    try {
+      await supabase.from("users").upsert({
+        id: sellerUUID,
+        role: "SELLER",
+        name: sellerName,
+        email: sellerEmail,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "id" });
+
+      await supabase
+        .from("contracts")
+        .update({
+          seller_id: sellerUUID,
+          status: "REVIEW",
+          seller_confirmed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .or(`id.eq.${id},id.eq.${targetUuid}`);
+
+      await supabase.from("messages").insert({
+        contract_id: targetUuid,
+        sender_id: sellerUUID,
+        sender_type: "SELLER",
+        content: `Application Registered: Freelancer ${sellerName} has agreed to specifications and confirmed milestone terms. Awaiting Hirer approval.`,
+        metadata: { event: "FREELANCER_APPLIED" },
+        sent_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn("Supabase applyToContract error:", e);
+    }
+
+    const res = mockApi.applyToContract(id, freelancer);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_updated"));
+    }
+    return res as unknown as Contract;
+  },
+
+  /**
+   * Hirer approves freelancer and dual-signs contract (stores in Supabase DB)
+   */
+  async approveAndSignContract(
+    id: string,
+    buyer?: { id?: string; name?: string; email?: string }
+  ): Promise<Contract | null> {
+    const targetUuid = toUUID(id);
+    const now = new Date().toISOString();
+
+    try {
+      await supabase
+        .from("contracts")
+        .update({
+          status: "SIGNED",
+          is_locked: true,
+          buyer_confirmed_at: now,
+          locked_at: now,
+          updated_at: now,
+        })
+        .or(`id.eq.${id},id.eq.${targetUuid}`);
+
+      await supabase.from("messages").insert({
+        contract_id: targetUuid,
+        sender_type: "AI_REFEREE",
+        content: `Contract Fully Signed! Both Hirer and Freelancer have stamped approval. Status transitioned to SIGNED. Contract has moved to active contracts.`,
+        metadata: { event: "CONTRACT_SIGNED" },
+        sent_at: now,
+      });
+    } catch (e) {
+      console.warn("Supabase approveAndSignContract error:", e);
+    }
+
+    const res = mockApi.approveAndSignContract(id, buyer);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_updated"));
+    }
+    return res as unknown as Contract;
   },
 
   /**
    * Transition to REVIEW
    */
   async submitForReview(id: string): Promise<Contract> {
+    const targetUuid = toUUID(id);
+    try {
+      await supabase.from("contracts").update({ status: "REVIEW", updated_at: new Date().toISOString() }).or(`id.eq.${id},id.eq.${targetUuid}`);
+    } catch (e) {
+      console.warn("Supabase submitForReview error:", e);
+    }
+
     return safeFetch<Contract>(
       `/api/v1/contracts/${id}/submit-review`,
       { method: "POST" },
@@ -247,6 +574,13 @@ export const backendClient = {
    * Sign / Confirm checklist
    */
   async signContract(id: string, role: "BUYER" | "SELLER" = "SELLER"): Promise<Contract> {
+    const targetUuid = toUUID(id);
+    try {
+      await supabase.from("contracts").update({ status: "SIGNED", updated_at: new Date().toISOString() }).or(`id.eq.${id},id.eq.${targetUuid}`);
+    } catch (e) {
+      console.warn("Supabase signContract error:", e);
+    }
+
     return safeFetch<Contract>(
       `/api/v1/contracts/${id}/sign`,
       {
@@ -259,9 +593,42 @@ export const backendClient = {
   },
 
   /**
-   * Dual Confirmation Checklist Lock (Phase 3)
+   * Dual Confirmation Checklist Lock (Phase 3) - Persisted to Supabase DB
    */
-  async confirmChecklist(id: string, role: "BUYER" | "SELLER"): Promise<Contract> {
+  async confirmChecklist(id: string, role: "BUYER" | "SELLER", actor?: any): Promise<Contract> {
+    const targetUuid = toUUID(id);
+    const now = new Date().toISOString();
+
+    try {
+      const updates: any = { updated_at: now };
+      if (role === "BUYER") {
+        updates.buyer_confirmed_at = now;
+      } else {
+        updates.seller_confirmed_at = now;
+        updates.status = "REVIEW";
+      }
+
+      const { data: curr } = await supabase.from("contracts").select("*").or(`id.eq.${id},id.eq.${targetUuid}`).maybeSingle();
+      if (curr) {
+        const hasBuyer = updates.buyer_confirmed_at || curr.buyer_confirmed_at;
+        const hasSeller = updates.seller_confirmed_at || curr.seller_confirmed_at;
+        if (hasBuyer && hasSeller) {
+          updates.is_locked = true;
+          updates.locked_at = now;
+          updates.status = "SIGNED";
+        }
+      }
+
+      await supabase.from("contracts").update(updates).or(`id.eq.${id},id.eq.${targetUuid}`);
+    } catch (e) {
+      console.warn("Supabase confirmChecklist error:", e);
+    }
+
+    mockApi.confirmChecklist(id, role, actor);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_updated"));
+    }
+
     return safeFetch<Contract>(
       `/api/v1/contracts/${id}/confirm-checklist`,
       {
@@ -269,7 +636,7 @@ export const backendClient = {
         headers: { "X-Actor-Id": role === "SELLER" ? "usr_seller_01" : "usr_buyer_01" },
         body: JSON.stringify({ role }),
       },
-      () => mockApi.confirmChecklist(id, role) as unknown as Contract
+      () => mockApi.confirmChecklist(id, role, actor) as unknown as Contract
     );
   },
 
@@ -285,31 +652,114 @@ export const backendClient = {
   },
 
   /**
-   * Mark contract FUNDED
+   * Mark contract FUNDED in Supabase DB
    */
   async fundContract(id: string, paypalOrderId?: string, paypalAuthId?: string): Promise<Contract> {
+    const targetUuid = toUUID(id);
+    const now = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 29 * 86400000).toISOString();
+    const pOrderId = paypalOrderId || `ORD-${Date.now()}`;
+    const pAuthId = paypalAuthId || `AUTH-${Date.now()}`;
+
+    try {
+      await supabase
+        .from("contracts")
+        .update({
+          status: "FUNDED",
+          paypal_order_id: pOrderId,
+          paypal_auth_id: pAuthId,
+          auth_expires_at: expiresAt,
+          updated_at: now,
+        })
+        .or(`id.eq.${id},id.eq.${targetUuid}`);
+
+      const { data: cData } = await supabase.from("contracts").select("total_amount, currency").or(`id.eq.${id},id.eq.${targetUuid}`).maybeSingle();
+      await supabase.from("payments").insert({
+        id: toUUID(`${targetUuid}_pmt_${Date.now()}`),
+        contract_id: targetUuid,
+        payment_type: "AUTHORIZATION",
+        paypal_reference_id: pAuthId,
+        amount: cData?.total_amount || 1500,
+        currency: cData?.currency || "USD",
+        status: "COMPLETED",
+        metadata: { paypal_order_id: pOrderId },
+        processed_at: now,
+      });
+    } catch (e) {
+      console.warn("Supabase fundContract error:", e);
+    }
+
+    mockApi.fundContract(id, pOrderId, pAuthId);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_updated"));
+    }
+
     return safeFetch<Contract>(
       `/api/v1/contracts/${id}/fund`,
       {
         method: "POST",
         body: JSON.stringify({
-          paypal_order_id: paypalOrderId,
-          paypal_auth_id: paypalAuthId,
+          paypal_order_id: pOrderId,
+          paypal_auth_id: pAuthId,
         }),
       },
-      () => mockApi.fundContract(id) as unknown as Contract
+      () => mockApi.fundContract(id, pOrderId, pAuthId) as unknown as Contract
     );
   },
 
   /**
-   * Submit deliverable for automated verification
+   * Submit deliverable for automated verification (persisted to Supabase DB)
    */
   async submitDeliverable(payload: {
     contract_id: string;
     repo_url: string;
     commit_sha?: string;
+    branch?: string;
+    deploy_url?: string;
     build_notes?: string;
   }): Promise<any> {
+    const targetUuid = toUUID(payload.contract_id);
+    const now = new Date().toISOString();
+
+    try {
+      const { data: cData } = await supabase.from("contracts").select("seller_id").or(`id.eq.${payload.contract_id},id.eq.${targetUuid}`).maybeSingle();
+      const sellerId = cData?.seller_id || toUUID("usr_seller_01");
+
+      await supabase
+        .from("contracts")
+        .update({
+          status: "SUBMITTED",
+          repo_url: payload.repo_url,
+          updated_at: now,
+        })
+        .or(`id.eq.${payload.contract_id},id.eq.${targetUuid}`);
+
+      await supabase.from("submissions").insert({
+        id: toUUID(`${targetUuid}_sub_${Date.now()}`),
+        contract_id: targetUuid,
+        seller_id: sellerId,
+        repo_url: payload.repo_url,
+        commit_sha: payload.commit_sha || "head-submission",
+        build_notes: payload.build_notes || "",
+        submission_number: 1,
+        is_late: false,
+        submitted_at: now,
+      });
+    } catch (e) {
+      console.warn("Supabase submitDeliverable error:", e);
+    }
+
+    mockApi.submitDeliverable(payload.contract_id, {
+      repo_url: payload.repo_url,
+      commit_sha: payload.commit_sha || "head",
+      branch: "main",
+      build_notes: payload.build_notes || "",
+    });
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_updated"));
+    }
+
     return safeFetch(
       "/api/v1/verification/submit",
       {
@@ -394,5 +844,198 @@ export const backendClient = {
       { method: "GET" },
       () => (mockApi.getReceipt(contractId) as unknown as ProofOfWorkReceipt) || null
     );
+  },
+
+  /**
+   * Get negotiation chat messages directly from Supabase DB with local fallback
+   */
+  async getMessages(contractId: string): Promise<ChatMessage[]> {
+    const targetUuid = toUUID(contractId);
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, contract_id, sender_id, sender_type, content, metadata, sent_at")
+        .or(`contract_id.eq.${contractId},contract_id.eq.${targetUuid}`)
+        .order("sent_at", { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        const mapped: ChatMessage[] = data.map((row: any) => {
+          let senderName = row.metadata?.sender_name;
+          if (!senderName) {
+            if (row.sender_type === "BUYER") senderName = "Hirer";
+            else if (row.sender_type === "SELLER") senderName = "Freelancer";
+            else senderName = "AI Referee";
+          }
+          return {
+            id: row.id,
+            contract_id: contractId,
+            sender_type: row.sender_type as "BUYER" | "SELLER" | "AI_REFEREE",
+            sender_name: senderName,
+            content: row.content,
+            sent_at: row.sent_at,
+            metadata: row.metadata || null,
+          };
+        });
+        mockApi.syncMessagesFromSupabase(contractId, mapped);
+        return mapped;
+      }
+    } catch (err) {
+      console.warn("Supabase getMessages error:", err);
+    }
+    return mockApi.getMessages(contractId);
+  },
+
+  /**
+   * Send negotiation chat message: persists directly to Supabase DB + local cache
+   */
+  async sendMessage(
+    contractId: string,
+    message: {
+      sender_type: "BUYER" | "SELLER" | "AI_REFEREE";
+      sender_name?: string;
+      content: string;
+      metadata?: any;
+      sender_id?: string;
+    }
+  ): Promise<ChatMessage> {
+    const targetUuid = toUUID(contractId);
+    const senderUuid = message.sender_id ? toUUID(message.sender_id) : toUUID(message.sender_type);
+
+    // Save to local mock state first for instant responsiveness
+    const localMsg = mockApi.sendMessage(contractId, message);
+
+    try {
+      await supabase.from("messages").insert({
+        id: toUUID(localMsg.id),
+        contract_id: targetUuid,
+        sender_id: senderUuid,
+        sender_type: message.sender_type,
+        content: message.content,
+        metadata: { ...(message.metadata || {}), sender_name: localMsg.sender_name },
+        sent_at: localMsg.sent_at,
+      });
+    } catch (err) {
+      console.warn("Supabase sendMessage insert error:", err);
+    }
+
+    return localMsg;
+  },
+
+  /**
+   * Reset chat messages for a contract in Supabase DB and local cache
+   */
+  async resetMessages(contractId: string): Promise<void> {
+    const targetUuid = toUUID(contractId);
+    mockApi.resetMessages(contractId);
+    try {
+      await supabase
+        .from("messages")
+        .delete()
+        .or(`contract_id.eq.${contractId},contract_id.eq.${targetUuid}`);
+    } catch (err) {
+      console.warn("Supabase resetMessages delete error:", err);
+    }
+  },
+
+  /**
+   * Propose counter terms: updates Supabase DB + local cache
+   */
+  async counterContract(
+    id: string,
+    counterData: {
+      proposed_by: "BUYER" | "SELLER";
+      total_amount: number;
+      deadline: string;
+      note: string;
+      features?: Feature[];
+    }
+  ): Promise<Contract | null> {
+    const targetUuid = toUUID(id);
+    const now = new Date().toISOString();
+    const localUpdated = mockApi.counterContract(id, counterData);
+
+    try {
+      const updatePayload: any = {
+        status: "REVIEW",
+        total_amount: counterData.total_amount,
+        deadline: counterData.deadline,
+        is_locked: false,
+        updated_at: now,
+      };
+      if (counterData.proposed_by === "SELLER") {
+        updatePayload.seller_confirmed_at = now;
+        updatePayload.buyer_confirmed_at = null;
+      } else {
+        updatePayload.buyer_confirmed_at = now;
+        updatePayload.seller_confirmed_at = null;
+      }
+      await supabase.from("contracts").update(updatePayload).or(`id.eq.${id},id.eq.${targetUuid}`);
+
+      if (counterData.features && counterData.features.length > 0) {
+        for (const f of counterData.features) {
+          await supabase
+            .from("features")
+            .update({
+              price_weight: f.price_weight,
+              allocated_amount: (counterData.total_amount * f.price_weight) / 100,
+              updated_at: now,
+            })
+            .or(`id.eq.${f.id},id.eq.${toUUID(f.id)}`);
+        }
+      }
+    } catch (err) {
+      console.warn("Supabase counterContract error:", err);
+    }
+
+    return localUpdated;
+  },
+
+  /**
+   * Accept counter offer: updates Supabase DB + local cache
+   */
+  async acceptCounter(id: string, role: "BUYER" | "SELLER"): Promise<Contract | null> {
+    const targetUuid = toUUID(id);
+    const now = new Date().toISOString();
+    const localUpdated = mockApi.acceptCounter(id, role);
+
+    try {
+      const updatePayload: any = {
+        status: "SIGNED",
+        is_locked: true,
+        updated_at: now,
+      };
+      if (role === "BUYER") {
+        updatePayload.buyer_confirmed_at = now;
+      } else {
+        updatePayload.seller_confirmed_at = now;
+      }
+      await supabase.from("contracts").update(updatePayload).or(`id.eq.${id},id.eq.${targetUuid}`);
+    } catch (err) {
+      console.warn("Supabase acceptCounter error:", err);
+    }
+
+    return localUpdated;
+  },
+
+  /**
+   * Settle contract: updates Supabase DB + local cache
+   */
+  async settleContract(id: string, passedAmount?: number): Promise<Contract | null> {
+    const targetUuid = toUUID(id);
+    const localUpdated = mockApi.settleContract(id, passedAmount);
+
+    try {
+      await supabase
+        .from("contracts")
+        .update({
+          status: "SETTLED",
+          updated_at: new Date().toISOString(),
+        })
+        .or(`id.eq.${id},id.eq.${targetUuid}`);
+    } catch (err) {
+      console.warn("Supabase settleContract error:", err);
+    }
+
+    return localUpdated;
   },
 };

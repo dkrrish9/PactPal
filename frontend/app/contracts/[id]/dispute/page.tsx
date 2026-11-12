@@ -26,6 +26,7 @@ import {
   Check
 } from "lucide-react";
 import { mockApi, Contract, Feature, ChatMessage, ProofOfWorkReceipt } from "@/lib/mockApi";
+import { backendClient } from "@/lib/backendClient";
 import { getCurrentUser, UserProfile } from "@/lib/supabase";
 
 function isUserHirer(c: Contract | null, user: UserProfile | null): boolean {
@@ -59,10 +60,23 @@ export default function DisputePage() {
 
   useEffect(() => {
     setCurrentUser(getCurrentUser());
-    const c = mockApi.getContract(rawId) || mockApi.getContracts()[0];
-    setContract(c);
-    setReceipt(mockApi.getReceipt(c?.id || rawId));
-    setMessages(mockApi.getMessages(c?.id || rawId));
+    async function loadDisputeData() {
+      try {
+        const live = await backendClient.getContract(rawId);
+        if (live) setContract(live as unknown as Contract);
+        const liveMsgs = await backendClient.getMessages(rawId);
+        if (liveMsgs && liveMsgs.length > 0) setMessages(liveMsgs);
+        else setMessages(mockApi.getMessages(rawId));
+        setReceipt(mockApi.getReceipt(rawId));
+        return;
+      } catch {}
+
+      const c = mockApi.getContract(rawId) || mockApi.getContracts()[0];
+      setContract(c);
+      setReceipt(mockApi.getReceipt(c?.id || rawId));
+      setMessages(mockApi.getMessages(c?.id || rawId));
+    }
+    loadDisputeData();
   }, [rawId]);
 
   if (!contract) {
@@ -90,30 +104,33 @@ export default function DisputePage() {
     ? (currentUser?.name || contract.buyer_name || "Hirer")
     : (currentUser?.name || contract.seller_name || "Freelancer");
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
 
-    mockApi.sendMessage(contract.id, {
+    const content = `[DISPUTE MEDIATION] ${chatInput.trim()}`;
+    setChatInput("");
+
+    const newMsg = await backendClient.sendMessage(contract.id, {
       sender_type: mySenderRole,
       sender_name: mySenderName,
-      content: `[DISPUTE MEDIATION] ${chatInput.trim()}`,
+      content,
       metadata: { action: "DISPUTE_RAISED" },
+      sender_id: currentUser?.id,
     });
 
-    setMessages([...mockApi.getMessages(contract.id)]);
-    setChatInput("");
+    setMessages((prev) => [...prev, newMsg]);
   };
 
-  const handleConfirmResolution = () => {
+  const handleConfirmResolution = async () => {
     setResolutionConfirmed(true);
-    mockApi.sendMessage(contract.id, {
+    const newMsg = await backendClient.sendMessage(contract.id, {
       sender_type: "AI_REFEREE",
       sender_name: "AI Referee",
       content: `Arbitration Decision Formally Accepted: Selected resolution pathway '${selectedResolution.toUpperCase()}'. Funds release initiated.`,
       metadata: { action: "VERDICT_SUMMARY", proposed_amount: passedAmount },
     });
-    setMessages([...mockApi.getMessages(contract.id)]);
+    setMessages((prev) => [...prev, newMsg]);
   };
 
   return (

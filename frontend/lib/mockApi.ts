@@ -134,13 +134,15 @@ export interface Feature {
 export interface Submission {
   id: string;
   contract_id: string;
+  seller_id?: string;
   repo_url: string;
   commit_sha: string;
   branch: string;
   deploy_url?: string;
   build_notes: string;
   submitted_at: string;
-  version_number: number;
+  version_number?: number;
+  submission_number?: number;
   is_late: boolean;
   deadline: string;
 }
@@ -721,10 +723,29 @@ export const mockApi = {
   },
 
   /**
-   * Get negotiation chat messages (C40: persists in localStorage)
+   * Get negotiation chat messages (C40: persists in localStorage/Supabase)
    */
   getMessages(contractId: string): ChatMessage[] {
     return loadMessages(contractId);
+  },
+
+  /**
+   * Sync chat messages from Supabase DB into local cache
+   */
+  syncMessagesFromSupabase(contractId: string, messages: ChatMessage[]): void {
+    if (!messages) return;
+    saveMessages(contractId, messages);
+  },
+
+  /**
+   * Reset/clear chat messages for a contract
+   */
+  resetMessages(contractId: string): void {
+    if (isBrowser()) {
+      try {
+        localStorage.removeItem(`${CHAT_STORAGE_KEY_PREFIX}${contractId}`);
+      } catch {}
+    }
   },
 
   /**
@@ -768,12 +789,13 @@ export const mockApi = {
    * Create a new contract (starts in DRAFT)
    */
   createContract(input: {
+    id?: string;
     title: string;
     description: string;
     buyer_email: string;
     buyer_name?: string;
     buyer_id?: string;
-    seller_email: string;
+    seller_email?: string;
     seller_name?: string;
     seller_id?: string;
     total_amount: number;
@@ -788,7 +810,7 @@ export const mockApi = {
     }>;
   }): Contract {
     const contracts = loadContracts();
-    const newId = `pct_${Math.random().toString(36).substring(2, 8)}`;
+    const newId = input.id || `pct_${Math.random().toString(36).substring(2, 8)}`;
     
     const formattedFeatures: Feature[] = input.features.map((f, idx) => ({
       id: `feat_${newId}_${idx + 1}`,
@@ -809,8 +831,8 @@ export const mockApi = {
       buyer_name: input.buyer_name || input.buyer_email.split("@")[0],
       buyer_email: input.buyer_email,
       seller_id: input.seller_id || `usr_${Math.random().toString(36).substring(2, 6)}`,
-      seller_name: input.seller_name || input.seller_email.split("@")[0],
-      seller_email: input.seller_email,
+      seller_name: input.seller_name || (input.seller_email ? input.seller_email.split("@")[0] : ""),
+      seller_email: input.seller_email || "",
       status: "DRAFT",
       total_amount: input.total_amount,
       currency: input.currency || "USD",
@@ -823,7 +845,27 @@ export const mockApi = {
 
     contracts.unshift(newContract);
     saveContracts(contracts);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_created"));
+    }
     return newContract;
+  },
+
+  /**
+   * Sync contracts list from Supabase into local memory / localStorage
+   */
+  syncContractsFromSupabase(supaContracts: Contract[]): void {
+    if (!supaContracts || supaContracts.length === 0) return;
+    const existing = loadContracts();
+    const map = new Map<string, Contract>();
+    for (const c of existing) {
+      map.set(c.id, c);
+    }
+    for (const sc of supaContracts) {
+      map.set(sc.id, { ...map.get(sc.id), ...sc });
+    }
+    const merged = Array.from(map.values());
+    saveContracts(merged);
   },
 
   /**
@@ -1108,7 +1150,7 @@ export const mockApi = {
    * Buyer authorizes PayPal hold: SIGNED -> FUNDED
    * Initiates 29-day authorization hold countdown
    */
-  fundContract(id: string, paypalOrderId?: string): Contract | null {
+  fundContract(id: string, paypalOrderId?: string, paypalAuthId?: string): Contract | null {
     const contracts = loadContracts();
     const idx = contracts.findIndex((c) => c.id === id);
     if (idx === -1) return null;
@@ -1116,7 +1158,7 @@ export const mockApi = {
     const authExpiry = new Date(Date.now() + 29 * 86400000).toISOString();
     contracts[idx].status = "FUNDED";
     contracts[idx].paypal_order_id = paypalOrderId || `PAYPAL_ORDER_${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-    contracts[idx].paypal_auth_id = `AUTH_${Math.random().toString(36).substring(2, 12).toUpperCase()}`;
+    contracts[idx].paypal_auth_id = paypalAuthId || `AUTH_${Math.random().toString(36).substring(2, 12).toUpperCase()}`;
     contracts[idx].auth_expires_at = authExpiry;
 
     saveContracts(contracts);

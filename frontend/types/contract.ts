@@ -148,13 +148,14 @@ export interface Feature {
 export interface Submission {
   id: string;
   contract_id: string;
-  seller_id: string;
+  seller_id?: string;
   repo_url: string;
   commit_sha: string;
   branch: string;
   deploy_url?: string;
   build_notes: string;
-  submission_number: number;
+  submission_number?: number;
+  version_number?: number;
   is_late: boolean;
   submitted_at: string;
   deadline: string;
@@ -282,5 +283,22 @@ export interface ClarificationRequest {
   issues_count: number;
   clarifications: ClarificationItem[];
   overall_guidance: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  contract_id: string;
+  sender_type: "BUYER" | "SELLER" | "AI_REFEREE";
+  sender_name: string;
+  content: string;
+  sent_at: string;
+  metadata?: {
+    action?: "COUNTER_OFFER" | "ACCEPT_TERMS" | "VERDICT_SUMMARY" | "DISPUTE_RAISED" | "SCOPE_ADVISORY" | string;
+    proposed_amount?: number;
+    proposed_deadline?: string;
+    sender_name?: string;
+    event?: string;
+    total_amount?: number;
+  } | null;
 }
 
