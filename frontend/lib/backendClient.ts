@@ -654,10 +654,10 @@ export const backendClient = {
   /**
    * Mark contract FUNDED in Supabase DB
    */
-  async fundContract(id: string, paypalOrderId?: string, paypalAuthId?: string): Promise<Contract> {
+  async fundContract(id: string, paypalOrderId?: string, paypalAuthId?: string, expiresAt?: string): Promise<Contract> {
     const targetUuid = toUUID(id);
     const now = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 29 * 86400000).toISOString();
+    const finalExpiresAt = expiresAt || new Date(Date.now() + 29 * 86400000).toISOString();
     const pOrderId = paypalOrderId || `ORD-${Date.now()}`;
     const pAuthId = paypalAuthId || `AUTH-${Date.now()}`;
 
@@ -668,7 +668,7 @@ export const backendClient = {
           status: "FUNDED",
           paypal_order_id: pOrderId,
           paypal_auth_id: pAuthId,
-          auth_expires_at: expiresAt,
+          auth_expires_at: finalExpiresAt,
           updated_at: now,
         })
         .or(`id.eq.${id},id.eq.${targetUuid}`);
@@ -705,6 +705,71 @@ export const backendClient = {
       },
       () => mockApi.fundContract(id, pOrderId, pAuthId) as unknown as Contract
     );
+  },
+
+  /**
+   * Create official PayPal Sandbox order with AUTHORIZE intent (Funds Freezing)
+   */
+  async createEscrowHold(payload: {
+    contract_id: string;
+    amount: number;
+    currency?: string;
+    title?: string;
+    origin?: string;
+  }): Promise<{ success: boolean; order_id: string; approve_url: string; amount: number; currency: string }> {
+    const res = await fetch("/api/paypal/escrow/create-hold", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.approve_url) {
+      throw new Error(data.message || data.error || "Failed to initialize PayPal escrow hold.");
+    }
+    return data;
+  },
+
+  /**
+   * Execute authorization against approved PayPal order (Funds Frozen for 29 Days)
+   */
+  async authorizeEscrowHold(payload: {
+    contract_id: string;
+    order_id: string;
+  }): Promise<{ success: boolean; paypal_auth_id: string; auth_expires_at: string; status: string; held_amount?: number }> {
+    const res = await fetch("/api/paypal/escrow/authorize-hold", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.paypal_auth_id) {
+      throw new Error(data.message || data.error || "Failed to execute PayPal authorization hold.");
+    }
+
+    // Persist real PayPal authorization details in Supabase & local state
+    await backendClient.fundContract(payload.contract_id, payload.order_id, data.paypal_auth_id, data.auth_expires_at);
+
+    return data;
+  },
+
+  /**
+   * Capture final payment from frozen PayPal authorization hold
+   */
+  async captureEscrow(payload: {
+    contract_id: string;
+    authorization_id: string;
+    amount: number;
+    currency?: string;
+    receipt_hash?: string;
+    is_final_capture?: boolean;
+  }): Promise<{ success: boolean; capture_id: string; status: string }> {
+    const res = await fetch("/api/paypal/escrow/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    return data;
   },
 
   /**
@@ -1018,22 +1083,75 @@ export const backendClient = {
   },
 
   /**
-   * Settle contract: updates Supabase DB + local cache
+   * Settle contract: executes real PayPal capture if auth exists, updates Supabase DB + local cache
    */
   async settleContract(id: string, passedAmount?: number): Promise<Contract | null> {
     const targetUuid = toUUID(id);
+    const localContract = mockApi.getContract(id);
+    let authId = localContract?.paypal_auth_id;
+
+    // Check if live contract in Supabase has paypal_auth_id
+    if (!authId) {
+      try {
+        const { data } = await supabase.from("contracts").select("paypal_auth_id, total_amount, currency").or(`id.eq.${id},id.eq.${targetUuid}`).maybeSingle();
+        if (data?.paypal_auth_id) {
+          authId = data.paypal_auth_id;
+        }
+      } catch {}
+    }
+
+    let captureId: string | null = null;
+    if (authId && !authId.startsWith("AUTH-DEMO") && !authId.startsWith("AUTH_DEMO")) {
+      try {
+        const capRes = await this.captureEscrow({
+          contract_id: id,
+          authorization_id: authId,
+          amount: passedAmount ?? localContract?.total_amount ?? 1500,
+          currency: localContract?.currency || "USD",
+          is_final_capture: true,
+        });
+        if (capRes?.capture_id) {
+          captureId = capRes.capture_id;
+        }
+      } catch (err) {
+        console.warn("PayPal escrow capture notice:", err);
+      }
+    }
+
     const localUpdated = mockApi.settleContract(id, passedAmount);
+    if (localUpdated && captureId) {
+      (localUpdated as any).paypal_capture_id = captureId;
+    }
 
     try {
+      const now = new Date().toISOString();
       await supabase
         .from("contracts")
         .update({
           status: "SETTLED",
-          updated_at: new Date().toISOString(),
+          updated_at: now,
         })
         .or(`id.eq.${id},id.eq.${targetUuid}`);
+
+      if (captureId) {
+        await supabase.from("payments").insert({
+          id: toUUID(`${targetUuid}_cap_${Date.now()}`),
+          contract_id: targetUuid,
+          payment_type: "CAPTURE",
+          paypal_reference_id: captureId,
+          amount: passedAmount ?? localContract?.total_amount ?? 1500,
+          currency: localContract?.currency || "USD",
+          status: "COMPLETED",
+          metadata: { paypal_auth_id: authId },
+          processed_at: now,
+        });
+      }
     } catch (err) {
       console.warn("Supabase settleContract error:", err);
+    }
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("pactpal_contract_updated"));
     }
 
     return localUpdated;
