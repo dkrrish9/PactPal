@@ -778,6 +778,7 @@ export const mockApi = {
     currency?: string;
     deadline: string;
     figma_url?: string;
+    repo_url?: string;
     features: Array<{
       title: string;
       acceptance_test: string;
@@ -813,6 +814,7 @@ export const mockApi = {
       currency: input.currency || "USD",
       deadline: input.deadline,
       figma_url: input.figma_url,
+      repo_url: input.repo_url,
       created_at: new Date().toISOString(),
       features: formattedFeatures,
     };

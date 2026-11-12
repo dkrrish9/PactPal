@@ -33,6 +33,8 @@ PactPal is an impartial, automated **AI Escrow Referee** that bridges the trust 
 PactPal/
 ├── .github/                      # CI workflows & PR template
 ├── docs/                         # Architecture, Contract Lifecycle (10 states), Data Map
+├── main.py                       # FastAPI application & master gateway
+├── requirements.txt              # FastAPI, Uvicorn, Pydantic, HTTPX
 ├── services/
 │   ├── agents/                   # [AG] Agreement Reader, Referee, Price Negotiator, Prompts
 │   ├── core-api/                 # [AG] Relational DB, Auth, 10-State Machine Engine
@@ -64,22 +66,77 @@ PactPal adheres to strict trunk-based governance with 4 dedicated feature stream
 ## 6. Quickstart & Local Setup
 
 ### Prerequisites
-- Node.js 18+ / Python 3.10+
-- Git
+- **Python**: 3.10+
+- **Node.js**: 18+
+- **Git**
 
-### Installation
+---
+
+### Step 1: Clone and Configure Environment
+
 ```bash
-# Clone the repository
 git clone https://github.com/dkrrish9/PactPal.git
 cd PactPal
 
-# Set up environment variables
+# Copy environment variables
 cp .env.example .env
-
-# Switch to your team's stream branch
-git checkout feature/agents          # Agreement/Negotiation team
-# or git checkout feature/frontend   # Frontend team
-# or git checkout feature/verification
-# or git checkout feature/payments
 ```
 
+---
+
+### Step 2: Set Up & Run the FastAPI Backend
+
+```bash
+# 1. Create a Python virtual environment
+python3 -m venv .venv
+
+# 2. Activate the virtual environment
+source .venv/bin/activate
+# On Windows: .venv\Scripts\activate
+
+# 3. Install backend dependencies
+pip install -r requirements.txt
+
+# 4. Start the FastAPI server with hot-reload
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+- **Backend API**: `http://localhost:8000`
+- **Interactive Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Alternative ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+
+---
+
+### Step 3: Set Up & Run the Next.js Frontend
+
+In a separate terminal window:
+
+```bash
+cd frontend
+
+# Install frontend dependencies
+npm install
+
+# Start Next.js development server
+npm run dev
+```
+
+- **Web App**: [http://localhost:3000](http://localhost:3000)
+
+---
+
+### Step 4: Verify the Setup
+
+```bash
+# 1. Check backend health
+curl http://localhost:8000/api/v1/health
+
+# 2. Check main seeded contract
+curl http://localhost:8000/api/v1/contracts/pct_099e77
+
+# 3. Check 29-day PayPal hold countdown
+curl http://localhost:8000/api/v1/contracts/pct_099e77/hold
+
+# 4. Run automated test suite
+PYTHONPATH=. .venv/bin/python3 -m unittest tests/test_fastapi.py
+```

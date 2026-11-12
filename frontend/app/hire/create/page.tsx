@@ -11,7 +11,11 @@ import {
   Plus, 
   ShieldCheck, 
   ExternalLink,
-  Loader2
+  Loader2,
+  FileCode,
+  Sparkles,
+  AlertTriangle,
+  HelpCircle
 } from "lucide-react";
 import { mockApi } from "@/lib/mockApi";
 import { getCurrentUser } from "@/lib/supabase";
@@ -27,6 +31,7 @@ type FormState = {
   totalAmount: string;
   currency: string;
   figmaUrl: string;
+  repoUrl: string;
 };
 
 const STEPS = ["Basic Info", "Feature Checklist", "Escrow Settings", "Review"];
@@ -44,6 +49,7 @@ export default function CreateContractPage() {
     totalAmount: "1500",
     currency: "USD",
     figmaUrl: "https://figma.com/design/sample-project-spec",
+    repoUrl: "https://github.com/freelancer/pactpal-storefront",
   });
 
   useEffect(() => {
@@ -67,8 +73,28 @@ export default function CreateContractPage() {
   const weightOk = totalWeight === 100;
   const basicInfoOk = form.title.trim() !== "" && form.buyerEmail.trim() !== "" && form.sellerEmail.trim() !== "" && form.totalAmount.trim() !== "";
 
+  // Phase 1 / Agreement Reader Rule: Every feature must have a measurable acceptance test
+  const featureIssues = features.map((f, idx) => {
+    const issues: string[] = [];
+    if (!f.name || f.name.trim().length === 0) {
+      issues.push(`Feature #${idx + 1} needs a title`);
+    }
+    if (!f.test || f.test.trim().length === 0) {
+      issues.push(`Feature #${idx + 1} has no acceptance test`);
+    } else if (f.test.trim().length < 10) {
+      issues.push(`Feature #${idx + 1} test is too short ("${f.test}"). Must specify an objective condition`);
+    }
+    if (Number(f.weight) <= 0) {
+      issues.push(`Feature #${idx + 1} weight must be > 0%`);
+    }
+    return { index: idx, name: f.name || `Feature ${idx + 1}`, issues };
+  });
+
+  const allTestsMeasurable = featureIssues.every((fi) => fi.issues.length === 0);
+  const canProceedFromFeatures = weightOk && allTestsMeasurable;
+
   const handleSubmit = async () => {
-    if (!weightOk || !basicInfoOk) return;
+    if (!canProceedFromFeatures || !basicInfoOk) return;
     setIsSubmitting(true);
 
     try {
@@ -84,6 +110,7 @@ export default function CreateContractPage() {
         currency: form.currency || "USD",
         deadline: new Date(form.deadline || Date.now() + 14 * 86400000).toISOString(),
         figma_url: form.figmaUrl,
+        repo_url: form.repoUrl,
         features: features.map((f) => ({
           title: f.name || "Untitled Feature",
           acceptance_test: f.test || "Acceptance test passed",
@@ -208,6 +235,8 @@ export default function CreateContractPage() {
               setFeatures={setFeatures}
               totalWeight={totalWeight}
               weightOk={weightOk}
+              featureIssues={featureIssues}
+              allTestsMeasurable={allTestsMeasurable}
             />
           )}
           {step === 2 && (
@@ -252,7 +281,7 @@ export default function CreateContractPage() {
               <ArrowLeft size={16} aria-hidden /> Back
             </button>
 
-            {step === 1 && !weightOk && (
+            {step === 1 && (!weightOk || !allTestsMeasurable) && (
               <div
                 style={{
                   fontSize: 13,
@@ -263,50 +292,50 @@ export default function CreateContractPage() {
                   fontFamily: "JetBrains Mono, monospace",
                 }}
               >
-                <span>⚠️</span> Total is {totalWeight}% (must equal exactly 100% to proceed)
+                <span>⚠️</span> {!weightOk ? `Total is ${totalWeight}% (must equal exactly 100%)` : "All features must have objective acceptance tests"}
               </div>
             )}
 
             {step < STEPS.length - 1 ? (
               <button
                 onClick={() => {
-                  if (step === 1 && !weightOk) return;
+                  if (step === 1 && !canProceedFromFeatures) return;
                   if (step === 0 && !basicInfoOk) return;
                   setStep((s) => Math.min(STEPS.length - 1, s + 1));
                 }}
-                disabled={(step === 1 && !weightOk) || (step === 0 && !basicInfoOk)}
+                disabled={(step === 1 && !canProceedFromFeatures) || (step === 0 && !basicInfoOk)}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
                   background:
-                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                    (step === 1 && !canProceedFromFeatures) || (step === 0 && !basicInfoOk)
                       ? "rgba(255,255,255,0.06)"
                       : "linear-gradient(135deg, #0066FF, #00A3E0)",
                   border:
-                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                    (step === 1 && !canProceedFromFeatures) || (step === 0 && !basicInfoOk)
                       ? "1px solid rgba(255,255,255,0.1)"
                       : "none",
                   borderRadius: 50,
                   color:
-                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                    (step === 1 && !canProceedFromFeatures) || (step === 0 && !basicInfoOk)
                       ? "rgba(255,255,255,0.35)"
                       : "white",
                   padding: "12px 28px",
                   fontSize: 15,
                   fontWeight: 700,
                   cursor:
-                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                    (step === 1 && !canProceedFromFeatures) || (step === 0 && !basicInfoOk)
                       ? "not-allowed"
                       : "pointer",
                   boxShadow:
-                    (step === 1 && !weightOk) || (step === 0 && !basicInfoOk)
+                    (step === 1 && !canProceedFromFeatures) || (step === 0 && !basicInfoOk)
                       ? "none"
                       : "0 0 20px rgba(0,102,255,0.4)",
                   transition: "all 0.2s ease",
                 }}
                 aria-label="Next step"
-                aria-disabled={(step === 1 && !weightOk) || (step === 0 && !basicInfoOk)}
+                aria-disabled={(step === 1 && !canProceedFromFeatures) || (step === 0 && !basicInfoOk)}
               >
                 Next <ArrowRight size={16} aria-hidden />
               </button>
@@ -457,7 +486,26 @@ function StepBasicInfo({ form, setForm }: { form: FormState; setForm: React.Disp
           />
         </div>
         <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
-          The AI Referee uses this design reference in Stage D for automated visual regression diffing.
+          The AI Referee uses this design reference in Stage E for automated visual regression diffing.
+        </span>
+      </FormGroup>
+
+      {/* Deliverable Repository Expectations */}
+      <FormGroup label="Deliverable Repository Expectations (GitHub URL)" optional>
+        <div style={{ position: "relative" }}>
+          <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--color-text-muted)" }}>
+            <FileCode size={16} color="#60A5FA" />
+          </div>
+          <input
+            style={{ ...inputStyle, paddingLeft: 42 }}
+            value={form.repoUrl}
+            onChange={(e) => setForm({ ...form, repoUrl: e.target.value })}
+            placeholder="https://github.com/freelancer/pactpal-storefront"
+            aria-label="Target repository URL"
+          />
+        </div>
+        <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+          The target GitHub repository where the seller will deliver commits for isolated Render container verification.
         </span>
       </FormGroup>
 
@@ -474,12 +522,14 @@ function StepBasicInfo({ form, setForm }: { form: FormState; setForm: React.Disp
   );
 }
 
-function StepFeatures({ form, features, setFeatures, totalWeight, weightOk }: {
+function StepFeatures({ form, features, setFeatures, totalWeight, weightOk, featureIssues, allTestsMeasurable }: {
   form: FormState;
   features: Feature[];
   setFeatures: (f: Feature[]) => void;
   totalWeight: number;
   weightOk: boolean;
+  featureIssues: Array<{ index: number; name: string; issues: string[] }>;
+  allTestsMeasurable: boolean;
 }) {
   const totalAmountNum = parseFloat(form.totalAmount) || 0;
 
@@ -529,13 +579,14 @@ function StepFeatures({ form, features, setFeatures, totalWeight, weightOk }: {
 
       {features.map((f, i) => {
         const allocatedVal = ((totalAmountNum * (Number(f.weight) || 0)) / 100).toFixed(2);
+        const thisFeatureIssues = featureIssues.find((fi) => fi.index === i)?.issues || [];
 
         return (
           <div
             key={i}
             style={{
-              background: "rgba(255,255,255,0.03)",
-              border: "1px solid rgba(255,255,255,0.08)",
+              background: thisFeatureIssues.length > 0 ? "rgba(244,67,54,0.04)" : "rgba(255,255,255,0.03)",
+              border: `1px solid ${thisFeatureIssues.length > 0 ? "rgba(244,67,54,0.25)" : "rgba(255,255,255,0.08)"}`,
               borderRadius: 16,
               padding: "20px",
               display: "flex",
@@ -608,6 +659,13 @@ function StepFeatures({ form, features, setFeatures, totalWeight, weightOk }: {
               placeholder="Plain-language acceptance test (what objective condition proves this passes?)"
               aria-label={`Feature ${i + 1} acceptance test`}
             />
+
+            {thisFeatureIssues.length > 0 && (
+              <div style={{ fontSize: 12, color: "#FCA5A5", display: "flex", alignItems: "center", gap: 6 }}>
+                <AlertTriangle size={13} />
+                <span>{thisFeatureIssues.join("; ")}</span>
+              </div>
+            )}
           </div>
         );
       })}
@@ -634,6 +692,44 @@ function StepFeatures({ form, features, setFeatures, totalWeight, weightOk }: {
       >
         <Plus size={16} /> Add feature milestone
       </button>
+
+      {/* AI Agreement Reader Pre-Validation & Clarification Notice (Phase 1 & Phase 3) */}
+      {(!weightOk || !allTestsMeasurable) && (
+        <div
+          style={{
+            background: "rgba(122,92,255,0.08)",
+            border: "1px solid rgba(122,92,255,0.3)",
+            borderRadius: 16,
+            padding: "20px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}
+          role="alert"
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#C084FC", fontWeight: 700, fontSize: 14 }}>
+            <Sparkles size={16} />
+            <span>AI Agreement Reader Pre-Validation Notice (Zero-Trust Standard)</span>
+          </div>
+          <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: 0, lineHeight: 1.5 }}>
+            In accordance with PactPal escrow rules, the AI Referee never guesses requirements. Every feature must define an objective acceptance test so containerized verification in Phase 5 can evaluate it deterministically.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12.5, color: "#FCA5A5" }}>
+            {!weightOk && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span>•</span>
+                <span>Total weight is currently <strong>{totalWeight}%</strong>. Must equal exactly <strong>100%</strong> before checklist can lock.</span>
+              </div>
+            )}
+            {featureIssues.filter((fi) => fi.issues.length > 0).map((fi) => (
+              <div key={fi.index} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span>•</span>
+                <span><strong>{fi.name}</strong>: {fi.issues.join("; ")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -766,6 +862,7 @@ function StepReview({ form, features, totalWeight, weightOk }: {
           ["Milestone Deadline", form.deadline || "—"],
           ["Total Escrow Price", form.totalAmount ? `$${form.totalAmount} USD` : "—"],
           ["Design Reference", form.figmaUrl || "—"],
+          ["Deliverable Repository", form.repoUrl || "—"],
         ].map(([k, v]) => (
           <div
             key={k}
@@ -782,6 +879,10 @@ function StepReview({ form, features, totalWeight, weightOk }: {
             <span style={{ fontWeight: 600, color: "white", textAlign: "right", maxWidth: 360, wordBreak: "break-all" }}>
               {k === "Design Reference" && v !== "—" ? (
                 <a href={v} target="_blank" rel="noopener noreferrer" style={{ color: "var(--color-primary)", display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none" }}>
+                  {v} <ExternalLink size={12} />
+                </a>
+              ) : k === "Deliverable Repository" && v !== "—" ? (
+                <a href={v} target="_blank" rel="noopener noreferrer" style={{ color: "#60A5FA", display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none" }}>
                   {v} <ExternalLink size={12} />
                 </a>
               ) : (
