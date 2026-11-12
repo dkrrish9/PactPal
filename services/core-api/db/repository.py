@@ -8,7 +8,7 @@ import sqlite3
 import uuid
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 
 from ..auth.roles import User, UserRole, assert_can_create_contract
@@ -25,14 +25,16 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 class ContractRepository:
-    def __init__(self, db_path: str = ":memory:"):
+    def __init__(self, db_path: str = ":memory:", seed_demo: bool = False):
         """Initializes connection to SQLite database (default in-memory for testing)."""
         self.db_path = db_path
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON;")
         self.notification_service = None
         self._init_tables()
+        if seed_demo:
+            self.seed_demo_data()
 
     def _init_tables(self) -> None:
         """Initializes baseline tables compatible with schema.sql."""
@@ -352,12 +354,13 @@ class ContractRepository:
         total_amount: float,
         deadline: str,
         figma_url: Optional[str] = None,
-        repo_url: Optional[str] = None
+        repo_url: Optional[str] = None,
+        contract_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Creates a contract in initial DRAFT state. Asserts actor is a BUYER."""
         assert_can_create_contract(buyer)
 
-        contract_id = generate_uuid()
+        cid = contract_id if contract_id is not None else generate_uuid()
         timestamp = now_iso()
         status = ContractState.DRAFT.value
 
@@ -369,7 +372,7 @@ class ContractRepository:
                 is_locked, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, 0, ?, ?)
         """, (
-            contract_id, buyer.id, seller_id, title, description, status,
+            cid, buyer.id, seller_id, title, description, status,
             total_amount, deadline, figma_url, repo_url, timestamp, timestamp
         ))
 
@@ -378,12 +381,12 @@ class ContractRepository:
             INSERT INTO messages (id, contract_id, sender_id, sender_type, content, metadata, sent_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            generate_uuid(), contract_id, buyer.id, "BUYER",
+            generate_uuid(), cid, buyer.id, "BUYER",
             f"Contract '{title}' drafted by buyer.", json.dumps({"action": "CONTRACT_CREATED", "status": "DRAFT"}), timestamp
         ))
 
         self.conn.commit()
-        return self.get_contract(contract_id)
+        return self.get_contract(cid)
 
     def get_contract(self, contract_id: str) -> Optional[Dict[str, Any]]:
         cursor = self.conn.cursor()
@@ -447,7 +450,8 @@ class ContractRepository:
         allocated_amount: float,
         sort_order: int = 0,
         source: str = "DIRECT",
-        change_request_id: Optional[str] = None
+        change_request_id: Optional[str] = None,
+        feature_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Adds a checklist feature.
@@ -465,7 +469,7 @@ class ContractRepository:
                     "Checklist cannot change except via the Price Negotiator with an approved change request."
                 )
 
-        feature_id = generate_uuid()
+        fid = feature_id if feature_id is not None else generate_uuid()
         timestamp = now_iso()
         cursor = self.conn.cursor()
         cursor.execute("""
@@ -475,14 +479,14 @@ class ContractRepository:
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
         """, (
-            feature_id, contract_id, title, acceptance_test,
+            fid, contract_id, title, acceptance_test,
             price_weight, allocated_amount, sort_order,
             change_request_id, 1 if change_request_id else 0,
             timestamp, timestamp
         ))
         self.conn.commit()
         return {
-            "id": feature_id,
+            "id": fid,
             "contract_id": contract_id,
             "title": title,
             "acceptance_test": acceptance_test,
@@ -1114,6 +1118,181 @@ class ContractRepository:
         """
         target_statuses = statuses or ["IN_PROGRESS", "SUBMITTED", "VERIFYING"]
         return self.get_contracts_by_status(target_statuses)
+
+    def seed_demo_data(self) -> None:
+        """
+        Seeds deterministic demo entities (Phase 2):
+        - Users: usr_buyer_01 (Alice Buyer), usr_seller_01 (Bob Developer), usr_admin_01 (System Admin)
+        - Contracts: pct_099e77 (Main FUNDED demo contract), pct_draft_01 (DRAFT), pct_review_02 (REVIEW), pct_settled_04 (SETTLED)
+        - Checklist Features & Proof-of-Work Receipts.
+        Safe for repeated calls (uses INSERT OR IGNORE).
+        """
+        now = datetime.now(timezone.utc)
+        iso_now = now.isoformat()
+        cursor = self.conn.cursor()
+
+        # 1. Demo Users
+        users = [
+            ("usr_buyer_01", "BUYER", "Alice Buyer", "alice.buyer@example.com", "sb-buyer@business.example.com", iso_now, iso_now),
+            ("usr_seller_01", "SELLER", "Bob Developer", "bob.dev@example.com", "sb-seller@personal.example.com", iso_now, iso_now),
+            ("usr_admin_01", "ADMIN", "System Admin", "admin@pactpal.dev", "admin@pactpal.dev", iso_now, iso_now),
+        ]
+        cursor.executemany("""
+            INSERT OR IGNORE INTO users (id, role, name, email, paypal_email, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, users)
+
+        # 2. Main Demo Contract (pct_099e77 - FUNDED)
+        deadline_14d = (now + timedelta(days=14)).isoformat()
+        auth_expires_29d = (now + timedelta(days=29)).isoformat()
+        cursor.execute("""
+            INSERT OR IGNORE INTO contracts (
+                id, buyer_id, seller_id, title, description, status, total_amount, currency,
+                deadline, paypal_order_id, paypal_auth_id, auth_expires_at, figma_url, repo_url,
+                is_locked, buyer_confirmed_at, seller_confirmed_at, locked_at, signed_at, funded_at,
+                created_at, updated_at
+            ) VALUES (
+                'pct_099e77', 'usr_buyer_01', 'usr_seller_01',
+                'SaaS Landing Page & Stripe Checkout',
+                'Build responsive marketing landing page with interactive pricing calculator and test Stripe checkout integration matching Figma design.',
+                'FUNDED', 1500.0, 'USD', ?, 'ORD-DEMO-99E77', 'AUTH-DEMO-99E77', ?,
+                'https://www.figma.com/design/sample-saas', 'https://github.com/sample/saas-landing',
+                1, ?, ?, ?, ?, ?, ?, ?
+            )
+        """, (deadline_14d, auth_expires_29d, iso_now, iso_now, iso_now, iso_now, iso_now, iso_now, iso_now))
+
+        # Features for pct_099e77
+        features_099e77 = [
+            ("feat_pct_099e77_1", "pct_099e77", "Hero Section & Responsive Navigation",
+             "Navbar is sticky, links scroll to sections, and mobile drawer opens cleanly at <768px viewport.", 30.0, 450.0, "PENDING", 1, iso_now, iso_now),
+            ("feat_pct_099e77_2", "pct_099e77", "Interactive Tier Pricing Calculator",
+             "Slider adjusts seat count and recalculates tier price dynamically without NaN errors.", 30.0, 450.0, "PENDING", 2, iso_now, iso_now),
+            ("feat_pct_099e77_3", "pct_099e77", "Stripe Checkout & Webhook Integration",
+             "Stripe Elements loads securely and webhook returns 200 OK on checkout.session.completed event.", 40.0, 600.0, "PENDING", 3, iso_now, iso_now),
+        ]
+        cursor.executemany("""
+            INSERT OR IGNORE INTO features (
+                id, contract_id, title, acceptance_test, price_weight, allocated_amount,
+                status, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, features_099e77)
+
+        # 3. Draft Contract (pct_draft_01 - DRAFT)
+        deadline_21d = (now + timedelta(days=21)).isoformat()
+        cursor.execute("""
+            INSERT OR IGNORE INTO contracts (
+                id, buyer_id, seller_id, title, description, status, total_amount, currency,
+                deadline, figma_url, is_locked, created_at, updated_at
+            ) VALUES (
+                'pct_draft_01', 'usr_buyer_01', 'usr_seller_01',
+                'Mobile App Wireframe to Flutter Prototype',
+                'Convert 8 screen wireframes into responsive Flutter mobile prototype with state management.',
+                'DRAFT', 800.0, 'USD', ?, 'https://www.figma.com/design/flutter-demo', 0, ?, ?
+            )
+        """, (deadline_21d, iso_now, iso_now))
+
+        features_draft = [
+            ("feat_draft_01_1", "pct_draft_01", "Authentication & User Profile UI",
+             "Sign in and profile screens render with validation on empty inputs.", 50.0, 400.0, "PENDING", 1, iso_now, iso_now),
+            ("feat_draft_01_2", "pct_draft_01", "Dashboard & Navigation Flow",
+             "Bottom tab bar navigates between Home, Feed, and Settings without rebuilding state.", 50.0, 400.0, "PENDING", 2, iso_now, iso_now),
+        ]
+        cursor.executemany("""
+            INSERT OR IGNORE INTO features (
+                id, contract_id, title, acceptance_test, price_weight, allocated_amount,
+                status, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, features_draft)
+
+        # 4. Review Contract (pct_review_02 - REVIEW)
+        deadline_30d = (now + timedelta(days=30)).isoformat()
+        cursor.execute("""
+            INSERT OR IGNORE INTO contracts (
+                id, buyer_id, seller_id, title, description, status, total_amount, currency,
+                deadline, is_locked, created_at, updated_at
+            ) VALUES (
+                'pct_review_02', 'usr_buyer_01', 'usr_seller_01',
+                'E-Commerce Headless Storefront & Algolia Search',
+                'Implement Next.js catalog storefront with faceted filtering powered by Algolia search index.',
+                'REVIEW', 2200.0, 'USD', ?, 0, ?, ?
+            )
+        """, (deadline_30d, iso_now, iso_now))
+
+        features_review = [
+            ("feat_review_02_1", "pct_review_02", "Product Catalog Grid & Facets",
+             "Category and price filters filter product grid with debounced URL query params.", 35.0, 770.0, "PENDING", 1, iso_now, iso_now),
+            ("feat_review_02_2", "pct_review_02", "Instant Algolia Autocomplete Search",
+             "Search bar shows instant drop-down results within 100ms with keyboard navigation.", 35.0, 770.0, "PENDING", 2, iso_now, iso_now),
+            ("feat_review_02_3", "pct_review_02", "Shopping Cart & LocalStorage Sync",
+             "Cart drawer persists line items across tab refreshes and computes subtotal with taxes.", 30.0, 660.0, "PENDING", 3, iso_now, iso_now),
+        ]
+        cursor.executemany("""
+            INSERT OR IGNORE INTO features (
+                id, contract_id, title, acceptance_test, price_weight, allocated_amount,
+                status, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, features_review)
+
+        # 5. Settled Contract (pct_settled_04 - SETTLED)
+        past_deadline = (now - timedelta(days=5)).isoformat()
+        past_ts = (now - timedelta(days=6)).isoformat()
+        cursor.execute("""
+            INSERT OR IGNORE INTO contracts (
+                id, buyer_id, seller_id, title, description, status, total_amount, currency,
+                deadline, paypal_order_id, paypal_auth_id, is_locked,
+                buyer_confirmed_at, seller_confirmed_at, locked_at, signed_at, funded_at,
+                created_at, updated_at
+            ) VALUES (
+                'pct_settled_04', 'usr_buyer_01', 'usr_seller_01',
+                'Blog Engine & Markdown CMS Migration',
+                'Migrate legacy blog archive to Next.js Contentlayer with fast SSR and optimized image pipeline.',
+                'SETTLED', 1200.0, 'USD', ?, 'ORD-SETTLED-04', 'AUTH-SETTLED-04', 1,
+                ?, ?, ?, ?, ?, ?, ?
+            )
+        """, (past_deadline, past_ts, past_ts, past_ts, past_ts, past_ts, past_ts, iso_now))
+
+        features_settled = [
+            ("feat_settled_04_1", "pct_settled_04", "Archive Content Migration",
+             "120 historical articles converted to MDX with frontmatter tags and author data intact.", 40.0, 480.0, "PASSED", 1, past_ts, past_ts),
+            ("feat_settled_04_2", "pct_settled_04", "Contentlayer Markdown Pipeline",
+             "Build compiles MDX to static JSON payloads with zero runtime parsing overhead.", 40.0, 480.0, "PASSED", 2, past_ts, past_ts),
+            ("feat_settled_04_3", "pct_settled_04", "SEO & OpenGraph Tags Generator",
+             "Dynamic OG images generated on edge for all blog routes with correct Twitter cards.", 20.0, 240.0, "PASSED", 3, past_ts, past_ts),
+        ]
+        cursor.executemany("""
+            INSERT OR IGNORE INTO features (
+                id, contract_id, title, acceptance_test, price_weight, allocated_amount,
+                status, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, features_settled)
+
+        # Receipt for pct_settled_04
+        receipt_payload = json.dumps({
+            "contract_id": "pct_settled_04",
+            "title": "Blog Engine & Markdown CMS Migration",
+            "decision": "FULL_RELEASE",
+            "total_escrow": 1200.0,
+            "passed_amount": 1200.0,
+            "refunded_amount": 0.0,
+            "timestamp": iso_now,
+            "features_verified": [
+                {"title": "Archive Content Migration", "status": "PASSED", "weight": 40.0, "amount": 480.0},
+                {"title": "Contentlayer Markdown Pipeline", "status": "PASSED", "weight": 40.0, "amount": 480.0},
+                {"title": "SEO & OpenGraph Tags Generator", "status": "PASSED", "weight": 20.0, "amount": 240.0}
+            ]
+        })
+        cursor.execute("""
+            INSERT OR IGNORE INTO receipts (
+                id, contract_id, submission_id, verification_report_id,
+                receipt_hash, evidence_payload, generated_at
+            ) VALUES (
+                'rec_settled_04', 'pct_settled_04', 'sub_settled_04', 'rep_settled_04',
+                '3b08e2f8d8b94091f09c6ba7c646b9a8dc5b14197c36a3f169f4ea5475685a4f',
+                ?, ?
+            )
+        """, (receipt_payload, iso_now))
+
+        self.conn.commit()
 
     def close(self):
         self.conn.close()

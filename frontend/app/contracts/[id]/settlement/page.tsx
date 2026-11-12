@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { 
@@ -15,17 +15,29 @@ import {
   Layers,
   ArrowRight
 } from "lucide-react";
+import { mockApi, Contract, ProofOfWorkReceipt } from "@/lib/mockApi";
 
 export default function SettlementSummaryPage() {
   const params = useParams();
   const contractId = (params?.id as string) || "pct_099e77";
 
-  const totalEscrow = 1500;
-  const passedAmount = 1200; // 80%
-  const refundedAmount = 300; // 20%
-  const shaHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-
+  const [contract, setContract] = useState<Contract | null>(null);
+  const [receipt, setReceipt] = useState<ProofOfWorkReceipt | null>(null);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const c = mockApi.getContract(contractId) || mockApi.getContracts()[0];
+    setContract(c);
+    const r = mockApi.getReceipt(c?.id || contractId);
+    setReceipt(r);
+  }, [contractId]);
+
+  const totalEscrow = contract?.total_amount || 1500;
+  const passedAmount = receipt?.financial_dispatch.seller_payout_amount ?? 1200;
+  const refundedAmount = receipt?.financial_dispatch.buyer_refund_amount ?? Math.max(0, totalEscrow - passedAmount);
+  const shaHash = receipt?.receipt_hash || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  const passRatio = Math.round((passedAmount / totalEscrow) * 100);
+  const refundRatio = Math.max(0, 100 - passRatio);
 
   const handleCopyHash = () => {
     navigator.clipboard.writeText(shaHash);
@@ -33,12 +45,21 @@ export default function SettlementSummaryPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const features = [
-    { name: "Auth & OAuth Login with NextAuth", weight: 20, status: "PASSED", payout: 300, score: "100%" },
-    { name: "Bryntum Gantt Timeline Integration", weight: 30, status: "PASSED", payout: 450, score: "98%" },
-    { name: "PayPal Escrow Webhook Listeners", weight: 30, status: "PASSED", payout: 450, score: "100%" },
-    { name: "Real-time Notification Service", weight: 20, status: "FAILED", payout: 0, score: "42% (Mock returned)" },
-  ];
+  const features = (receipt?.features && receipt.features.length > 0)
+    ? receipt.features.map((f) => ({
+        name: f.title,
+        weight: f.price_weight,
+        status: f.status,
+        payout: f.allocated_amount,
+        score: f.status === "PASSED" ? "100% (Passed)" : "Flagged in Scan",
+      }))
+    : (contract?.features || []).map((f) => ({
+        name: f.title,
+        weight: f.price_weight,
+        status: f.status,
+        payout: f.status === "PASSED" ? f.allocated_amount : 0,
+        score: f.status === "PASSED" ? "100%" : "Failed",
+      }));
 
   return (
     <div
@@ -152,7 +173,7 @@ export default function SettlementSummaryPage() {
             <div style={{ textAlign: "right" }}>
               <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>Settlement Ratio</span>
               <div style={{ fontSize: 20, fontWeight: 700, color: "var(--color-success)" }}>
-                80% Paid &bull; 20% Refunded
+                {passRatio}% Paid &bull; {refundRatio}% Refunded
               </div>
             </div>
           </div>
@@ -161,7 +182,7 @@ export default function SettlementSummaryPage() {
           <div style={{ width: "100%", height: 28, borderRadius: 14, background: "rgba(255,255,255,0.08)", overflow: "hidden", display: "flex", marginBottom: 16, border: "1px solid rgba(255,255,255,0.1)" }}>
             <div
               style={{
-                width: "80%",
+                width: `${passRatio}%`,
                 background: "linear-gradient(90deg, #4CAF50, #00A3E0)",
                 display: "flex",
                 alignItems: "center",
@@ -172,11 +193,11 @@ export default function SettlementSummaryPage() {
                 letterSpacing: "0.04em",
               }}
             >
-              FREELANCER PAYOUT: $1,200.00
+              FREELANCER PAYOUT: ${passedAmount.toLocaleString()}.00
             </div>
             <div
               style={{
-                width: "20%",
+                width: `${refundRatio}%`,
                 background: "rgba(244,67,54,0.75)",
                 display: "flex",
                 alignItems: "center",
@@ -187,7 +208,7 @@ export default function SettlementSummaryPage() {
                 letterSpacing: "0.04em",
               }}
             >
-              REFUND: $300.00
+              REFUND: ${refundedAmount.toLocaleString()}.00
             </div>
           </div>
 
@@ -195,17 +216,17 @@ export default function SettlementSummaryPage() {
             <div style={{ background: "rgba(76,175,80,0.08)", padding: "16px 20px", borderRadius: 12, border: "1px solid rgba(76,175,80,0.2)" }}>
               <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 4 }}>Disbursed to Freelancer</div>
               <div style={{ fontSize: 24, fontWeight: 800, color: "var(--color-success)", fontFamily: "JetBrains Mono, monospace" }}>
-                +${passedAmount}.00
+                +${passedAmount.toLocaleString()}.00
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
-                Instant PayPal payout transaction ref: <span style={{ fontFamily: "JetBrains Mono, monospace" }}>PP-TX-991204</span>
+                Instant PayPal payout transaction ref: <span style={{ fontFamily: "JetBrains Mono, monospace" }}>{receipt?.financial_dispatch.paypal_payout_batch_id || "PP-TX-991204"}</span>
               </div>
             </div>
 
             <div style={{ background: "rgba(244,67,54,0.08)", padding: "16px 20px", borderRadius: 12, border: "1px solid rgba(244,67,54,0.2)" }}>
               <div style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 4 }}>Returned to Hirer</div>
               <div style={{ fontSize: 24, fontWeight: 800, color: "#F87171", fontFamily: "JetBrains Mono, monospace" }}>
-                ${refundedAmount}.00
+                ${refundedAmount.toLocaleString()}.00
               </div>
               <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 4 }}>
                 Escrow hold authorization unblocked back to primary card.
