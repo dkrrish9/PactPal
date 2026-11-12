@@ -30,9 +30,47 @@ export async function POST(request: Request) {
 
     const { access_token } = await tokenRes.json();
 
-    // Determine host origin for return URL
-    const urlObj = new URL(request.url);
-    const origin = `${urlObj.protocol}//${urlObj.host}`;
+    // Determine host origin for return URL (supports localhost, reverse proxies like Render, Vercel, etc.)
+    const clientOrigin = typeof body?.origin === "string" ? body.origin.trim() : "";
+    const headerOrigin = request.headers.get("origin")?.trim();
+    const forwardedHost = request.headers.get("x-forwarded-host")?.trim();
+    const forwardedProto = request.headers.get("x-forwarded-proto")?.trim() || "https";
+    const referer = request.headers.get("referer")?.trim();
+    const envUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || process.env.RENDER_EXTERNAL_URL)?.trim();
+
+    let origin = "";
+    if (clientOrigin && (clientOrigin.startsWith("http://") || clientOrigin.startsWith("https://"))) {
+      origin = clientOrigin.replace(/\/$/, "");
+    } else if (headerOrigin && (headerOrigin.startsWith("http://") || headerOrigin.startsWith("https://"))) {
+      origin = headerOrigin.replace(/\/$/, "");
+    } else if (forwardedHost) {
+      origin = `${forwardedProto}://${forwardedHost}`.replace(/\/$/, "");
+    } else if (referer) {
+      try {
+        origin = new URL(referer).origin.replace(/\/$/, "");
+      } catch {
+        // ignore
+      }
+    } else if (envUrl && (envUrl.startsWith("http://") || envUrl.startsWith("https://"))) {
+      origin = envUrl.replace(/\/$/, "");
+    }
+
+    if (!origin) {
+      try {
+        const urlObj = new URL(request.url);
+        origin = `${urlObj.protocol}//${urlObj.host}`.replace(/\/$/, "");
+      } catch {
+        origin = "http://localhost:3000";
+      }
+    }
+
+    // Safeguard: If origin points to internal container port 10000 (Render internal default port)
+    // override with RENDER_EXTERNAL_URL if set, or strip port 10000
+    if (origin.includes(":10000")) {
+      if (process.env.RENDER_EXTERNAL_URL) {
+        origin = process.env.RENDER_EXTERNAL_URL.replace(/\/$/, "");
+      }
+    }
 
     // Prevent "merchant trying to pay themselves" conflict:
     // If user is a freelancer, the logging-in PayPal user is the seller persona.
