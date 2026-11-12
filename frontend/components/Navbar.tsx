@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Search, Sun, Moon, ChevronDown, Menu, X, Bell, Shield, CheckCircle, AlertTriangle, FileText, Calendar, LogOut, User } from "lucide-react";
+import { Search, Sun, Moon, ChevronDown, Menu, X, Shield, FileText, Calendar, LogOut, User } from "lucide-react";
 import { getCurrentUser, signOutUser, UserProfile } from "@/lib/supabase";
 
 export default function Navbar() {
@@ -9,8 +9,6 @@ export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(3);
 
   useEffect(() => {
     setCurrentUser(getCurrentUser());
@@ -22,33 +20,6 @@ export default function Navbar() {
       window.removeEventListener("storage", onAuth);
     };
   }, []);
-
-  const notifications = [
-    {
-      id: "notif_01",
-      icon: <CheckCircle size={15} color="#34D399" />,
-      title: "Settlement Disbursed & Receipt Sealed",
-      desc: "Contract pct_settled_04 concluded with 80% payout. SHA-256 receipt generated.",
-      href: "/contracts/pct_settled_04/receipt",
-      time: "10m ago",
-    },
-    {
-      id: "notif_02",
-      icon: <AlertTriangle size={15} color="#FBBF24" />,
-      title: "Dispute Mediation Active",
-      desc: "AST scan flagged Feature 2 on pct_099e77. Review checklist & arbitration chat.",
-      href: "/contracts/pct_099e77/dispute",
-      time: "1h ago",
-    },
-    {
-      id: "notif_03",
-      icon: <Calendar size={15} color="#60A5FA" />,
-      title: "Scheduler Timeline Updated",
-      desc: "5 multi-contract assignments updated across buyer and seller schedules.",
-      href: "/schedule",
-      time: "2h ago",
-    },
-  ];
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -347,135 +318,6 @@ export default function Navbar() {
 
       {/* Right side */}
       <div style={{ display: "flex", alignItems: "center", gap: "12px", position: "relative" }}>
-        {/* C55: Notification Center Bell */}
-        <div style={{ position: "relative" }}>
-          <button
-            onClick={() => {
-              setNotificationsOpen(!notificationsOpen);
-              setUnreadCount(0);
-            }}
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: "10px",
-              background: notificationsOpen ? "rgba(0,102,255,0.2)" : "rgba(255,255,255,0.05)",
-              border: notificationsOpen ? "1px solid #0066FF" : "1px solid rgba(255,255,255,0.08)",
-              color: "white",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              position: "relative",
-              transition: "all 0.2s ease",
-            }}
-            title="Notifications (C55)"
-            aria-label="View notifications"
-          >
-            <Bell size={17} color={notificationsOpen ? "#60A5FA" : "var(--color-text-secondary)"} />
-            {unreadCount > 0 && (
-              <span
-                style={{
-                  position: "absolute",
-                  top: -2,
-                  right: -2,
-                  width: 17,
-                  height: 17,
-                  borderRadius: "50%",
-                  background: "#EF4444",
-                  color: "white",
-                  fontSize: 10,
-                  fontWeight: 800,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: "2px solid #070B16",
-                }}
-              >
-                {unreadCount}
-              </span>
-            )}
-          </button>
-
-          {/* Notifications Dropdown Window */}
-          {notificationsOpen && (
-            <div
-              className="glass-card"
-              style={{
-                position: "absolute",
-                top: "calc(100% + 10px)",
-                right: 0,
-                width: 340,
-                background: "rgba(12, 18, 34, 0.98)",
-                border: "1px solid rgba(255,255,255,0.12)",
-                borderRadius: 16,
-                boxShadow: "0 20px 50px rgba(0,0,0,0.6)",
-                padding: "16px",
-                zIndex: 150,
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 10, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-                <strong style={{ fontSize: 13, color: "white" }}>Activity Notifications</strong>
-                <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Live Escrow Webhooks</span>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 280, overflowY: "auto" }}>
-                {notifications.map((n) => (
-                  <Link
-                    key={n.id}
-                    href={n.href}
-                    onClick={() => setNotificationsOpen(false)}
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      padding: "10px",
-                      borderRadius: 10,
-                      background: "rgba(255,255,255,0.03)",
-                      border: "1px solid rgba(255,255,255,0.05)",
-                      textDecoration: "none",
-                      transition: "all 0.15s ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "rgba(0,102,255,0.1)";
-                      e.currentTarget.style.borderColor = "rgba(0,102,255,0.3)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "rgba(255,255,255,0.03)";
-                      e.currentTarget.style.borderColor = "rgba(255,255,255,0.05)";
-                    }}
-                  >
-                    <div style={{ marginTop: 2 }}>{n.icon}</div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "white" }}>{n.title}</div>
-                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>{n.desc}</div>
-                      <div style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: 4 }}>{n.time}</div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-
-              <Link
-                href="/dashboard/hirer"
-                onClick={() => setNotificationsOpen(false)}
-                style={{
-                  fontSize: 11,
-                  color: "#60A5FA",
-                  textAlign: "center",
-                  paddingTop: 8,
-                  borderTop: "1px solid rgba(255,255,255,0.06)",
-                  textDecoration: "none",
-                  fontWeight: 600,
-                }}
-              >
-                View All Dashboard Activities →
-              </Link>
-            </div>
-          )}
-        </div>
-
         {/* Search */}
         <div
           style={{
