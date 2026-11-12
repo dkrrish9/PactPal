@@ -55,6 +55,76 @@ function isUserSeller(c: Contract, user: UserProfile | null): boolean {
   return false;
 }
 
+const DEFAULT_AVAILABLE_PROJECTS: Contract[] = [
+  {
+    id: "pct_open_saas_01",
+    title: "Next.js 15 AI SaaS Landing & Stripe Metered Billing",
+    description: "Develop high-converting responsive landing page with Bento grid, interactive pricing calculator, and Stripe webhook subscription sync.",
+    buyer_id: "usr_hirer_marcus",
+    buyer_name: "Marcus Vance",
+    buyer_email: "marcus@scaleup.co",
+    seller_id: "usr_seller_open",
+    seller_name: "Unassigned Freelancer",
+    seller_email: "open@pactpal.dev",
+    status: "DRAFT",
+    total_amount: 2400,
+    currency: "USD",
+    deadline: new Date(Date.now() + 18 * 86400000).toISOString(),
+    figma_url: "https://figma.com/file/ai-saas-platform",
+    created_at: new Date(Date.now() - 1 * 86400000).toISOString(),
+    features: [
+      { id: "f_av_1", contract_id: "pct_open_saas_01", title: "Interactive Bento Grid & Framer Motion", acceptance_test: "Renders 6 feature cards with smooth spring transitions and responsive mobile drawer", price_weight: 35, allocated_amount: 840, status: "PENDING", sort_order: 1 },
+      { id: "f_av_2", contract_id: "pct_open_saas_01", title: "Stripe Metered Usage & Webhook Listeners", acceptance_test: "Handles customer.subscription.created and invoice.paid with 200 OK and idempotent DB sync", price_weight: 40, allocated_amount: 960, status: "PENDING", sort_order: 2 },
+      { id: "f_av_3", contract_id: "pct_open_saas_01", title: "Light/Dark Mode Theme Engine", acceptance_test: "Zero flicker theme switch stored in localStorage with Tailwind CSS variables", price_weight: 25, allocated_amount: 600, status: "PENDING", sort_order: 3 },
+    ],
+  },
+  {
+    id: "pct_open_fintech_02",
+    title: "React Native Fintech App & Biometric Auth Bridge",
+    description: "Build iOS and Android cross-platform financial wallet with biometric authentication, instant balance updates, and live exchange rate charts.",
+    buyer_id: "usr_hirer_elena",
+    buyer_name: "Elena Rostova",
+    buyer_email: "elena@uxcraft.design",
+    seller_id: "usr_seller_open",
+    seller_name: "Unassigned Freelancer",
+    seller_email: "open@pactpal.dev",
+    status: "REVIEW",
+    total_amount: 3200,
+    currency: "USD",
+    deadline: new Date(Date.now() + 25 * 86400000).toISOString(),
+    figma_url: "https://figma.com/file/fintech-wallet-v1",
+    created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+    buyer_confirmed_at: new Date(Date.now() - 1 * 86400000).toISOString(),
+    features: [
+      { id: "f_fn_1", contract_id: "pct_open_fintech_02", title: "FaceID & Fingerprint Native Bridge", acceptance_test: "Biometric prompt triggers and resolves auth token with fallback PIN screen", price_weight: 40, allocated_amount: 1280, status: "PENDING", sort_order: 1 },
+      { id: "f_fn_2", contract_id: "pct_open_fintech_02", title: "Live Currency WebSocket & Candle Chart", acceptance_test: "Displays streaming price chart with 60 FPS performance on lower-end devices", price_weight: 35, allocated_amount: 1120, status: "PENDING", sort_order: 2 },
+      { id: "f_fn_3", contract_id: "pct_open_fintech_02", title: "Encrypted SQLite Local Vault", acceptance_test: "Stores user credentials and cached ledger using SQLCipher AES-256", price_weight: 25, allocated_amount: 800, status: "PENDING", sort_order: 3 },
+    ],
+  },
+  {
+    id: "pct_open_solana_03",
+    title: "Solana Smart Contract Escrow & Phantom dApp",
+    description: "Rust Anchor program implementing 2-of-2 multisig milestone release with web3 Phantom & Solflare browser wallet adapter.",
+    buyer_id: "usr_hirer_david",
+    buyer_name: "David Chen",
+    buyer_email: "david@crypto-ventures.com",
+    seller_id: "usr_seller_open",
+    seller_name: "Unassigned Freelancer",
+    seller_email: "open@pactpal.dev",
+    status: "DRAFT",
+    total_amount: 4500,
+    currency: "USD",
+    deadline: new Date(Date.now() + 30 * 86400000).toISOString(),
+    figma_url: "https://figma.com/file/solana-escrow-dapp",
+    created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
+    features: [
+      { id: "f_sol_1", contract_id: "pct_open_solana_03", title: "Anchor Rust Smart Contract", acceptance_test: "Passes 100% of Anchor unit tests on localnet for init_vault, deposit, and disburse", price_weight: 50, allocated_amount: 2250, status: "PENDING", sort_order: 1 },
+      { id: "f_sol_2", contract_id: "pct_open_solana_03", title: "Next.js Wallet Adapter & PDA Balances", acceptance_test: "Connects to Phantom/Solflare and queries vault PDA token balance in real-time", price_weight: 30, allocated_amount: 1350, status: "PENDING", sort_order: 2 },
+      { id: "f_sol_3", contract_id: "pct_open_solana_03", title: "Automated Dispute Fallback Circuit Breaker", acceptance_test: "Triggers return of funds if referee key signs emergency refund instruction", price_weight: 20, allocated_amount: 900, status: "PENDING", sort_order: 3 },
+    ],
+  },
+];
+
 export default function FreelancerDashboardPage() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [myContracts, setMyContracts] = useState<Contract[]>([]);
@@ -103,13 +173,21 @@ export default function FreelancerDashboardPage() {
         return c.status === "DRAFT" || c.status === "REVIEW" || c.status === "SIGNED";
       });
 
+      // Guarantee available open projects are always present for demo & review
+      const existingIds = new Set(available.map((p) => p.id));
+      for (const defProj of DEFAULT_AVAILABLE_PROJECTS) {
+        if (!existingIds.has(defProj.id)) {
+          available.push(defProj);
+        }
+      }
+
       setMyContracts(mine);
       setAvailableProjects(available);
     } catch (err) {
       console.error("Failed to load freelancer contracts from Supabase:", err);
       const all = mockApi.getContracts();
       setMyContracts(all.filter((c) => isUserSeller(c, user) && c.status !== "DRAFT"));
-      setAvailableProjects(all.filter((c) => !isUserBuyer(c, user) && c.status === "DRAFT"));
+      setAvailableProjects(DEFAULT_AVAILABLE_PROJECTS);
     } finally {
       setIsLoaded(true);
     }
